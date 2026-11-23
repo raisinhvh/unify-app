@@ -1,7 +1,7 @@
 /**
  * Unify feature settings (engine side). Shared contract — owner: main agent.
  *
- * Values persist in ~/.dsh/unify/settings.json as { features: Record<UnifyFeatureId, UnifyFeatureValue> }.
+ * Values persist in ~/.unify/settings.json (UNIFY_HOME overrides the folder) as { features: Record<UnifyFeatureId, UnifyFeatureValue> }.
  * The renderer's list of features lives in src/renderer/store/features.ts; the engine only needs the
  * engine-scope ids below (any other id is stored and mirrored as-is so UI-only toggles persist too).
  *
@@ -37,19 +37,32 @@ export type AgentMessagingScope = 'everyone' | 'same-chat' | 'parent-child';
 
 type Listener = (id: string, value: UnifyFeatureValue) => void;
 
-const settingsFile = path.join(os.homedir(), '.dsh', 'unify', 'settings.json');
+/** Unify's data folder. `UNIFY_HOME` overrides it (tests point it at a temp folder). */
+export function unifyHome(): string {
+  return process.env.UNIFY_HOME || path.join(os.homedir(), '.unify');
+}
+
+function settingsFilePath(): string {
+  return path.join(unifyHome(), 'settings.json');
+}
+
 let cachedValues: Record<string, UnifyFeatureValue> | undefined;
 const listeners = new Set<Listener>();
 
 function loadValues(): Record<string, UnifyFeatureValue> {
   if (cachedValues) return cachedValues;
   try {
-    const parsed = JSON.parse(fs.readFileSync(settingsFile, 'utf8')) as { features?: Record<string, UnifyFeatureValue> };
+    const parsed = JSON.parse(fs.readFileSync(settingsFilePath(), 'utf8')) as { features?: Record<string, UnifyFeatureValue> };
     cachedValues = parsed.features && typeof parsed.features === 'object' ? { ...parsed.features } : {};
   } catch {
     cachedValues = {};
   }
   return cachedValues;
+}
+
+/** Tests only: forget cached values so the next read uses the current UNIFY_HOME. */
+export function resetUnifySettingsCache(): void {
+  cachedValues = undefined;
 }
 
 /** Current value of an engine-scope feature (stored value, else default). */
@@ -69,6 +82,7 @@ export function allUnifyFeatures(): Record<string, UnifyFeatureValue> {
 export function setUnifyFeature(id: string, value: UnifyFeatureValue): void {
   const values = loadValues();
   values[id] = value;
+  const settingsFile = settingsFilePath();
   fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
   const temporaryFile = `${settingsFile}.tmp`;
   fs.writeFileSync(temporaryFile, JSON.stringify({ features: values }, null, 2));
