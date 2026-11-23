@@ -4,7 +4,7 @@ Path note: `unify/` in this working copy is a junction to ../Unify — the same 
 
 You ARE the implementation subagent: Unify SCREEN DATA REQUESTS + HUB BACKEND owner.
 
-Working copy: DSH (C:/Users/User/Documents/Projects/AI Stuff/Programs/DSH). Unify repo: `unify/` (Electron app; `unify/src/engine/` is DSH's `src/` copied; renderer at unify/src/renderer, also reachable as `unify-renderer/`). Read `unify/ARCHITECTURE.md`, `.dsh/mockups/UNIFY_SPEC.md`, and `.dsh/briefs-tmp/b2.md` item 8 for context.
+Working copy: DSH (C:/Users/User/Documents/Projects/AI Stuff/Programs/DSH). Unify repo: `unify/` (Electron app; `unify/src/engine/` is DSH's `src/` copied; renderer at unify/src/renderer, also reachable as `unify-renderer/`). Read `unify/ARCHITECTURE.md`, `docs/UNIFY_SPEC.md`, and `docs/briefs/b2.md` item 8 for context.
 
 The renderer screens define the engine requests they need. Read every `protocol-requests.md` and every `adapter.ts` / `adapters.ts` / `hubAdapter.ts` under `unify-renderer/screens/` (files, knowledge, hub, toolpacks, providers, settings, setup). Other agents are still finishing those screens, so re-read them near the end and match the latest message types.
 

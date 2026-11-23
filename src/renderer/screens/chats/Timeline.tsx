@@ -322,12 +322,14 @@ function ApprovalRow(props: { item: Extract<FeedItem, { kind: 'approval' }> }): 
       <Collapse open={pending()}>
         <div class="interrupt-actions">
           <Button variant="primary" onClick={() => post({ type: 'approvalResponse', id: id(), allow: true })}>Allow</Button>
-          <Button
-            variant="text"
-            onClick={() => post({ type: 'approvalResponse', id: id(), allow: true, always: true })}
-          >
-            Always allow
-          </Button>
+          <Show when={props.item.canAlwaysAllow}>
+            <Button
+              variant="text"
+              onClick={() => post({ type: 'approvalResponse', id: id(), allow: true, always: true })}
+            >
+              Always allow
+            </Button>
+          </Show>
           <Button variant="secondary" onClick={() => post({ type: 'approvalResponse', id: id(), allow: false })}>Deny</Button>
         </div>
       </Collapse>

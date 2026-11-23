@@ -206,7 +206,14 @@ export class UnifySidebarProvider implements vscode.WebviewViewProvider {
         break;
       }
       case 'approvalRequest':
-        (this.state.timeline[message.sessionId] ||= []).push({ id: `approval:${message.id}`, kind: 'approval', title: message.title, detail: message.detail, status: 'pending' });
+        (this.state.timeline[message.sessionId] ||= []).push({
+          id: `approval:${message.id}`,
+          kind: 'approval',
+          title: message.title,
+          detail: message.detail,
+          status: 'pending',
+          ...(message.canAlwaysAllow ? { canAlwaysAllow: true } : {}),
+        });
         break;
       case 'approvalResolved': {
         const entry = (this.state.timeline[message.sessionId] || []).find(item => item.id === `approval:${message.id}`);

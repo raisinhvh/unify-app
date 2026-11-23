@@ -50,6 +50,8 @@ export const codeEditTiming = {
 
 /** Wipe of one line: quick, no overshoot. */
 const wipeSpring = { period: 0.16, damping: 1 };
+/** Delete sweep across a line: quick, critically damped so it never wobbles past the edge. */
+const sweepSpring = { period: 0.16, damping: 1 };
 /** Add tint fading out: slow and calm. */
 const tintFade = { period: 0.5, damping: 1 };
 
@@ -143,7 +145,8 @@ function EditedLine(props: EditedLineProps): JSX.Element {
   let tintElement: HTMLSpanElement | undefined;
   const added = untrack(() => props.added);
   const wipe = useSpring(added ? 0 : 1, wipeSpring, 1);
-  const sweep = useSpring(0, 'indicator', 1);
+  const sweep = useSpring(0, sweepSpring, 1);
+  const sweepFade = useSpring(1, 'exit', 1);
   const tint = useSpring(added ? 1 : 0, tintFade, 1);
   const [sweeping, setSweeping] = createSignal(false);
   const [tinted, setTinted] = createSignal(added);
@@ -176,7 +179,13 @@ function EditedLine(props: EditedLineProps): JSX.Element {
     if (value === 0) setTinted(false);
   });
   sweep.onChange(value => {
-    if (sweepElement) sweepElement.style.transform = `scaleX(${Math.max(0, Math.min(1.02, value))})`;
+    if (sweepElement) sweepElement.style.transform = `scaleX(${Math.max(0, Math.min(1, value))})`;
+  });
+  sweepFade.onChange(value => {
+    if (sweepElement) sweepElement.style.opacity = String(Math.max(0, Math.min(1, value)));
+  });
+  sweepFade.onRest(value => {
+    if (value === 0) setSweeping(false);
   });
   sweep.onRest(value => {
     if (value >= 1 && props.leaving()) later(codeEditTiming.sweepHold, finishSweep);
@@ -185,6 +194,7 @@ function EditedLine(props: EditedLineProps): JSX.Element {
   const finishSweep = () => {
     if (swept) return;
     swept = true;
+    if (sweeping()) sweepFade.set(0, 'exit');
     props.swept();
   };
 
@@ -208,18 +218,19 @@ function EditedLine(props: EditedLineProps): JSX.Element {
     start(delay) {
       later(delay, () => {
         setSweeping(true);
-        sweep.jump(0).set(1, 'indicator');
+        sweepFade.jump(1);
+        sweep.jump(0).set(1, sweepSpring);
       });
     },
     land: finishSweep,
   });
 
-  createEffect(on(props.leaving, leaving => {
-    if (!leaving) return;
+  createEffect(on(props.leaving, (leaving, wasLeaving) => {
+    if (!leaving || wasLeaving) return;
     swept = false;
     // A line removed mid-wipe just finishes its wipe at once and sweeps.
     wipe.jump(1);
-    setCaretPhase(undefined);
+    if (caretPhase()) setCaretPhase('hidden');
     if (organicMode('codeEdits') !== 'organic') finishSweep();
     else props.queueRemoved(removedHandle());
   }, { defer: true }));
@@ -245,9 +256,7 @@ function EditedLine(props: EditedLineProps): JSX.Element {
       <span ref={text} class="organic-line-text">{props.children}</span>
       <Show when={caretPhase()}>
         {phase => (
-          <span class="organic-line-caret-track" aria-hidden="true">
-            <Caret phase={phase()} left={caretLeft()} color={props.caretColor} onDone={() => setCaretPhase(undefined)} />
-          </span>
+          <Caret phase={phase()} left={caretLeft()} color={props.caretColor} onDone={() => setCaretPhase(undefined)} />
         )}
       </Show>
     </div>

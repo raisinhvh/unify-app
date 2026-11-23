@@ -48,8 +48,8 @@ after(async () => {
   await rm(home, { recursive: true, force: true });
 });
 
-async function serve(hash) {
-  const response = await handle(new Request(`unify-media://${hash}`));
+async function serve(hash, query = '') {
+  const response = await handle(new Request(`unify-media://${hash}${query}`));
   return {
     status: response.status,
     type: response.headers.get('content-type'),
@@ -104,4 +104,28 @@ test('every 404 is a fresh readable response with the security headers', async (
     assert.equal(response.nosniff, 'nosniff');
     assert.equal(response.csp, 'sandbox');
   }
+});
+
+test('thumbnails respect SAFE_IMAGE_TYPES, refresh store index, and fall back to original on failure', async () => {
+  // Prime the protocol handler's store cache with one image, then write a second image via a separate store instance.
+  const first = await store.put(Buffer.from('first invalid png'), 'image/png', 'chat');
+  const firstThumb = await serve(first.hash, '?thumb=1');
+  assert.equal(firstThumb.status, 200);
+  assert.equal(firstThumb.type, 'image/png');
+  assert.equal(firstThumb.body.toString(), 'first invalid png');
+
+  const secondStore = new DiskMediaStore(join(home, 'media'));
+  const second = await secondStore.put(Buffer.from('second invalid png'), 'image/png', 'chat');
+  assert.ok(store.pathOf(second.hash), 'existing DiskMediaStore refreshes indexCache for new entries');
+  const secondThumb = await serve(second.hash, '?thumb=1');
+  assert.equal(secondThumb.status, 200);
+  assert.equal(secondThumb.type, 'image/png');
+  assert.equal(secondThumb.body.toString(), 'second invalid png');
+
+  // SVG must never be rendered through sharp even when ?thumb=1 is requested.
+  const svg = await store.put(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'), 'image/svg+xml', 'chat');
+  const svgThumb = await serve(svg.hash, '?thumb=1');
+  assert.equal(svgThumb.status, 200);
+  assert.equal(svgThumb.type, 'application/octet-stream');
+  assert.equal(svgThumb.disposition, 'attachment');
 });

@@ -65,6 +65,7 @@
   width: 0;
   height: 1em;
   vertical-align: -0.14em;
+  pointer-events: none;
 }
 
 .organic-caret-placed {

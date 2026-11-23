@@ -7,7 +7,7 @@ The renderer already sends and reads them through typed adapters, so implementin
 | --- | --- | --- |
 | Toolpacks | `screens/toolpacks/adapter.ts` | `ToolpackExtension`, `ToolpackRequest` |
 | Hub | `screens/hub/hubAdapter.ts` (dev answers: `hubMock.ts`) | `HubState`, `HubRequest`, `HubReply` |
-| Providers | `screens/providers/adapter.ts` | `AccountExtension`, `ModelExtension`, `ProviderRequest` |
+| Providers | `screens/providers/adapter.ts` | `AccountExtension`, `ProviderRequest` |
 
 Every new field is optional; the UI falls back when it is missing. Once added to `view.ts`, the casts in the
 adapters (`as unknown as SidebarWebviewMessage`, `as typeof raw & Partial<...>`) can go.

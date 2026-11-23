@@ -143,7 +143,7 @@ export async function instructionsForAudience(
 
 /**
  * Writes an agent-specific instruction file. The `agent-instructions` runtime plugin can then be pointed at
- * `home` with `instructionFileCandidates: [fileName]`, so DSH never reads the unfiltered project `AGENTS.md`.
+ * `home` with `instructionFileCandidates: [fileName]`, so the runtime never reads the unfiltered project `AGENTS.md`.
  * Returns the written path, or undefined when no rules apply (and removes a stale file from an earlier run).
  */
 export async function writeAudienceInstructions(

@@ -185,6 +185,82 @@ test('knowledge: rules, memory, audiences, skill import and removal', async () =
 
   const bad = await send({ type: 'readKnowledge', requestId: 'k6', id: 'skill:agents:../../escape/SKILL.md' });
   assert.match(ofType(bad.replies, 'knowledgeError')[0].message, /no longer exists/);
+
+  const badFile = await send({
+    type: 'readKnowledge',
+    requestId: 'k7',
+    id: 'skill:unify:../../escape/SKILL.md',
+    file: 'secret.txt',
+  });
+  assert.match(ofType(badFile.replies, 'knowledgeError')[0].message, /no longer exists/);
+
+  const escapedSkillFile = await send({
+    type: 'readKnowledge',
+    requestId: 'k8',
+    id: 'skill:unify:skills/foo/SKILL.md',
+    file: '../../AGENTS.md',
+  });
+  assert.match(ofType(escapedSkillFile.replies, 'knowledgeError')[0].message, /Invalid file path/);
+
+  const validSkillFile = await send({
+    type: 'readKnowledge',
+    requestId: 'k9',
+    id: 'skill:agents:skills/demo-skill/SKILL.md',
+    file: 'references/notes.md',
+  });
+  assert.equal(ofType(validSkillFile.replies, 'knowledgeContent')[0].content, 'Notes.\n');
+
+  const renameRule = await send({
+    type: 'saveKnowledge',
+    requestId: 'k10',
+    item: {
+      id: 'rule:global:existing-rule',
+      kind: 'rule',
+      scope: 'global',
+      name: 'Renamed Rule',
+    },
+    content: 'Renamed body.',
+  });
+  const renamed = ofType(renameRule.replies, 'knowledgeSaved')[0].item;
+  assert.equal(renamed.id, 'rule:global:renamed-rule');
+  assert.equal(renamed.name, 'Renamed Rule');
+  assert.deepEqual(renamed.audiences, ['subagents']);
+  assert.equal(renamed.updatedBy, 'you');
+  const rulesText = await readFile(join(unifyHome, 'AGENTS.md'), 'utf8');
+  assert.match(rulesText, /## Renamed Rule/);
+  assert.doesNotMatch(rulesText, /## Existing Rule/);
+
+  // importSkillFolder rejects traversal paths and missing SKILL.md before writing any file.
+  const badImportTraversal = await send({
+    type: 'importSkillFolder',
+    requestId: 'k11',
+    scope: 'global',
+    name: 'bad-traversal-skill',
+    files: [
+      { path: 'SKILL.md', content: '---\nname: bad-traversal-skill\n---\n# Bad\n' },
+      { path: '../escaped.txt', content: 'nope' },
+    ],
+  });
+  assert.match(ofType(badImportTraversal.replies, 'knowledgeError')[0].message, /Invalid file path/);
+  assert.equal(existsSync(join(agentsHome, 'skills/bad-traversal-skill/SKILL.md')), false);
+
+  const missingSkillDoc = await send({
+    type: 'importSkillFolder',
+    requestId: 'k12',
+    scope: 'global',
+    name: 'missing-doc-skill',
+    files: [
+      { path: 'references/notes.md', content: 'Only notes.\n' },
+    ],
+  });
+  assert.match(ofType(missingSkillDoc.replies, 'knowledgeError')[0].message, /SKILL\.md/);
+  assert.equal(existsSync(join(agentsHome, 'skills/missing-doc-skill/references/notes.md')), false);
+
+  // Removing top-level memory notes must never remove the memory/ root itself.
+  await send({ type: 'removeKnowledge', requestId: 'k13', id: 'memory:global:workflow/release.md' });
+  await send({ type: 'removeKnowledge', requestId: 'k14', id: 'memory:global:workflow/release-flow.md' });
+  await send({ type: 'removeKnowledge', requestId: 'k15', id: 'memory:global:top.md' });
+  assert.equal(existsSync(join(unifyHome, 'memory')), true);
 });
 
 test('knowledge: skill ids are validated for open/remove and undo only restores stored versions', async () => {

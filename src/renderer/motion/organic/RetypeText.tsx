@@ -312,7 +312,8 @@ export function RetypeText(props: RetypeTextProps): JSX.Element {
     retypeTo(value, props.effect ?? 'rename');
   }, { defer: true }));
 
-  createEffect(on(() => !!props.deleting, deleting => {
+  createEffect(on(() => !!props.deleting, (deleting, wasDeleting) => {
+    if (deleting === wasDeleting) return;
     if (deleting) {
       startSweep();
     } else if (sweeping()) {

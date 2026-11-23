@@ -380,7 +380,7 @@ export type SidebarTimelineItem =
   | { id: string; kind: 'tool'; event: SidebarToolEvent }
   | { id: string; kind: 'subagent'; agentId: string }
   | { id: string; kind: 'diff'; diff: SidebarDiff }
-  | { id: string; kind: 'approval'; title: string; detail: string; status: 'pending' | 'allowed' | 'rejected' }
+  | { id: string; kind: 'approval'; title: string; detail: string; status: 'pending' | 'allowed' | 'rejected'; canAlwaysAllow?: boolean }
   | { id: string; kind: 'question'; questions: SidebarQuestion[]; status: 'pending' | 'answered' | 'skipped'; answers?: string[] }
   /**
    * Generated media shows as a small thumbnail that expands into a full view, instead of inline at full width.
@@ -409,7 +409,7 @@ type SidebarHostPayload =
   | { type: 'approvalState'; mode: ApprovalMode }
   /** Every Unify feature value (engine defaults included) after a change from any window. */
   | { type: 'unifyFeaturesState'; features: Record<string, boolean | number | string> }
-  | { type: 'approvalRequest'; sessionId: string; id: string; title: string; detail: string }
+  | { type: 'approvalRequest'; sessionId: string; id: string; title: string; detail: string; canAlwaysAllow?: boolean }
   | { type: 'approvalResolved'; sessionId: string; id: string; allowed: boolean }
   | { type: 'questionRequest'; sessionId: string; id: string; questions: SidebarQuestion[] }
   | { type: 'questionResolved'; sessionId: string; id: string; answers: string[] | null }

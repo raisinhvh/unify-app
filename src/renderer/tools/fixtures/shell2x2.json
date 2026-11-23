@@ -32,7 +32,7 @@
         { "id": "a1", "kind": "message", "role": "assistant", "text": "I'll keep it next to the window bounds in the store and add a test for restoring it." },
         { "id": "t1", "kind": "tool", "event": { "id": "t1", "kind": "read", "title": "Read", "detail": "src/ui/layout/store.ts", "state": "complete" } },
         { "id": "t2", "kind": "tool", "event": { "id": "t2", "kind": "other", "title": "Edited", "detail": "src/ui/layout/store.ts", "state": "complete" } },
-        { "id": "approval:p1", "kind": "approval", "title": "Wants to run a command", "detail": "npm test -- layout", "status": "pending" }
+        { "id": "approval:p1", "kind": "approval", "title": "Wants to run a command", "detail": "npm test -- layout", "status": "pending", "canAlwaysAllow": true }
       ]
     },
     {

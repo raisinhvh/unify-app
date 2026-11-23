@@ -66,11 +66,54 @@ test('destructive commands can never be remembered', () => {
   assert.equal(commandPrefix('git push -f origin main'), '');
   assert.equal(commandPrefix('git reset --hard HEAD~1'), '');
   assert.equal(commandPrefix('sudo rm -rf /'), '');
+  assert.equal(commandPrefix('sudo -u root rm -rf /'), '');
+  assert.equal(commandPrefix('sudo --user root rm -rf /'), '');
+  assert.equal(commandPrefix('sudo -Eu root rm -rf /'), '');
+  assert.equal(commandPrefix('env -u FOO rm -rf /'), '');
+  assert.equal(commandPrefix('git push -fu origin main'), '');
+  assert.equal(commandPrefix('git push -uf origin main'), '');
+  assert.equal(commandPrefix('git clean --force'), '');
   assert.equal(commandPrefix('cmd /c del file.txt'), '');
   assert.equal(commandPrefix('powershell -Command Remove-Item -Recurse .'), '');
   assert.equal(commandPrefix('git -C repo push --force'), '');
+  assert.equal(isDestructiveCommand('sudo -u root rm -rf /'), true);
+  assert.equal(isDestructiveCommand('git push -fu origin main'), true);
   assert.equal(isDestructiveCommand('git status'), false);
   assert.equal(commandPrefix('echo rm'), 'echo rm');
+});
+
+test('shell interpreters can never be remembered as allow prefixes', () => {
+  const project = join(home, 'InterpreterProject');
+  for (const command of [
+    'bash -c "echo hi"',
+    'sh -c "ls"',
+    'powershell -Command Get-Date',
+    'pwsh -NoProfile -Command ls',
+    'cmd /c dir',
+    'sudo -u root bash -c "echo hi"',
+  ]) {
+    assert.equal(commandPrefix(command), '', command);
+  }
+  assert.throws(() => addAllowRule(project, 'bash -c'), /cannot be remembered/);
+  assert.throws(() => addAllowRule(project, 'powershell -Command'), /cannot be remembered/);
+  assert.throws(() => addAllowRule(project, 'cmd /c'), /cannot be remembered/);
+  assert.equal(isAlwaysAllowed(project, 'bash -c'), false);
+});
+
+test('approvals file resolves unifyHome lazily on each call', () => {
+  const altHome = mkdtempSync(join(tmpdir(), 'unify-allow-rules-alt-'));
+  const previousHome = globalThis.__allowRulesHome;
+  try {
+    globalThis.__allowRulesHome = altHome;
+    const project = join(altHome, 'AltProject');
+    addAllowRule(project, 'npm test');
+    assert.equal(isAlwaysAllowed(project, 'npm test'), true);
+    globalThis.__allowRulesHome = previousHome;
+    assert.equal(isAlwaysAllowed(project, 'npm test'), false);
+  } finally {
+    globalThis.__allowRulesHome = previousHome;
+    rmSync(altHome, { recursive: true, force: true });
+  }
 });
 
 test('stored rules match the normalized project path and never cover unsafe commands', () => {

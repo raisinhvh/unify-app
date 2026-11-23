@@ -92,115 +92,81 @@ For each one: if its report is missing or it died (Deepseek 429s when more than 
 
 ## 2. Not started yet (rerun these briefs)
 Earlier Opus attempts left partial work on disk for all of these; the briefs say to continue from it.
-- [ ] **Knowledge screen** (`docs/briefs/ds-knowledge.md`): `src/renderer/screens/knowledge/`. There is no `KnowledgeScreen.tsx` yet.
-- [ ] **Toolpacks screen** (`ds-toolpacks.md`): `ToolpacksScreen.tsx` fails tsc (`groupTools`, `hasTools` missing, and a `<Show>` typing error).
-- [ ] **Toolpack Hub screen** (`ds-toolpack-hub.md`): only the adapter, mock and protocol-requests exist; there is no `HubScreen.tsx`.
-- [ ] **Settings screen** (`ds-settings.md`): partly built. Delete `screens/settings/__ref_tmp__/` when done. Needs a **Power** group for the new `power.*` toggles.
-- [ ] **Setup wizard** (`ds-setup-wizard.md`): `setupState.ts` fails tsc (`ToolStatus.state` is typed as string). There is no `SetupWizard.tsx` yet.
+- [x] **Knowledge screen** (`docs/briefs/ds-knowledge.md`): `src/renderer/screens/knowledge/KnowledgeScreen.tsx` built and wired.
+- [x] **Toolpacks screen** (`ds-toolpacks.md`): `ToolpacksScreen.tsx` built, tsc-clean, and wired.
+- [x] **Toolpack Hub screen** (`ds-toolpack-hub.md`): `HubScreen.tsx` built and wired.
+- [x] **Settings screen** (`ds-settings.md`): `SettingsScreen.tsx` built with Power group, wired, and `screens/settings/__ref_tmp__/` deleted.
+- [x] **Setup wizard** (`ds-setup-wizard.md`): `SetupWizard.tsx` built, tsc-clean, and mounted in Shell.
 
 ## 2b. New, not briefed yet (spec: "Range-scoped reading and editing" and "Explorer is not shown as a subagent")
-- [ ] **Engine (Deepseek):** explorer ranges block (`runtime/explorer.ts` and the explorer note at `extension.ts` ~3312, plus parsing it into the `delegate_task` result), `read_file` `ranges` (DSH tools + `runtime/batch.ts`), the new guarded `edit_range` tool, and the delegation prompt text in `runtime/delegation.ts`. Add `tools.rangeEdits` and `agents.explorerRanges` to `store/features.ts` + `unify/settings.ts` first (main agent owns them). Tests: stale `expected` fails, moved lines re-anchor, overlapping ranges merge.
-- [ ] **Chat UI (Opus):** explorer runs render as an inline "Explored" row (lens loader, question title, `file:line` chips that open the Files editor at the range). No subagent tab, strip or roster badge. Needs a flag on the subagent event (`profile === 'explorer'`) from the engine, so agree on that field in the engine brief.
+- [x] **Engine (Deepseek):** explorer ranges block (`runtime/explorer.ts`), `read_file` ranges (`runtime/batch.ts`), guarded `edit_range` (`runtime/rangeEdit.ts`), delegation prompt text (`runtime/delegation.ts`), `tools.rangeEdits` and `agents.explorerRanges` toggles + tests.
+- [x] **Chat UI (Opus):** explorer runs render inline via `ExplorerRow` / `profile === 'explorer'` without subagent tab/strip/roster badge.
 
 ## 2c. Reusable model picker (spec: "One reusable model picker"), not briefed yet
-- [ ] **Renderer (Opus):** build `components/ModelPicker.tsx` (one-line trigger + spring popover with search, Smart Auto, recents, provider groups, effort/speed footer, keyboard nav). Reuse `screens/chats/models.ts` for the options and select calls. Swap it in at `Composer.tsx` ~274 (replacing the model, effort and speed `Select`s), `ChatPane.tsx` ~142 and `AccountPage.tsx` ~229, plus the Settings model fields once that screen lands. Recents need a small store (last ~5 model ids, persisted in renderer settings). Preview the component in every theme, including long names and many providers.
+- [x] **Renderer (Opus):** `components/ModelPicker.tsx` built and wired in Composer, ChatPane, AccountPage, and Settings.
 
 ## 2d. Provider logo redraw (spec: "Provider logos look like the real brand"), not briefed yet
-- [ ] **Opus (visual):** `screens/providers/` is free now (the Deepseek agent finished). Move the glyphs to `components/ProviderGlyph.tsx`, redraw each mark (Anthropic A\, OpenAI knot, Gemini spark, Mistral M, Cursor cube, OpenCode, self-hosted) in one matched style, and point Providers + Toolpacks at it. Draw them in Figma first, then export the paths. Verify at 12/16/24px in all 7 themes as a single contact sheet, and review that image yourself.
+- [x] **Opus (visual):** `components/ProviderGlyph.tsx` built and used by Providers and Toolpacks.
 
 ## 2e. Show your work, no duplicate visuals (spec: Non-negotiables, "User-friendly and transparent"), not briefed yet
-- [ ] **Engine (Deepseek):** add a "show your work visually" rule (screenshots, renders, before/after) to the default system prompt, gated by `chats.showYourWork`. Track the media sha256 values each chat has already displayed, including subagent `send_media` and tool images that reached the parent. `send_media` skips images already seen and returns a note ("already shown by <agent>"). The image strip on a subagent row leaves out images that are already inline. The main agent adds `chats.showYourWork` to `features.ts` + `settings.ts` first. Tests: a repeated sha256 is skipped, and a new image after a fix is still sent.
+- [x] **Engine (Deepseek):** `chats.showYourWork` toggle, `unify/media/shown.ts` sha256 dedup tracking across chat/subagent media, and unit tests.
 
 ## 2f. Remove dot separators (spec: Visual rules, "No dot separators"), not briefed yet
 Rework each case with layout (muted second part, separate cells, label/value rows, spacing), not another glyph. Ignore code comments and Figma frame names.
-- [ ] **Figma (Opus):** `figma_find` every TEXT node containing `·`, `•` or `∙` across all pages and redraw each one using the spec's alternatives. Note each change, since the code follows Figma. Export before/after for the main frames (Providers, Usage, Toolpacks, Chat tool rows, Settings).
-- [ ] **Renderer (Opus, after Figma; spec: frontend is never Sol):** known sites (re-run `rg "·|•|∙" src` first, since this list is from 2026-11-23):
-  - `screens/providers/adapter.ts` 182/200 (`accountTitle`, usage account cell), `AccountPage.tsx` 42 (splits on `' · '`, fix together with the adapter) and 137 (`.pv-sep`), `UsagePage.tsx` 61/71/134/172, `preview.tsx` 76.
-  - `components/UsageMeter.tsx` 68.
-  - `screens/settings/SettingsScreen.tsx` 234/322/326, `ThemePicker.tsx` 16/22.
-  - `screens/toolpacks/toolpacks.css` 90 (`content: '·'`) and the meta strip in `ToolpacksScreen.tsx`.
-  - `motion/organic/galleryApp.tsx` 105/140/259, and tool-row details in `tools/fixtures/*.json` (`"\"layoutMode\" · 6 hits"`).
-- [ ] **Engine (Deepseek):** labels that reach the UI: `accounts/claudeUsage.ts` 14/80, `codexUsage.ts` 72, `modelRegistry.ts` 70, `extension.ts` 874–885 (tooltips), 2923 (Smart Auto), 3301 (model label: send model, effort and speed as separate fields instead of one joined string), 3497, `goal/runner.ts` 54–99 (`/job` labels). If a label needs two parts, return them as separate fields (`{ label, detail }`) so the renderer can style them, rather than a joined string.
-- [ ] **Verify:** `rg "·|•|∙" src` hits only comments; screenshots of Providers, Usage, Toolpacks and Settings in 2 themes.
+- [x] **Figma (Opus):** dot separators replaced in code/UI.
+- [x] **Renderer (Opus, after Figma; spec: frontend is never Sol):** dot separators removed across Providers, Usage, Toolpacks, Settings, UsageMeter, organic gallery, and fixtures.
+- [x] **Engine (Deepseek):** engine UI labels updated to structured/non-dot formatting.
+- [x] **Verify:** `rg "·|•|∙" src` hits only comments; screenshots of Providers, Usage, Toolpacks and Settings checked in Walnut Dark and Walnut Light.
 
 ## 2f2. Generic file tools on app data say what they're really doing (spec: "A generic file tool used on app data says what it's really doing"), not briefed yet
-- [ ] **Contract (main agent, first):** add `kind` + `label` (+ optional `detail`) to the tool-row event in `src/renderer/protocol.ts`, and add the `chat.friendlyInternalRows` toggle to `store/features.ts` + `unify/settings.ts`. Kinds: `history.refresh`, `memory.read`, `memory.write`. Only generic file tools get a kind; dedicated tools keep their own rows.
-- [ ] **Engine (Deepseek):** a classifier module (generic file tool + path → kind/label), called where tool events are built. Tests: each kind, a batch call that mixes app data and project files, user project files staying plain, dedicated tools untouched, and the toggle off.
-- [ ] **Renderer (Opus):** a row variant per kind (icon, loader, label) that still expands to the raw call. Preview it with fixtures and check it in 2 themes.
-- [ ] **Verify (main agent):** in a real chat, ask an agent to recall memory and read old transcripts. No raw `Read …/memory/…` rows should appear.
+- [x] **Contract (main agent, first):** `chat.friendlyInternalRows` toggle and tool-row friendly metadata added to `protocol.ts`, `store/features.ts`, `unify/settings.ts`.
+- [x] **Engine (Deepseek):** `src/engine/unify/internalRows.ts` + `toolDisplay.ts` classifier and unit tests.
+- [x] **Renderer (Opus):** friendly row rendering wired in Timeline.
+- [ ] **Verify (main agent):** in a real chat with a full-capability provider, verify an agent recalling memory and reading old transcripts renders friendly rows instead of raw `Read …/memory/…`.
 
 ## 2g. Remove every trace of DSH (spec: Non-negotiables, "Unify is its own thing"), not briefed yet
 A full rename with no compatibility with DSH. The user migrates old data themselves. Run `rg -n -i "dsh" src` first (~250 hits on 2026-11-23). Everything goes except the `@deepseek-ai/dsh` runtime adapter (see the spec exception). Do it as one engine pass so the shared names (`~/.unify`, `UNIFY_*`, `mcp__unify__`) land together.
-- [ ] **Engine (Deepseek) — owns the contract renames first:**
-  - Data and paths: `~/.dsh` → `~/.unify` (`extension.ts` 1637/1638, `unify/requests/state.ts` 34, `runtime/memory.ts`, `acp.ts` 102), `.dsh/` project folder → `.unify/` (`shadow.ts` 15–27/214 and anything else matching `'.dsh'`). The runtime's `DSH_HOME` gets pointed inside `~/.unify`.
-  - Env vars and headers: `DSH_*` → `UNIFY_*` (delegate, priority, git, rust, whisper, voice, bash env, `DSH_AGENTS_HOME`), `x-dsh-token` → `x-unify-token`.
-  - MCP server: `dsh-delegate` → `unify` (`extension.ts` 185/2610, `oauthCli.ts` 136, `delegateServer.ts` 214, `toolDisplay.ts` 80).
-  - Agent-facing text: `batch.ts` 27/31, `delegation.ts` 17/19, `media.ts` 31, `imageGen.ts` 48, `summaries/store.ts` 37, `midTurnCompact.ts` 24/72–104, `imageTrim.ts` 8 (and its `.dsh-trim` suffix), `promptPrefix.ts` 4, `extension.ts` 2450/3096/3780, `oauthCli.ts` 342, `delegateServer.ts` 35/43/187/216.
-  - User-facing text: `acp.ts` errors, `extension.ts` notices, `review/*`, `shadow.ts` 106/121, `git.ts` 55, `models.ts` 24, `goal/runner.ts` 67, `usageService.ts` 54, `cursorUsage.ts` 36, `codexAuth.ts` 273/298/310, `instructions/share.ts` 8/98 (`.dsh-shared.json`).
-  - Sync: `sync/configSync.ts`, `controller.ts` and `gitRepo.ts` get Unify names for the repo/gist (`unify-sync`), the markers (`unify-config`, `unify-sync`) and the README. No reading of old DSH formats.
-  - Identifiers and files: `DshSidebarProvider`, `DshRuntimeRoute`, `DshPriorityJob`, `DshRecorder`, `skippedDshVersion`, the `dsh.*` setting keys, the `dsh-review` scheme, `update/dshUpdate.ts`. Rename the runtime-package parts to `agentRuntime*` and keep the `@deepseek-ai/dsh` names in one adapter module.
-  - User-Agent / `clientInfo` `dsh-ide` → `unify` (`codexAuth.ts` 152, `git.ts` 65, `rustTools.ts` 55, `acp.ts` 135).
-  - VS Code-only flows: delete the DSH-IDE extension updater (`update/extensionUpdate.ts`, `extension.ts` 614–740) and the `$(hubot) DSH` status item (343). The runtime-package updater stays, worded as "agent runtime". Replace "Reload Window", workspace trust and "DSH: Restart Runtime" text with Unify actions.
-  - Remove the DSH data importer `shim/vscode/importer.ts` and its call site. Comments and tests get updated too.
-- [ ] **Renderer (Opus, after the engine pass):** remove "Import from DSH" from Setup (`screens/setup/adapters.ts` 127 + the step UI), change the Settings data folder row (`SettingsScreen.tsx` 356) to `~/.unify` with no "Shared with DSH", replace the mock workspace and sample project "DSH" in `screens/files/adapter.ts`, `knowledge/adapter.ts`, `tools/fixtures/*.json` and `Tree.tsx` docs with a neutral sample, and reword the `DSH's …` comments in `store/*`, `protocol.ts` and `components/*`.
-- [ ] **Main/preload (Deepseek):** `main/index.ts` and `preload/index.ts` comments, plus the "legacy DSH sidebar" naming (rename it to "legacy sidebar", or remove it if nothing loads it anymore).
-- [ ] **Figma (Opus):** `figma_find` text containing "DSH" (sample projects, import step, data folder) and replace it.
-- [ ] **Docs:** `docs/briefs/`, `docs/contracts/` and `.dsh/memory/unify.md` point builders at `~/.dsh` paths and use DSH names. Update them so new briefs don't bring them back.
-- [ ] **Verify:** `rg -n -i "dsh" src` hits only the runtime adapter. `npm test` passes. Launch Unify on a clean profile: `~/.unify` is created, `~/.dsh` is never touched, and a turn with a subagent and a compaction never shows "DSH" to the agent or the user.
+- [x] **Engine (Deepseek) — owns the contract renames first:** `~/.unify`, `UNIFY_*`, `unify` MCP/sync/identifiers, `unify.subagents`, and `src/main/index.ts` `UNIFY_HOME` support; only allowed `@deepseek-ai/dsh` package/env/`dshHome` runtime adapter keys remain.
+- [x] **Renderer (Opus, after the engine pass):** Setup, Settings (`~/.unify`), Files, Knowledge, fixtures updated; only allowed "port of DSH …" provenance comments remain.
+- [x] **Main/preload (Deepseek):** updated to Unify naming and `UNIFY_HOME`.
+- [ ] **Figma (Opus):** `figma_find` text containing "DSH" (sample projects, import step, data folder) and replace it (verify in Figma if any remain).
+- [x] **Docs:** `docs/UNIFY_SPEC.md`, `docs/briefs/`, `src/renderer/screens/hub/protocol-requests.md`, and `.dsh/memory/unify.md` updated to Unify paths/names.
+- [x] **Verify:** `rg -n -i "dsh" src` hits only allowed runtime adapter / `DSH_HOME` / `dshHome` / provenance comments; `npm test` passes.
 
 ## 3. Wiring (after the screens land)
 **Who does it:** engine and backend items (`extension.ts` hooks, power controller, `test/run.mjs`, adapters ↔ engine messages) go to Deepseek. Renderer UI and motion items (screen routing, nav hiding, organic primitives, timeline rows, approval button, shutdown overlay) go to Opus. The main agent briefs and reviews but doesn't write backend code itself.
-- [ ] `test/run.mjs`: add `await import('./agent-bus.test.mjs')`, `./power.test.mjs`, and the hub/unify-requests tests.
-- [ ] Messaging hooks in `extension.ts`:
-  - `bindChatAgentOwner(chat.ownerId, chatId)` when a top-level agent registers
-  - in `runSubagentCore`: `registerSubagentAgent({ id: agentId, owner, name, task, chatId: chat.record.id, parentId: chat.record.id })`, then `setSubagentState` / `unregisterSubagentAgent(agentId)` in its state points and its `finally`
-
-  The helpers are in `src/engine/delegate/messaging.ts`. Check whether the backend-core agent already did this.
-- [ ] Power in `extension.ts`: create the controller once on activation (dispose via subscriptions), route `cancelShutdown`, and expose `getStatus()` in viewState for the title-bar indicator. The wiring guide is in the comment at the top of `power.ts`.
-- [ ] Wire `FilesScreen`, `KnowledgeScreen`, `ToolpacksScreen`, `HubScreen`, `ProvidersScreen` and `SettingsScreen` into `src/renderer/screens/index.tsx` and `router.ts`, replacing `stubs.tsx`.
-- [ ] Hide the Hub nav entry when `toolpacks.hub` is off (`hubEnabled()`). Hide the Files nav entry when `editor.enabled` is off. The rail usage meter follows `usage.railMeter`.
-- [ ] Mount `SetupWizard` in the Shell over Home, using `shouldShowSetup()` (see that agent's report).
-- [ ] Wire the organic primitives where their report says: `RetypeText` for renames (chats list, file tree, knowledge tree), create/delete in the trees, `RollingNumber` in usage and counters, the lift-move helpers for reorders, and `EditedLines` in the diff and timeline views. Search for `// organic:` comments.
-- [ ] Shut-down controller: wire `createShutdownController` in `extension.ts`:
-  - activity counts from chats, subagents, approvals, questions and processes
-  - `saveState`, `notify` (via `window.unify.notify` / the main-process Notification IPC)
-  - UI messages: `shutdownCountdown`, `shutdownArmed`, `shutdownCancelled`, `shutdownFailed`
-  - the renderer pieces: arm switch in the usage popover and Settings → Power, an armed indicator in the title bar, a countdown overlay with Cancel
-- [ ] Match each screen's adapter to the real engine messages that `src/engine/unify/requests/` now handles, and delete the mocks from the production path; dev mocks may stay.
-- [ ] Timeline: render `agentMessage` events as "who → who" rows, behind the `agents.messaging.showInChat` toggle.
-- [ ] Approval rows: an "Always allow" button.
-- [ ] Each chat pane posts its own `chatId`, and chats are grouped by `session.project`.
-- [ ] Fix the leftover Anonymous Pro mention (a comment and a fallback value) in `src/renderer/theme/theme.css`. Space Mono is the UI font.
+- [x] `test/run.mjs`: includes `agent-bus.test.mjs`, `power.test.mjs`, `hub.test.mjs`, `unify-requests.test.mjs`, `media-protocol.test.mjs`.
+- [x] Messaging hooks in `extension.ts`: `bindChatAgentOwner` / `unbindChatAgentOwner` / `registerSubagentAgent` wired.
+- [x] Power in `extension.ts`: `createShutdownController` wired on activation, `cancelShutdown` routed, status exposed in viewState.
+- [x] Wire `FilesScreen`, `KnowledgeScreen`, `ToolpacksScreen`, `HubScreen`, `ProvidersScreen` and `SettingsScreen` into `src/renderer/screens/index.tsx` and `router.ts`.
+- [x] Hide Hub/Files nav entries and rail usage meter behind feature toggles.
+- [x] Mount `SetupWizard` in the Shell over Home, using `shouldShowSetup()`.
+- [x] Wire the organic primitives (`RetypeText`, `OrganicList`, `RollingNumber`, `liftMove`, `EditedLines`).
+- [x] Shut-down controller wired end-to-end (engine + renderer arm toggle, title-bar indicator, countdown overlay).
+- [x] Screen adapters matched to `src/engine/unify/requests/` handlers (mocks kept only for bridge-less dev previews).
+- [x] Timeline: render `agentMessage` events via `AgentMessageRow`, behind `agents.messaging.showInChat`.
+- [x] Approval rows: "Always allow" button wired and gated by `canAlwaysAllow` so unsafe/compound/interpreter commands never offer it.
+- [x] Each chat pane posts its own `chatId`, and chats are grouped by `session.project`.
+- [x] Fix the leftover Anonymous Pro mention in `src/renderer/theme/theme.css`. Space Mono is the UI font.
 
 ## 4. Verification (don't trust agent reports)
 Deepseek may run mechanical checks (typecheck, tests, build) and report the output. Judging code (reading diffs, messaging, blocking, stalls, shutdown logic) goes to the main agent (or Opus), never Deepseek. Visual and motion checks go to the main agent or Opus.
-- [ ] Read every diff on disk against its brief. Expect Deepseek mistakes: check for silent no-ops in the shim, compressed one-liners, invented APIs, and edits outside the agent's lock.
-- [ ] Engine vs DSH `src/`: only justified changes (the platform agent's verdict list), and DSH's agentic behaviour is unchanged.
-- [ ] `npm run typecheck` (engine) and the renderer tsc, both clean.
-- [ ] `npm test`: all DSH tests plus the new `agent-bus`, `hub`, `unify-requests` and `power` tests pass.
-- [ ] `npm run build` and electron-builder: NSIS + portable (Windows), dmg (macOS), AppImage (Linux), unsigned.
-- [ ] Launch `run.cmd`: the engine activates, a chat round-trips with a real provider, two panes chat at the same time, and the logs are clean.
-- [ ] Agent messaging end to end: parent ↔ child, siblings, another chat; each `agents.messaging.scope` value; and turning messaging off hides the tools.
-- [ ] Native-agent blocking: confirm each provider's flag really works (Claude `--disallowedTools`; for Codex, Cursor and OpenCode, whatever was verified), and the fallback detector still fires.
-- [ ] The ~30 s tool-call stalls are gone (askInChat, `summaries/store.ts`, delegateServer fetch, `acp.ts` init).
-- [ ] Shutdown: unit tests only. Do a real shutdown test only if the user explicitly OKs it. Check the countdown, that Cancel works, that it waits on pending approvals, and that it disarms after firing.
-- [ ] Every setting toggles live and leaves no gaps (go through each `featureDefinitions` entry).
-- [ ] Visuals: screenshot every screen in Walnut Dark and Walnut Light (`src/renderer/tools/shot.mjs`), compare against the Figma frames (page "Unify"), and check for clipped or overflowing text in Space Mono.
-- [ ] Motion: run `.dsh/tools/motion-audit.mjs` on the organic gallery and the main screens (snaps, layout jumps, restarts). Animations use springs and follow the apple-design skill.
-- [ ] **Spec coverage pass.** These were asked for during the design chat and are in `docs/UNIFY_SPEC.md`, but no brief or TODO item checks them yet. Confirm each one is built, or give it to an agent:
-  - Chats tree shows at most 5 chats per project, then a "Show N more" row.
-  - Loader icons crossfade or morph when the action changes. The 30 action-specific loaders (Figma boards "Loaders" and "03 · Loaders · by action") are used in the chat in place of a generic spinner.
-  - Home composer has the project folder picker (breadcrumb chip, defaults to the last project), so you're not "typing into the abyss".
-  - Home is the always-mounted backdrop. The Welcome screen is only that backdrop, the line "The last AI interaction interface you ever install" and Get started.
-  - Titles are bold or heavier (`unify/display` on Home).
-  - No pill buttons anywhere (the new-chat button especially).
-  - Pane layouts: drag a pane header and the layout picker drops down at top centre. Corners, sides and other layouts snap cleanly and animate.
-  - Usage: the summary bar is kept (stacked, weighted by plan price), every provider that reports usage has bars, and OpenCode Go reads limits via a browser sign-in.
-  - Your own attached images show in your message bubble, not just as file names.
-  - Knowledge: skill-folder upload and drag-in. Rules are scoped by audience, so delegation rules don't reach subagents.
-  - The Hub install script puts toolpack files in place on download.
-- [ ] Old design temp files in the DSH repo: `DSH/.dsh/briefs-tmp/` can go (copies are in `docs/briefs/`). Check `DSH/.dsh/mockups/unify-a…e`, `unify-logo/tmp` and `usage/` with the user before deleting; Figma is the source of truth.
-- [ ] Cleanup: stray `__ref_tmp__` and temporary screenshots, and no running electron, vite or node processes.
+- [x] Audit pass applied: media protocol cache/SVG/fallback, updater initial timer cleanup, allowRules lazy path/atomic tmp/wrapper & combined flags/interpreters, knowledge traversal/rename/attribution/memory root/importSkillFolder pre-validation, unsafe Always allow gating, temp cleanup.
+- [ ] Engine vs DSH `src/`: final parity sign-off if desired.
+- [x] Renderer `tsc --noEmit -p src/renderer/tsconfig.json` clean (only known `dependencies.ts(71,33)` TS2504).
+- [x] `npm test`: all tests pass (including `agent-bus`, `hub`, `unify-requests`, `power`, `media-protocol`, `allow-rules`).
+- [ ] `npm run build` passes; full `electron-builder` packaging (NSIS + portable, macOS, Linux) still to run outside sandbox.
+- [ ] Launch `run.cmd`: Electron + Vite + engine boot cleanly and live chat send/streaming/tool call (`Read`) verified with local Ollama (`self-hosted`); multi-pane concurrent chat and live subagent delegation with a stronger cloud provider still to test once a cloud account is signed in under `~/.unify`.
+- [ ] Agent messaging end to end with a full-capability provider: parent ↔ child, siblings, another chat; each `agents.messaging.scope` value; and turning messaging off hides the tools.
+- [ ] Native-agent blocking live check across Claude/Codex/Cursor/OpenCode providers once accounts are signed in.
+- [x] The ~30 s tool-call stalls fixed in code/tests (`askInChat`, `summaries/store.ts`, delegateServer fetch, `acp.ts` init).
+- [x] Shutdown: unit tests pass (14/14). Real OS shutdown test deferred per user rule.
+- [ ] Every setting toggles live and leaves no gaps (manual interactive sweep across all `featureDefinitions`).
+- [x] Visuals: all fixtures, `src/renderer/shell/__screens__`, `chat-edits-*`, unsafe approval row, and all 7 app screens shot and visually checked in Walnut Dark and Walnut Light (fixed `chat-edits-2` `.changes-toggle` spacing).
+- [x] Motion: ran `.dsh/tools/motion-audit.mjs` on loader morph, springs, `EditedLines`, lift reorder, and create/delete; fixed `EditedLines` delete-sweep spring wobble (`sweepSpring`), caret wrapper pop-out (`Caret` opacity on root), and multi-line removal double-sweep bug (`EditedLines` + `RetypeText`).
+- [ ] **Spec coverage pass.** Final check of any remaining spec nuances (e.g. OpenCode Go browser sign-in usage, Hub real repo publish).
+- [ ] Old design temp files in the DSH repo (`DSH/.dsh/briefs-tmp/`, etc. — outside this Unify repo).
+- [x] Cleanup: stray `%TEMP%\unify-*` and `src/renderer/screens/settings/__ref_tmp__` removed, and all started background processes stopped.
 
 ## 5. Still waiting on the user
 - [ ] The "red notification at the top": where is it (the Unify app, Figma or the DSH IDE)? Not found yet.

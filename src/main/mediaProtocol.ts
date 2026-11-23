@@ -34,9 +34,16 @@ let schemesRegistered = false;
 let handlerInstalled = false;
 let store: DiskMediaStore | undefined;
 
-function mediaStore(): DiskMediaStore {
-  if (!store) store = new DiskMediaStore(join(unifyHome(), 'media'));
+function mediaStore(home: string): DiskMediaStore {
+  if (!store || store.home !== home) {
+    store = new DiskMediaStore(home);
+  }
   return store;
+}
+
+function isSafeImageType(mimeType: string): boolean {
+  const type = (mimeType || '').split(';')[0].trim().toLowerCase();
+  return SAFE_IMAGE_TYPES.has(type);
 }
 
 /** A fresh response per request: a Response body can only be consumed once. */
@@ -83,14 +90,14 @@ async function serve(request: Request): Promise<Response> {
   const entry = readMediaIndex(home)[hash];
   if (!entry) return notFound();
   const wantsThumbnail = new URL(request.url).searchParams.get('thumb') === '1';
-  if (wantsThumbnail && entry.mimeType.startsWith('image/')) {
-    // Generated lazily on first view; an encoder being unavailable falls through to the original.
-    const thumbnail = await mediaStore().ensureThumbnail(hash);
+  if (wantsThumbnail && isSafeImageType(entry.mimeType)) {
+    // Generated lazily on first view; any thumbnail failure falls through to the original.
+    const thumbnail = await mediaStore(home).ensureThumbnail(hash).catch(() => undefined);
     if (thumbnail) {
       try {
         return responseFor(await readFile(thumbnail), 'image/webp');
       } catch {
-        return notFound();
+        // Fall through to serve the original stored file.
       }
     }
   }

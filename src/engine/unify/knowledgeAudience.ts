@@ -21,7 +21,7 @@ export interface MainAudienceTarget {
 
 export interface SubagentAudienceTarget {
   kind: 'subagent';
-  /** The `dsh.subagents` profile name, without the `profile:` prefix. */
+  /** The `unify.subagents` profile name, without the `profile:` prefix. */
   profile: string;
 }
 

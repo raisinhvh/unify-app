@@ -28,7 +28,7 @@ export interface CaretProps {
 const caretFade = { period: 0.18, damping: 1 };
 
 export function Caret(props: CaretProps): JSX.Element {
-  let bar!: HTMLSpanElement;
+  let root!: HTMLSpanElement;
   const opacity = useSpring(0, 'button', 1);
   const timers: number[] = [];
 
@@ -37,7 +37,11 @@ export function Caret(props: CaretProps): JSX.Element {
   };
 
   opacity.onChange(value => {
-    if (bar) bar.style.opacity = String(Math.max(0, Math.min(1, value)));
+    if (root) root.style.opacity = String(Math.max(0, Math.min(1, value)));
+  });
+
+  opacity.onRest(value => {
+    if (value === 0 && props.phase === 'hidden') props.onDone?.();
   });
 
   const later = (delay: number, action: () => void) => {
@@ -51,7 +55,8 @@ export function Caret(props: CaretProps): JSX.Element {
       return;
     }
     if (phase === 'hidden') {
-      opacity.set(0, 'exit');
+      if (opacity.value === 0) props.onDone?.();
+      else opacity.set(0, 'exit');
       return;
     }
     // settling: hold, one blink, fade.
@@ -71,15 +76,18 @@ export function Caret(props: CaretProps): JSX.Element {
 
   return (
     <span
+      ref={root}
       class="organic-caret"
       classList={{ 'organic-caret-placed': props.left !== undefined }}
-      style={{ left: props.left !== undefined ? `${props.left}px` : undefined }}
+      style={{
+        opacity: 0,
+        left: props.left !== undefined ? `${props.left}px` : undefined,
+      }}
       aria-hidden="true"
     >
       <span
-        ref={bar}
         class="organic-caret-bar"
-        style={{ opacity: 0, background: props.color ?? 'currentColor' }}
+        style={{ background: props.color ?? 'currentColor' }}
       />
     </span>
   );

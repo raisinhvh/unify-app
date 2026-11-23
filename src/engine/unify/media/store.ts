@@ -12,7 +12,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { existsSync, readFileSync, readdirSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, renameSync, statSync } from 'node:fs';
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, extname, join } from 'node:path';
 import { unifyHome } from '../settings';
@@ -228,6 +228,7 @@ function loadSharp(): SharpModule | undefined {
 export class DiskMediaStore implements MediaStore {
   public readonly home: string;
   private indexCache?: MediaIndex;
+  private indexStamp?: string;
   /** Serialises index mutations so two tool calls adding refs cannot overwrite each other. */
   private mutation: Promise<unknown> = Promise.resolve();
 
@@ -239,9 +240,32 @@ export class DiskMediaStore implements MediaStore {
     return join(this.home, 'index.json');
   }
 
-  private async load(): Promise<MediaIndex> {
-    if (!this.indexCache) this.indexCache = readMediaIndex(this.home);
+  private currentIndexStamp(): string | undefined {
+    try {
+      const info = statSync(this.indexPath);
+      return `${info.mtimeMs}:${info.size}`;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Drops the cached index so the next read reloads `index.json` from disk. */
+  public invalidateCache(): void {
+    this.indexCache = undefined;
+    this.indexStamp = undefined;
+  }
+
+  private readFreshIndex(): MediaIndex {
+    const stamp = this.currentIndexStamp();
+    if (!this.indexCache || stamp !== this.indexStamp) {
+      this.indexCache = readMediaIndex(this.home);
+      this.indexStamp = stamp;
+    }
     return this.indexCache;
+  }
+
+  private async load(): Promise<MediaIndex> {
+    return this.readFreshIndex();
   }
 
   private async writeIndex(index: MediaIndex): Promise<void> {
@@ -249,6 +273,8 @@ export class DiskMediaStore implements MediaStore {
     const temporary = `${this.indexPath}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, JSON.stringify(index, null, 2));
     await rename(temporary, this.indexPath);
+    this.indexCache = index;
+    this.indexStamp = this.currentIndexStamp();
   }
 
   private queueMutation<T>(action: (index: MediaIndex) => Promise<T> | T): Promise<T> {
@@ -301,18 +327,25 @@ export class DiskMediaStore implements MediaStore {
     return this.put(bytes, mimeTypeForPath(path), ref);
   }
 
+  private entryFor(hash: string): IndexEntry | undefined {
+    let entry = this.readFreshIndex()[hash];
+    if (!entry) {
+      this.invalidateCache();
+      entry = this.readFreshIndex()[hash];
+    }
+    return entry;
+  }
+
   public pathOf(hash: string): string | undefined {
     if (!isMediaHash(hash)) return undefined;
-    const index = this.indexCache || readMediaIndex(this.home);
-    this.indexCache = index;
-    const entry = index[hash];
+    const entry = this.entryFor(hash);
     return entry ? mediaFilePath(this.home, entry) : undefined;
   }
 
   /** The stored record for a hash, so callers can emit the MIME type and dimensions. */
   public recordOf(hash: string): MediaRecord | undefined {
     if (!isMediaHash(hash)) return undefined;
-    const entry = (this.indexCache || readMediaIndex(this.home))[hash];
+    const entry = this.entryFor(hash);
     if (!entry) return undefined;
     return {
       hash: entry.hash,

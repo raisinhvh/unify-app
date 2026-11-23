@@ -1,6 +1,6 @@
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -17,9 +17,15 @@ import {
 const MAIN = { kind: 'main' };
 const BUILDER = { kind: 'subagent', profile: 'Builder' };
 const OTHER = { kind: 'subagent', profile: 'Other' };
+const createdRoots = [];
+
+after(async () => {
+  await Promise.all(createdRoots.map(dir => rm(dir, { recursive: true, force: true })));
+});
 
 async function roots() {
   const base = await mkdtemp(join(tmpdir(), 'unify-knowledge-audience-'));
+  createdRoots.push(base);
   const result = { workspace: join(base, 'ws'), unifyHome: join(base, 'unify') };
   for (const dir of Object.values(result)) await mkdir(dir, { recursive: true });
   return result;

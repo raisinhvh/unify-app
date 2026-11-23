@@ -118,6 +118,7 @@ async function installTriggers(): Promise<void> {
         id: `w3b-${Date.now()}`,
         title: 'Run npm test',
         detail: 'npm test',
+        canAlwaysAllow: true,
       } as SidebarHostMessage);
     },
     setUsage(sessionPercent: number) {

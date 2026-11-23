@@ -1230,7 +1230,14 @@ class ExtensionHost implements vscode.Disposable {
         this.settleApproval(id, false);
       }, APPROVAL_TIMEOUT_MS);
       this.pendingApprovals.set(id, { sessionId, background, resolve, timer, ...(project ? { project } : {}), ...(prefix ? { prefix } : {}) });
-      this.sidebar.postMessage({ type: 'approvalRequest', sessionId, id, title, detail: detail.slice(0, 2000) });
+      this.sidebar.postMessage({
+        type: 'approvalRequest',
+        sessionId,
+        id,
+        title,
+        detail: detail.slice(0, 2000),
+        canAlwaysAllow: Boolean(project && prefix),
+      });
       this.notifyDesktop(title, detail.slice(0, 300));
     });
   }

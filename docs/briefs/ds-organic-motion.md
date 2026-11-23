@@ -4,7 +4,7 @@ You ARE the implementation subagent: Unify ORGANIC MOTION owner.
 
 Working copy: DSH (C:/Users/User/Documents/Projects/AI Stuff/Programs/DSH). `unify-renderer/` is a junction to ../Unify/src/renderer (SolidJS + TS + Vite). Run tsc/vite from the REAL path `C:/Users/User/Documents/Projects/AI Stuff/Programs/Unify/src/renderer`.
 
-An Opus agent started this and was stopped mid-way (last edits ~02:20 today); its partial work is on disk in `unify-renderer/motion/organic/` (15 files). Your full original brief is `.dsh/briefs-tmp/b3.md` — read it completely; it still applies. First read every file already in motion/organic/, keep what's good, finish what's missing, fix what's broken. WRITE only `unify-renderer/motion/organic/` and `unify-renderer/organic-gallery.html`. 12 other agents work in parallel on other folders.
+An Opus agent started this and was stopped mid-way (last edits ~02:20 today); its partial work is on disk in `unify-renderer/motion/organic/` (15 files). Your full original brief is `docs/briefs/b3.md` — read it completely; it still applies. First read every file already in motion/organic/, keep what's good, finish what's missing, fix what's broken. WRITE only `unify-renderer/motion/organic/` and `unify-renderer/organic-gallery.html`. 12 other agents work in parallel on other folders.
 
 Contract change since that brief: feature toggles are read with `feature(id)` from `store/features.ts` (the engine state field is now `viewState.unifyFeatures`; just use the helper).
 

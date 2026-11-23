@@ -34,7 +34,7 @@ interface CliOptions {
   keepOpen: boolean;
 }
 
-const stateRoot = join(homedir(), '.unify');
+const stateRoot = process.env.UNIFY_HOME ? resolve(process.env.UNIFY_HOME) : join(homedir(), '.unify');
 const logsPath = join(stateRoot, 'logs');
 const windowStatePath = join(stateRoot, 'window.json');
 const rendererStatePath = join(stateRoot, 'renderer-state.json');

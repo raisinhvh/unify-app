@@ -289,7 +289,14 @@ export function applyHostMessage(message: SidebarHostMessage): void {
         break;
       case 'approvalRequest':
         setViewState(produce(state => {
-          timelineOf(state, message.sessionId).push({ id: `approval:${message.id}`, kind: 'approval', title: message.title, detail: message.detail, status: 'pending' });
+          timelineOf(state, message.sessionId).push({
+            id: `approval:${message.id}`,
+            kind: 'approval',
+            title: message.title,
+            detail: message.detail,
+            status: 'pending',
+            ...(message.canAlwaysAllow ? { canAlwaysAllow: true } : {}),
+          });
         }));
         break;
       case 'approvalResolved':

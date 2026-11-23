@@ -453,7 +453,7 @@ export async function readKnowledge(
   if (id.startsWith('skill:')) {
     const instructionId = id.slice('skill:'.length);
     if (file) {
-      const folder = skillFolderOf({ id: instructionId }, paths);
+      const folder = await skillFolderForId(paths, id);
       return { content: await fsp.readFile(resolveInside(folder, file), 'utf8'), file };
     }
     return { content: await readInstruction(instructionRoots(paths), instructionId) };
@@ -483,9 +483,6 @@ export async function saveKnowledge(
     : draft.kind === 'skill'
       ? saveSkill(paths, draft, content, file, store)
       : saveMemory(paths, draft, content, store));
-  const items = await listKnowledge(context, paths);
-  const item = items.find(candidate => candidate.id === id);
-  if (!item) throw new Error('The item was written, but could not be read back.');
   touchMetadata(store, id, {
     createdBy: store.items[id]?.createdBy ?? 'you',
     createdAt: store.items[id]?.createdAt ?? now,
@@ -493,6 +490,9 @@ export async function saveKnowledge(
     updatedAt: now,
   });
   saveMetadata(paths, store);
+  const items = await listKnowledge(context, paths);
+  const item = items.find(candidate => candidate.id === id);
+  if (!item) throw new Error('The item was written, but could not be read back.');
   return item;
 }
 
@@ -503,7 +503,7 @@ async function saveRule(paths: RequestPaths, draft: KnowledgeDraft, content: str
   const name = String(draft.name || '').trim();
   if (!name) throw new Error('Give the rule a name.');
   const existing = draft.id && draft.id.startsWith('rule:') ? parseRuleId(draft.id) : undefined;
-  const slug = slugify(existing?.slug || name);
+  let slug = slugify(name);
   const text = await readTextFile(target);
   const parsed = parseRuleSections(text);
   if (parsed.sections.length) {
@@ -514,6 +514,7 @@ async function saveRule(paths: RequestPaths, draft: KnowledgeDraft, content: str
   } else if (existing?.slug === 'general') {
     // A flat rule file is one "general" rule; editing it replaces the text.
     parsed.preamble = content.trim();
+    slug = 'general';
   } else {
     // Keep a flat rule file as the preamble and add the new section below it.
     parsed.preamble = text.trim();
@@ -522,10 +523,17 @@ async function saveRule(paths: RequestPaths, draft: KnowledgeDraft, content: str
   await fsp.mkdir(path.dirname(target), { recursive: true });
   await fsp.writeFile(target, renderRuleSections(parsed), 'utf8');
   const id = `rule:${scope}:${slug}`;
-  if (existing && existing.slug !== slug) delete store.items[`rule:${scope}:${existing.slug}`];
+  const oldId = existing ? `rule:${existing.scope}:${existing.slug}` : undefined;
+  const previousMetadata = oldId && oldId !== id ? store.items[oldId] : undefined;
+  if (oldId && oldId !== id) delete store.items[oldId];
   touchMetadata(store, id, {
+    ...(previousMetadata ?? {}),
     ...(draft.description ? { description: draft.description } : {}),
-    audiences: draft.audiences?.length ? draft.audiences : audiencesOf(store, id),
+    audiences: draft.audiences?.length
+      ? draft.audiences
+      : previousMetadata?.audiences?.length
+        ? previousMetadata.audiences
+        : audiencesOf(store, id),
   });
   saveMetadata(paths, store);
   return id;
@@ -627,7 +635,10 @@ export async function removeKnowledge(context: UnifyRequestContext, paths: Reque
     if (!root) throw new Error('That note no longer exists.');
     const target = resolveInside(root, relative);
     await fsp.rm(target, { force: true });
-    await fsp.rmdir(path.dirname(target)).catch(() => undefined);
+    const parentDir = path.dirname(target);
+    if (isInside(root, parentDir)) {
+      await fsp.rmdir(parentDir).catch(() => undefined);
+    }
   } else {
     throw new Error('Unknown knowledge item.');
   }
@@ -658,19 +669,29 @@ export async function importSkillFolder(
     ? paths.workspaceRoot && path.join(paths.workspaceRoot, '.agents', 'skills', skillName)
     : path.join(paths.agentsHome, 'skills', skillName);
   if (!destination) throw new Error('Open a project folder to add project skills.');
+  assertInsideSkillRoot(paths, destination);
   let total = 0;
+  const skillDocTarget = path.resolve(destination, 'SKILL.md');
+  let hasSkillDoc = false;
+  const planned: { target: string; buffer: Buffer }[] = [];
   for (const file of files) {
-    if (!file || typeof file.path !== 'string' || typeof file.content !== 'string') throw new Error('The dropped folder has an unreadable file.');
+    if (!file || typeof file.path !== 'string' || typeof file.content !== 'string') {
+      throw new Error('The dropped folder has an unreadable file.');
+    }
+    const target = resolveInside(destination, file.path);
     const buffer = file.encoding === 'base64' ? Buffer.from(file.content, 'base64') : Buffer.from(file.content, 'utf8');
     if (buffer.length > MAX_IMPORT_FILE_BYTES) throw new Error(`${file.path} is larger than 5 MB.`);
     total += buffer.length;
     if (total > MAX_IMPORT_TOTAL_BYTES) throw new Error('The skill folder is larger than 20 MB.');
+    if (path.resolve(target) === skillDocTarget) hasSkillDoc = true;
+    planned.push({ target, buffer });
   }
-  for (const file of files) {
-    const target = resolveInside(destination, file.path);
-    await fsp.mkdir(path.dirname(target), { recursive: true });
-    const buffer = file.encoding === 'base64' ? Buffer.from(file.content, 'base64') : Buffer.from(file.content, 'utf8');
-    await fsp.writeFile(target, buffer);
+  if (!hasSkillDoc) {
+    throw new Error('A skill folder must include SKILL.md.');
+  }
+  for (const entry of planned) {
+    await fsp.mkdir(path.dirname(entry.target), { recursive: true });
+    await fsp.writeFile(entry.target, entry.buffer);
   }
   const items = await listKnowledge(context, paths);
   const item = items.find(candidate => candidate.id.startsWith('skill:') && candidate.name === skillName && candidate.scope === scope)

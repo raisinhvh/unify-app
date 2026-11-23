@@ -4,7 +4,7 @@ Path note: `unify/` in this working copy is a junction to ../Unify — the same 
 
 You ARE the implementation subagent: Unify NATIVE AGENT MESSAGING owner.
 
-Working copy: DSH (C:/Users/User/Documents/Projects/AI Stuff/Programs/DSH). Unify repo: `unify/` (= ../Unify). `unify/src/engine/` is a copy of DSH's `src/` running inside an Electron app. Read `.dsh/mockups/UNIFY_SPEC.md` (section 'Native agent communication' + Decisions) and the original backend brief `.dsh/briefs-tmp/b2.md` item 5 for context. Backend work is split across 5 parallel agents; YOU own only: `unify/src/engine/unify/agentBusImpl.ts` (new), `unify/src/engine/mcp/` (incl. delegateServer.ts), `unify/src/engine/runtime/delegation.ts`, `unify/src/engine/delegate/`, `unify/test/agent-bus.test.mjs` (new).
+Working copy: DSH (C:/Users/User/Documents/Projects/AI Stuff/Programs/DSH). Unify repo: `unify/` (= ../Unify). `unify/src/engine/` is a copy of DSH's `src/` running inside an Electron app. Read `docs/UNIFY_SPEC.md` (section 'Native agent communication' + Decisions) and the original backend brief `docs/briefs/b2.md` item 5 for context. Backend work is split across 5 parallel agents; YOU own only: `unify/src/engine/unify/agentBusImpl.ts` (new), `unify/src/engine/mcp/` (incl. delegateServer.ts), `unify/src/engine/runtime/delegation.ts`, `unify/src/engine/delegate/`, `unify/test/agent-bus.test.mjs` (new).
 
 Shared contracts (read-only): `unify/src/engine/unify/agentBus.ts` (AgentBus interface — implement it exactly) and `unify/src/engine/unify/settings.ts` (getUnifyFeature('agents.messaging'), getUnifyFeature('agents.messaging.scope') = 'everyone' | 'same-chat' | 'parent-child', getUnifyFeature('agents.maxParallel')).
 

@@ -25,6 +25,7 @@ export interface UpdateCheckResult {
 }
 
 let started = false;
+let initialTimer: ReturnType<typeof setTimeout> | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
 let listenersAttached = false;
 let notify: UpdaterOptions['notify'] = () => {};
@@ -110,7 +111,11 @@ export function startUpdater(options: UpdaterOptions): void {
   const check = (): void => {
     autoUpdater.checkForUpdates().catch(error => log(`check failed: ${errorText(error)}`));
   };
-  setTimeout(check, FIRST_CHECK_DELAY_MS).unref?.();
+  initialTimer = setTimeout(() => {
+    initialTimer = undefined;
+    check();
+  }, FIRST_CHECK_DELAY_MS);
+  initialTimer.unref?.();
   timer = setInterval(check, CHECK_INTERVAL_MS);
   timer.unref?.();
 }
@@ -134,8 +139,10 @@ export async function checkForUpdatesNow(): Promise<UpdateCheckResult> {
   }
 }
 
-/** Stops the 6-hour timer (used on shutdown and in tests). */
+/** Stops the startup and 6-hour timers (used on shutdown and in tests). */
 export function stopUpdater(): void {
+  if (initialTimer) clearTimeout(initialTimer);
+  initialTimer = undefined;
   if (timer) clearInterval(timer);
   timer = undefined;
   started = false;
