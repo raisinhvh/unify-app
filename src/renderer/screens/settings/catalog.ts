@@ -45,7 +45,7 @@ export const sections: SectionInfo[] = [
   { id: 'appearance', title: 'Appearance', lede: 'How Unify looks on this device.', keywords: 'theme colour color dark light walnut graphite paper slate moss ink oled density size text' },
   { id: 'motion', title: 'Motion', lede: 'How things move. The real value always changes at once; motion is only for show.' },
   { id: 'chats', title: 'Chats', lede: 'The Chats panel, panes and what each message carries.' },
-  { id: 'agents', title: 'Agents', lede: 'How agents run, review and talk to each other.', keywords: 'models decider smart auto rank subagent profile' },
+  { id: 'agents', title: 'Agents', lede: 'How chat agents run. Subagents, the explorer, helper models and messaging live in Agents.', keywords: 'subagent profile explorer helper models decider smart auto rank review name summary messaging' },
   { id: 'runtime', title: 'Runtime', lede: 'Tools and speedups for agent processes. Applies to agents started after a change.' },
   { id: 'knowledge', title: 'Knowledge', lede: 'Rules, skills and memory.' },
   { id: 'editor', title: 'Editor', lede: 'The Files screen and its code editor.' },
@@ -316,9 +316,28 @@ function engineExtraRows(): SettingRow[] {
   ];
 }
 
+/*
+ * Rows the Agents screen (screens/agents) draws instead of Settings, so each option lives in one place.
+ * They stay in this catalog (one row builder, parents and depth still resolve) but never reach `settingRows`.
+ */
+const agentsScreenKeys = new Set<string>([
+  'feature:agents.messaging',
+  'feature:agents.messaging.scope',
+  'feature:agents.messaging.showInChat',
+  'feature:agents.maxParallel',
+  'feature:agents.blockNativeAgents',
+  'feature:agents.imagesToParent',
+  'feature:agents.explorerRanges',
+  'engine:autoName',
+  'engine:reviewAgent',
+  'engine:smartAuto',
+]);
+
+const allRows: SettingRow[] = [...engineExtraRows(), ...featureRows(), ...engineFeatureRows()];
+
 /** Every row, in display order within its section. Built once; values are read reactively. */
 export const settingRows: SettingRow[] = (() => {
-  const all = [...engineExtraRows(), ...featureRows(), ...engineFeatureRows()];
+  const all = allRows.filter(row => !agentsScreenKeys.has(row.key));
   // Within a section: rows keep their source order, but children always follow their parent.
   const ordered: SettingRow[] = [];
   const placed = new Set<string>();
@@ -341,7 +360,14 @@ export const settingRows: SettingRow[] = (() => {
     .map(item => item.row);
 })();
 
-const rowByKey = new Map(settingRows.map(row => [row.key, row]));
+const rowByKey = new Map(allRows.map(row => [row.key, row]));
+
+/** One of the rows the Agents screen draws (see `agentsScreenKeys`). Throws on a key it does not own. */
+export function agentsScreenRow(key: string): SettingRow {
+  const row = rowByKey.get(key);
+  if (!row || !agentsScreenKeys.has(key)) throw new Error(`"${key}" is not an Agents screen row.`);
+  return row;
+}
 
 /** Whether every toggle above this row is on (a row under an off parent is hidden). */
 export function rowVisible(row: SettingRow): boolean {

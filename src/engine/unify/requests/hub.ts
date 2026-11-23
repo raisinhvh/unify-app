@@ -1,14 +1,16 @@
 /**
- * Toolpack Hub requests. The local fixture registry is the default source; the GitHub registry is opt-in via
- * `createHubRegistry('github')` and never called by tests or by the app unless a caller asks for it.
+ * Toolpack Hub requests, answered from the public GitHub registry (`raisinhvh/unify-hub`) unless the caller
+ * passes another `HubRegistry` (tests do, through `context.hubRegistry`).
  *
- * Browsing and installing are open to everyone. `hubPublish` checks the signed-in GitHub login against the
- * registry's `publishers.json` through `context.getGithubAuth`; the final toolpack list after an install comes
- * from the extension (`context.refreshToolpacks`) so it matches the real registry.
+ * Browsing and installing are open to everyone. `hubPublish` verifies the signed-in GitHub login against the
+ * registry's `publishers.json` through `context.getGithubAuth`, lets the user pick and confirm an installed
+ * pack through `context.pickOption` / `context.confirm`, and opens a pull request to the Hub. The final
+ * toolpack list after an install comes from the extension (`context.refreshToolpacks`) so it matches the real
+ * registry.
  */
 import * as path from 'node:path';
 import { createHubRegistry, HubInstallTarget, HubRegistry, installHubPack } from '../../hub';
-import { toolpackIdFor } from '../../hub/fixtures/packSource';
+import { toolpackIdFor } from '../../hub/ids';
 import type { GithubAuth } from '../github';
 import { recordHubInstall } from './toolpacks';
 import { RequestPaths } from './state';
@@ -52,6 +54,7 @@ export async function handleHubRequest(
       registry,
       id,
       toolpacksDir: paths.toolpacksDir,
+      unifyHome: paths.unifyHome,
       target,
       allowScript: message.allowScript === true,
       reply: send,
@@ -73,7 +76,11 @@ export async function handleHubRequest(
     } catch {
       auth = undefined;
     }
-    const result = await registry.publish(auth);
+    const result = await registry.publish(auth, {
+      toolpacksDir: paths.toolpacksDir,
+      pickOption: context.pickOption,
+      confirm: context.confirm,
+    });
     send({ type: 'hubPublishResult', ...result });
     return true;
   }

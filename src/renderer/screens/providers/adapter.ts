@@ -2,7 +2,7 @@
  * Accounts and models as the Providers screen sees them. Reads the engine's accounts, cursor login, usage and
  * models; the usage maths stays in store/usage.ts (DSH's, unchanged).
  *
- * Fields and actions the engine lacks (protocol-requests.md › Providers) go through typed requests here:
+ * Fields and actions the engine lacks (protocol-requests.md â€º Providers) go through typed requests here:
  * per-model on/off, model context size, account rename, account default model, OAuth sign-out.
  * Changes are optimistic until the engine's next accountsState / modelState.
  */
@@ -109,10 +109,42 @@ interface Overrides {
 }
 
 const [overrides, setOverrides] = createSignal<Overrides>({ labels: {}, defaults: {}, models: {} });
+const [removingModels, setRemovingModels] = createSignal<string[]>([]);
+
+export interface ServerModelsResult {
+  loading: boolean;
+  models: string[];
+  error?: string;
+  loaded: boolean;
+}
+
+const [serverModels, setServerModels] = createSignal<Record<string, ServerModelsResult>>({});
+export { serverModels };
 
 onHostMessage(message => {
   if (message.type === 'accountsState') setOverrides(current => ({ ...current, labels: {}, defaults: {} }));
-  if (message.type === 'modelState') setOverrides(current => ({ ...current, models: {} }));
+  if (message.type === 'modelState') {
+    setOverrides(current => ({ ...current, models: {} }));
+    const present = new Set((message.models || []).map(model => model.name));
+    setRemovingModels(current => (current.length ? current.filter(name => present.has(name)) : current));
+  }
+  if (message.type === 'modelRemoveFailed') {
+    setRemovingModels(current => current.filter(name => name !== message.name));
+  }
+  if (message.type === 'error') {
+    setRemovingModels(current => (current.length ? [] : current));
+  }
+  if (message.type === 'providerModels') {
+    setServerModels(current => ({
+      ...current,
+      [message.accountId]: {
+        loading: false,
+        models: message.models || [],
+        error: message.error,
+        loaded: true,
+      },
+    }));
+  }
 });
 
 function statusOf(usage: SidebarAccountUsage | undefined): AccountStatus {
@@ -204,6 +236,11 @@ export function brandedPlan(account: AccountView): string {
 export interface ModelView {
   id: string;
   name: string;
+  provider: string;
+  backend: string;
+  account: string;
+  speedOptions?: { label: string; backend: string }[];
+  effortOptions?: string[];
   enabled: boolean;
   contextWindow?: number;
 }
@@ -211,13 +248,22 @@ export interface ModelView {
 /** Models served through an account: bound to it, or unbound on its provider when it is the provider default. */
 export function accountModels(account: AccountView): ModelView[] {
   const local = overrides();
+  const removing = new Set(removingModels());
   return viewState.models
-    .filter((model: SidebarModel) =>
-      model.account ? model.account === account.id : model.provider === account.provider && account.isDefault,
-    )
+    .filter((model: SidebarModel) => {
+      if (removing.has(model.name) || removing.has(model.id)) return false;
+      return model.account && model.account !== 'default'
+        ? model.account === account.id
+        : model.provider === account.provider && account.isDefault;
+    })
     .map(model => ({
       id: model.id,
       name: model.name,
+      provider: model.provider,
+      backend: model.backend,
+      account: model.account || 'default',
+      speedOptions: model.speedOptions,
+      effortOptions: model.effortOptions,
       enabled: model.id in local.models ? local.models[model.id] : model.enabled !== false,
       contextWindow: model.contextWindow,
     }));
@@ -233,6 +279,183 @@ export function formatContext(tokens: number | undefined): string {
 export function setModelEnabled(modelId: string, enabled: boolean): void {
   setOverrides(current => ({ ...current, models: { ...current.models, [modelId]: enabled } }));
   postProviderRequest({ type: 'setModelEnabled', modelId, enabled });
+}
+
+const allowedModelProviders = new Set([
+  'deepseek-official',
+  'openai',
+  'anthropic',
+  'openrouter',
+  'opencode-go',
+  'mistral',
+  'self-hosted',
+  'cursor-acp',
+  'codex-cli',
+  'claude-cli',
+]);
+
+const reservedModelName = 'Smart Auto';
+const cursorModelSlug = /^[A-Za-z0-9][A-Za-z0-9._:/@[\]=,+-]{0,119}$/;
+
+export interface SaveModelInput {
+  account: AccountView;
+  backend: string;
+  name?: string;
+  originalName?: string;
+  speedOptions?: { label: string; backend: string }[];
+  effortOptions?: string[];
+}
+
+/** Client-side check matching src/engine/extension.ts saveModel rules. */
+export function validateModelInput(input: SaveModelInput): string | undefined {
+  if (!allowedModelProviders.has(input.account.provider)) {
+    return 'Choose a supported model provider.';
+  }
+  const backend = input.backend.trim();
+  if (!backend) return 'Enter a model ID.';
+  if (backend.length > 120) return 'Model ID must be 120 characters or fewer.';
+  const name = (input.name?.trim() || backend).trim();
+  if (!name || name.length > 80) return 'Display name must be 80 characters or fewer.';
+  if (name === reservedModelName) {
+    return `"${reservedModelName}" is reserved for the model picker. Choose another name.`;
+  }
+  if (input.account.provider === 'cursor-acp' && !cursorModelSlug.test(backend)) {
+    return 'Cursor model slugs may only use letters, digits and . _ : / @ [ ] = , + -';
+  }
+  const efforts = input.effortOptions || [];
+  if (efforts.length > 10 || efforts.some(item => !/^[a-z][a-z0-9_-]{0,29}$/.test(item)) ||
+    new Set(efforts).size !== efforts.length) {
+    return 'Enter up to 10 distinct effort values (lowercase letters, digits, _ or -).';
+  }
+  return undefined;
+}
+
+export function saveModel(input: SaveModelInput): void {
+  const backend = input.backend.trim();
+  const name = (input.name?.trim() || backend).trim();
+  const account = input.account.isCursor || input.account.provider === 'cursor-acp'
+    ? cursorAccountId
+    : input.account.id;
+  post({
+    type: 'saveModel',
+    ...(input.originalName ? { originalName: input.originalName } : {}),
+    name,
+    provider: input.account.provider,
+    backend,
+    account,
+    speedOptions: input.speedOptions || [],
+    effortOptions: input.effortOptions || [],
+  });
+}
+
+export function removeModel(name: string): void {
+  if (!name) return;
+  setRemovingModels(current => (current.includes(name) ? current : [...current, name]));
+  post({ type: 'removeModel', name });
+}
+
+export function loadServerModels(accountId: string): void {
+  if (!accountId) return;
+  setServerModels(current => ({
+    ...current,
+    [accountId]: {
+      loading: true,
+      models: current[accountId]?.models ?? [],
+      loaded: current[accountId]?.loaded ?? false,
+    },
+  }));
+  post({ type: 'listProviderModels', accountId });
+}
+
+export interface ModelSuggestion {
+  value: string;
+  label?: string;
+}
+
+const staticSuggestions: Record<string, ModelSuggestion[]> = {
+  'claude-cli': [
+    { value: 'claude-opus-5-5' },
+    { value: 'claude-sonnet-5-5' },
+    { value: 'claude-haiku-5-5' },
+    { value: 'claude-fable-5-2' },
+    { value: 'opus', label: 'Latest Opus' },
+    { value: 'sonnet', label: 'Latest Sonnet' },
+    { value: 'haiku', label: 'Latest Haiku' },
+  ],
+  anthropic: [
+    { value: 'claude-opus-5-5' },
+    { value: 'claude-sonnet-5-5' },
+    { value: 'claude-haiku-5-5' },
+    { value: 'claude-fable-5-2' },
+  ],
+  'codex-cli': [
+    { value: 'gpt-6-sol' },
+    { value: 'gpt-6-luna' },
+    { value: 'gpt-6-astra' },
+    { value: 'gpt-5.6-sol' },
+    { value: 'gpt-5.6-terra' },
+    { value: 'gpt-5.6-luna' },
+    { value: 'gpt-5.5' },
+    { value: 'gpt-5.3-codex-spark' },
+  ],
+  openai: [
+    { value: 'gpt-5.5' },
+  ],
+  'deepseek-official': [
+    { value: 'deepseek-v4-flash' },
+    { value: 'deepseek-chat' },
+    { value: 'deepseek-reasoner' },
+  ],
+  mistral: [
+    { value: 'codestral-latest' },
+    { value: 'mistral-large-latest' },
+    { value: 'devstral-latest' },
+  ],
+};
+
+/** Datalist suggestions for the Add model form: Cursor backends, self-hosted server list, or known provider IDs. */
+export function modelSuggestions(account: AccountView): ModelSuggestion[] {
+  if (account.provider === 'cursor-acp') {
+    const entries: ModelSuggestion[] = [
+      { value: 'auto', label: 'Auto' },
+      ...(viewState.cursorBackends || [])
+        .filter(item => item.value !== 'auto')
+        .map(item => ({ value: item.value, label: item.name })),
+    ];
+    const seen = new Set<string>();
+    return entries.filter(item => {
+      if (seen.has(item.value)) return false;
+      seen.add(item.value);
+      return true;
+    });
+  }
+  if (account.provider === 'self-hosted') {
+    return (serverModels()[account.id]?.models || []).map(value => ({ value }));
+  }
+  return staticSuggestions[account.provider] || [];
+}
+
+export function modelIdPlaceholder(provider: string): string {
+  switch (provider) {
+    case 'claude-cli':
+    case 'anthropic':
+      return 'e.g. claude-opus-4-1';
+    case 'codex-cli':
+    case 'openai':
+      return 'e.g. gpt-5.5';
+    case 'cursor-acp':
+      return 'auto, or a Cursor model slug';
+    case 'self-hosted':
+      return 'e.g. llama3.3 or model ID';
+    case 'deepseek-official':
+      return 'e.g. deepseek-v4-flash';
+    case 'mistral':
+      return 'e.g. codestral-latest';
+    case 'openrouter':
+      return 'e.g. anthropic/claude-opus-4-1';
+    default:
+      return 'Provider model ID';
+  }
 }
 
 export function renameAccount(accountId: string, label: string): void {
@@ -282,7 +505,7 @@ export function planDetail(account: AccountView): string {
   return `$${price}/mo`;
 }
 
-/** "Connected", "Signed out", "Needs attention", "Checking…". */
+/** "Connected", "Signed out", "Needs attention", "Checkingâ€¦". */
 export function accountStateLabel(account: AccountView): string {
   switch (account.status) {
     case 'signedOut':
@@ -290,7 +513,7 @@ export function accountStateLabel(account: AccountView): string {
     case 'error':
       return 'Needs attention';
     case 'loading':
-      return 'Checking…';
+      return 'Checkingâ€¦';
     default:
       return 'Connected';
   }
@@ -333,7 +556,7 @@ export interface AddProviderOption {
   method: ProviderMethod;
 }
 
-/** Figma "24b · Providers · Add provider", plus Cursor (OAuth is how Cursor connects). */
+/** Figma "24b Â· Providers Â· Add provider", plus Cursor (OAuth is how Cursor connects). */
 export const addProviderOptions: AddProviderOption[] = [
   { id: 'anthropic', provider: 'claude-cli', title: 'Anthropic', hint: 'Sign in with Claude', method: 'oauth' },
   { id: 'openai', provider: 'codex-cli', title: 'OpenAI', hint: 'Sign in with ChatGPT', method: 'oauth' },

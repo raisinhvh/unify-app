@@ -181,6 +181,16 @@ export function displayTool(rawTitle: string, rawDetail?: string): ToolDisplay {
     const full = command?.trim();
     return { kind: 'shell', title: full ? commandProgram(full) || 'Shell' : 'Shell', full: full || undefined };
   }
+  // Some ACP runtimes send only a generic label. Name the actual call from its input instead of showing "Unify Tool".
+  if (key === 'unifytool' || key === 'mcptool') {
+    const actual = ['tool', 'toolName', 'name', 'function'].find(field => typeof args?.[field] === 'string' && (args[field] as string).trim());
+    if (actual && compactKey(args![actual] as string) !== key) {
+      const input = args?.input ?? args?.arguments ?? args?.args;
+      const call = typeof input === 'string' ? input : input && typeof input === 'object' ? JSON.stringify(input) : undefined;
+      const shown = displayTool(args![actual] as string, call);
+      return { ...shown, full: rawDetail?.trim() ? `${name} ${rawDetail.trim()}` : shown.full };
+    }
+  }
   const named = NAMED_TOOLS[key];
   let detail: string | undefined;
   if (args) {
@@ -195,6 +205,9 @@ export function displayTool(rawTitle: string, rawDetail?: string): ToolDisplay {
   const full = rawDetail?.trim() ? `${name} ${rawDetail.trim()}` : undefined;
   if (named) {
     return { kind: named.kind, title: named.title, detail, full };
+  }
+  if (key === 'unifytool' || key === 'mcptool') {
+    return { kind: 'other', title: 'Agent tool', detail: detail || 'Running a tool through the agent runtime', full };
   }
   const words = name.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
   const title = words ? words[0].toUpperCase() + words.slice(1).toLowerCase() : 'Tool';

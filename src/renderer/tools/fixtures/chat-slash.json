@@ -1,0 +1,33 @@
+{
+  "extends": "base",
+  "persisted": {
+    "panelOpen": false,
+    "layout": { "preset": "single", "cells": ["s-slash"], "splits": { "x": 0.5, "y": 0.5 }, "focused": 0 }
+  },
+  "messages": [
+    {
+      "type": "sessionState",
+      "activeSessionId": "s-slash",
+      "sessions": [
+        { "id": "s-slash", "name": "Tidy settings page", "updatedAt": -2, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } }
+      ]
+    },
+    { "type": "approvalState", "mode": "auto" },
+    {
+      "type": "slashCommandsState",
+      "commands": [
+        { "name": "job", "description": "Plan a checklist from your spec, then work and review until it passes", "usage": "/job <spec>" },
+        { "name": "permissions", "description": "Show or change the approval mode for this workspace", "usage": "/permissions [ask | auto | full]" }
+      ]
+    },
+    {
+      "type": "timelineState",
+      "sessionId": "s-slash",
+      "subagents": {},
+      "timeline": [
+        { "id": "u1", "kind": "message", "role": "user", "text": "group the settings rows by section" },
+        { "id": "a1", "kind": "message", "role": "assistant", "text": "Grouped the rows under General, Models and Motion, each with a caption heading and a hairline between sections." }
+      ]
+    }
+  ]
+}

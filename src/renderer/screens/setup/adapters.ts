@@ -10,6 +10,7 @@ import { post } from '../../bridge';
 import { readPersisted, writePersisted } from '../../persist';
 import type { SidebarDependency, SidebarProject } from '../../protocol';
 import { onHostMessage, viewState } from '../../store';
+import { feature } from '../../store/features';
 import { onRequestReply, postRequest } from '../settings/adapters';
 
 /* Command-line tools */
@@ -84,10 +85,10 @@ export function tools(): ToolStatus[] {
   listen();
   // The engine decides `required` and which provider CLIs to list (see protocol-requests.md).
   const fromEngine = engineTools();
-  if (fromEngine) return fromEngine;
+  if (fromEngine) return fromEngine.filter(tool => tool.id !== 'codex' || !feature('agents.codexRuntime'));
   const list: ToolStatus[] = baseTools.map((tool): ToolStatus => ({ ...tool, state: 'checking', required: true }));
   for (const tool of providerTools) {
-    if (!providerInUse(tool.provider)) continue;
+    if (!providerInUse(tool.provider) || (tool.provider === 'codex-cli' && feature('agents.codexRuntime'))) continue;
     const dependency = dependencies()?.find(item => item.provider === tool.provider);
     let state: ToolState = 'checking';
     if (dependency) {

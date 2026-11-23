@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import { run, WindowsDependencies } from '../../runtime/dependencies';
 import { RequestPaths, readJsonFile, writeJsonFile } from './state';
 import { SetupState, SetupSummary, ToolStatus } from './types';
+import { getUnifyFeature } from '../settings';
 
 interface SetupFile {
   complete: boolean;
@@ -137,7 +138,7 @@ export async function checkTools(paths: RequestPaths): Promise<ToolStatus[]> {
     tools.push({ ...tool, ...result });
   }
   for (const tool of PROVIDER_TOOLS) {
-    if (!accounts.has(tool.provider)) continue;
+    if (!accounts.has(tool.provider) || (tool.provider === 'codex-cli' && getUnifyFeature('agents.codexRuntime'))) continue;
     let executable: string | undefined;
     if (INSTALLABLE_PROVIDERS.has(tool.provider)) {
       executable = await dependencies.providerCommand(tool.provider).catch(() => undefined);

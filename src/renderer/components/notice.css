@@ -14,6 +14,7 @@
 }
 
 .notice {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -67,13 +68,53 @@
   color: var(--text3);
 }
 
-.notice-message {
+.notice-loader {
+  overflow: visible;
+}
+
+/* Title then the muted message on one line; the whole text ends in an ellipsis, full text as a tooltip. */
+.notice-text {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.notice-message {
   color: var(--text);
+}
+
+.notice-detail {
+  margin-left: 8px;
+  color: var(--text3);
+}
+
+/*
+ * Thin determinate bar along the notice's bottom edge (a task with a percent), drawn over the border and inset
+ * past the rounded corners so the text keeps its breathing room. Notice.tsx springs the fill's scaleX and the
+ * bar's opacity.
+ */
+.notice-meter {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 1px;
+  background: var(--border);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.notice-meter-fill {
+  height: 100%;
+  border-radius: 1px;
+  background: var(--wood-light);
+  transform: scaleX(0);
+  transform-origin: left center;
+  will-change: transform;
 }
 
 .notice-action {

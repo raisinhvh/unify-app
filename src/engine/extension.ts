@@ -31,7 +31,7 @@ import type { AgentRuntimeOffer } from './update/plan';
 import { compareVersions } from './update/version';
 import { JobHost, JobState } from './goal/types';
 import { addDecision, createJob, runJob } from './goal/runner';
-import { parseSlash } from './slash/registry';
+import { parseApprovalMode, parseSlash, SLASH_COMMANDS } from './slash/registry';
 import { terminateProcessTree } from './runtime/cancellation';
 import { answersByQuestion, formatAnswers, parseQuestions } from './sidebar/questions';
 import { withExplorer, explorerPromptNote, formatExplorerRanges, parseExplorerRanges } from './runtime/explorer';
@@ -42,6 +42,7 @@ import { AcpRuntime, RuntimeEvent } from './runtime/acp';
 import type { StuckCommand } from './runtime/stuckCommands';
 import { CliTurn, OAuthCliRuntime, TurnUsage } from './runtime/oauthCli';
 import { codexBackend } from './runtime/models';
+import { CodexCliRuntime, setCodexCommand } from './runtime/codexCli';
 import { MirrorChange, mirrorPathExcluded, WorkspaceMirror } from './runtime/shadow';
 import { FileSummaries, readToolPath, SUMMARY_INSTRUCTIONS, SUMMARY_TOOL } from './summaries/store';
 import { setAgentPriority } from './runtime/priority';
@@ -63,7 +64,7 @@ import { describePackTools, LOAD_TOOLPACK, loadToolpackTool, packCommands, RUN_T
 import { UnifySidebarProvider, SidebarHostMessage, SidebarWebviewMessage } from './sidebar/provider';
 import { Dictation, normalizeVoiceCommands, VoiceCommand } from './voice/dictation';
 import { installedWhisper, installWhisper, WHISPER_DOWNLOAD_BYTES, WhisperEngine } from './voice/whisperInstall';
-import { ApprovalMode, CursorAccountState, SidebarAccessibility, SidebarExplorerRange, SidebarFeatureKey, SidebarFeatures, SidebarImage, SidebarJob, SidebarMedia, SidebarNameModel, SidebarProject, SidebarQuestion, SidebarSmartAutoRank, SidebarTimelineItem, SidebarSubagent, SidebarSubagentTool, defaultFeatures, normalizeAccessibility, normalizeCompactTokens, normalizeProcessPriority } from './sidebar/view';
+import { ApprovalMode, CursorAccountState, SidebarAccessibility, SidebarExplorerRange, SidebarFeatureKey, SidebarFeatures, SidebarImage, SidebarJob, SidebarMedia, SidebarNameModel, SidebarProject, SidebarQuestion, SidebarSmartAutoRank, SidebarTimelineItem, SidebarSubagent, SidebarSubagentTool, SidebarToolEvent, defaultFeatures, normalizeAccessibility, normalizeCompactTokens, normalizeProcessPriority } from './sidebar/view';
 import { allUnifyFeatures, getUnifyFeature, onUnifyFeatureChange, setUnifyFeature, unifyHome } from './unify/settings';
 import { agentBus } from './unify/agentBusImpl';
 import type { AgentBusEvent, AgentInfo, AgentMessage } from './unify/agentBus';
@@ -93,6 +94,8 @@ interface SessionRecord {
   accountId: string;
   job?: JobState;
   cliSessionId?: string;
+  /** Frozen when the chat is created. Missing on older chats means the previous agent-runtime route. */
+  codexRuntime?: boolean;
   previousCliSessionId?: string;
   checkpoint?: Checkpoint;
   contextTokens?: number;
@@ -168,8 +171,10 @@ type ResolvedRoute = ResolvedModel | { model: ModelEntry } | { model: ModelEntry
 
 /** Providers whose accounts are subscription sign-ins kept in OAuthCliAccounts: ChatGPT (Codex) and Claude. */
 function isOAuthProvider(value: string): value is OAuthCliProvider { return value === 'codex-cli' || value === 'claude-cli'; }
-/** Providers that run on a CLI harness instead of the agent runtime. Only Claude: ChatGPT (Codex) runs natively in Unify. */
+/** Claude always uses its CLI; Codex uses its CLI only for chats created with the agent-runtime option off. */
 function isCliProvider(value: string): value is 'claude-cli' { return value === 'claude-cli'; }
+function isCodexCliChat(record: SessionRecord): boolean { return record.provider === 'codex-cli' && record.codexRuntime === false; }
+function usesCliChat(record: SessionRecord): boolean { return isCliProvider(record.provider) || isCodexCliChat(record); }
 function runtimeLabel(provider: string): string { return provider === 'cursor-acp' ? 'Cursor' : provider === 'codex-cli' ? 'ChatGPT' : provider === 'claude-cli' ? 'Claude' : 'Unify'; }
 
 interface SubagentProfile { name: string; description?: string; model: string; effort?: string; speed?: string; mode: 'read-only' | 'edit'; tools?: boolean; enabled?: boolean }
@@ -226,7 +231,7 @@ interface TurnOptions {
   onFinish?(reply: string, cancelled: boolean): void;
 }
 /** A transcript entry; `internal` marks prompts Unify sent on its own, which are never shown as the user's messages. */
-type TranscriptItem = ChatMessage & { internal?: boolean };
+type TranscriptItem = ChatMessage & { internal?: boolean; displayText?: string; media?: MediaItem[] };
 
 function toSidebarJob(job: JobState): SidebarJob {
   const { phase, round, maxRounds, stopReason, criteria } = job;
@@ -238,6 +243,7 @@ interface Chat {
   mirror: WorkspaceMirror;
   review: ReviewController;
   cli: OAuthCliRuntime;
+  codexCli: CodexCliRuntime;
   running: boolean;
   cancelRequested: boolean;
   jobActive: boolean;
@@ -479,6 +485,7 @@ class ExtensionHost implements vscode.Disposable {
       } catch (error) { this.providerErrors.set(provider, error instanceof Error ? error.message : String(error)); }
       return { provider, installed, installing: this.providerInstalls.has(provider), error: this.providerErrors.get(provider) };
     }));
+    setCodexCommand(vscode.workspace.getConfiguration('unify').get<string>('runtime.codexPath')?.trim() || undefined);
     this.sidebar.postMessage({ type: 'dependencyState', providers });
   }
 
@@ -1118,12 +1125,12 @@ class ExtensionHost implements vscode.Disposable {
     await this.refreshAccount();
   }
 
-  private async ensureRuntime(route: ResolvedRoute, cwd: string, ownerId: string, target: AudienceTarget = { kind: 'main' }): Promise<{ runtime: AcpRuntime; key: string } | undefined> {
-    await this.ensureNode();
-    if ('oauthAccount' in route && isCliProvider(route.model.provider)) {
-      await this.refreshDependencies();
+  private async ensureRuntime(route: ResolvedRoute, cwd: string, ownerId: string, target: AudienceTarget = { kind: 'main' }, codexCli = false): Promise<{ runtime: AcpRuntime; key: string } | undefined> {
+    if ('oauthAccount' in route && (isCliProvider(route.model.provider) || (route.model.provider === 'codex-cli' && codexCli))) {
+      if (isCliProvider(route.model.provider)) await this.refreshDependencies();
       return undefined;
     }
+    await this.ensureNode();
     if (route.model.provider === 'cursor-acp') {
       const key = `cursor-acp:${ownerId}`;
       const runtime = this.runtimeFor(key);
@@ -1440,12 +1447,13 @@ class ExtensionHost implements vscode.Disposable {
     effort = effort ?? (override ? record.effort : this.choiceFor(this.availableModel(model.name)).effort);
     const accountId = 'oauthAccount' in route ? route.oauthAccount.id : 'account' in route ? route.account.id : 'cursor-login';
     const cwd = chat.mirror.cwd;
-    const oauth = isCliProvider(model.provider);
+    const oauth = isCliProvider(model.provider) || (model.provider === 'codex-cli' && record.codexRuntime === false);
     const sameBackendSession = record.provider === model.provider && (oauth || model.provider === 'cursor-acp') && record.accountId === accountId;
-    const slot = await this.ensureRuntime(route, cwd, chat.ownerId);
+    const slot = await this.ensureRuntime(route, cwd, chat.ownerId, { kind: 'main' }, oauth && model.provider === 'codex-cli');
     const previous = { runtime: chat.runtime, key: chat.runtimeKey };
     if (oauth || !slot) {
       if (!sameBackendSession) { record.cliSessionId = undefined; record.explorerTokens = 0; chat.handoffPending = true; }
+      if (previous.runtime) await previous.runtime.closeSession(this.rid(record)).catch(() => undefined);
       chat.runtime = undefined; chat.runtimeKey = undefined;
     } else {
       const reuse = previous.runtime === slot.runtime && previous.key === slot.key && record.provider === model.provider && model.provider === 'cursor-acp';
@@ -1489,6 +1497,7 @@ class ExtensionHost implements vscode.Disposable {
       // Fixed per chat: the provider session is tied to its working directory.
       direct: vscode.workspace.getConfiguration('unify').get<boolean>('runtime.mirror', true) ? undefined : true,
       modelName: model.name, provider: model.provider, backend: model.backend,
+      codexRuntime: getUnifyFeature('agents.codexRuntime'),
       effort: auto ? first?.effort : this.choiceFor(selected).effort, accountId: account?.id || 'cursor-login', updatedAt: Date.now(),
       ...(auto ? { smartAuto: true } : {}),
     };
@@ -1503,7 +1512,7 @@ class ExtensionHost implements vscode.Disposable {
 
   private addChat(record: SessionRecord, mirror: WorkspaceMirror, review: ReviewController, ownerId: string, slot?: { runtime: AcpRuntime; key: string }): Chat {
     const chat: Chat = {
-      record, mirror, review, cli: new OAuthCliRuntime(), running: false, cancelRequested: false, jobActive: false, jobCancelled: false, jobNotes: [], jobInterrupted: false, queue: [], turnEntryId: '',
+      record, mirror, review, cli: new OAuthCliRuntime(), codexCli: new CodexCliRuntime(), running: false, cancelRequested: false, jobActive: false, jobCancelled: false, jobNotes: [], jobInterrupted: false, queue: [], turnEntryId: '',
       segment: 0, startedTools: new Set(), subagentIds: new Set(), delegationToolIds: new Set(), subagentText: new Map(), turnReply: '', turnTools: [], handoffPending: !!record.checkpoint,
       ownerId, runtime: slot?.runtime, runtimeKey: slot?.key, locks: new Map(), children: new Set(), background: new Map(),
     };
@@ -1593,7 +1602,7 @@ class ExtensionHost implements vscode.Disposable {
     let needsHandoff = false;
     try {
       if (this.deletedSessions.has(record.id)) throw new Error('This chat was deleted.');
-      slot = await this.ensureRuntime(route, mirror.cwd, ownerId);
+      slot = await this.ensureRuntime(route, mirror.cwd, ownerId, { kind: 'main' }, isCodexCliChat(record));
       let runtimeId = fresh && slot ? await slot.runtime.newSession(mirror.cwd, this.mcpServers(ownerId)) : this.rid(record);
       if (slot && !fresh) {
         try {
@@ -1663,8 +1672,10 @@ class ExtensionHost implements vscode.Disposable {
     }
     (this.transcripts.get(id) || []).forEach((item, index) => {
       if (item.internal) return;
-      if (item.role === 'user') this.sidebar.postMessage({ type: 'userMessage', sessionId: id, entryId: `history:${index}`, text: item.text });
-      else this.sidebar.postMessage({ type: 'assistantDelta', sessionId: id, entryId: `history:${index}`, text: item.text });
+      if (item.role === 'user') {
+        if ((item.displayText ?? item.text) || item.media?.length) this.sidebar.postMessage({ type: 'userMessage', sessionId: id, entryId: `history:${index}`, text: item.displayText ?? item.text });
+        if (item.media?.length) this.sidebar.postMessage({ type: 'mediaMessage', sessionId: id, entryId: `history-media:${index}`, items: item.media });
+      } else this.sidebar.postMessage({ type: 'assistantDelta', sessionId: id, entryId: `history:${index}`, text: item.text });
     });
   }
 
@@ -1940,10 +1951,20 @@ class ExtensionHost implements vscode.Disposable {
     if (!this.deletedSessions.has(chat.record.id)) this.postJob(chat.record);
   }
 
-  private async startJob(spec: string, images?: SidebarImage[]): Promise<void> {
+  private async startJob(spec: string, images?: SidebarImage[], chatId?: string): Promise<void> {
     if (!spec.trim()) { this.sidebar.postMessage({ type: 'error', message: 'Usage: /job <spec>' }); return; }
-    if (!this.active) await this.newChat();
-    const record = this.active!;
+    let record: SessionRecord;
+    if (chatId) {
+      const target = this.sessions().find(item => item.id === chatId);
+      if (!target || this.deletedSessions.has(chatId)) {
+        this.sidebar.postMessage({ type: 'error', message: 'That chat no longer exists.' });
+        return;
+      }
+      record = target;
+    } else {
+      if (!this.active) await this.newChat();
+      record = this.active!;
+    }
     const busy = (): boolean => !!this.promptStarts.has(record.id) || !!this.chats.get(record.id)?.running || !!this.chats.get(record.id)?.jobActive || !!record.job && ['draft', 'work', 'verify'].includes(record.job.phase);
     if (busy()) { this.sidebar.postMessage({ type: 'error', message: 'Finish or cancel the current task before starting a job.' }); return; }
     let attachments = await this.saveImages(images, record.id);
@@ -2089,20 +2110,39 @@ class ExtensionHost implements vscode.Disposable {
     queued: { path: string; mimeType: string; data: string; name: string }[] | undefined,
     fromQueue: boolean, mode: 'interrupt' | 'queue', started: () => void, created?: Promise<void>, options: TurnOptions = {}): Promise<void> {
     const files = queued || images;
-    const historyPrompt = [prompt.trim(), files?.length ? `[Files: ${files.map(file => String(file?.name || 'file').slice(0, 200)).join(', ')}]` : ''].filter(Boolean).join('\n\n');
-    const shown = options.shown ?? historyPrompt;
+    const nonImageFiles = files?.filter(file => !String(file.mimeType || '').startsWith('image/')) || [];
+    const fileLabel = (items: { name: string }[]): string => items.length ? `[Files: ${items.map(file => String(file.name || 'file').slice(0, 200)).join(', ')}]` : '';
+    // Keep the full attachment list in model history, but show only non-image filenames in the UI.
+    const historyPrompt = [prompt.trim(), fileLabel(files || [])].filter(Boolean).join('\n\n');
+    const shown = options.shown ?? [prompt.trim(), fileLabel(nonImageFiles)].filter(Boolean).join('\n\n');
+    let attachmentMedia: MediaItem[] = [];
     const turnEntryId = randomUUID();
     let displayed = false;
-    const display = (): void => {
+    const echo = (): void => {
       this.replayTranscript(recordToLoad.id);
-      if (!options.internal) this.sidebar.postMessage({ type: 'userMessage', sessionId: recordToLoad.id, entryId: `user:${turnEntryId}`, text: shown });
+      if (!options.internal && (shown || !!files?.length)) {
+        this.sidebar.postMessage({ type: 'userMessage', sessionId: recordToLoad.id, entryId: `user:${turnEntryId}`, text: shown });
+      }
       displayed = true;
     };
-    // Show accepted idle-chat messages before any file I/O or cold backend load.
+    const displayMedia = (): void => {
+      if (!options.internal && attachmentMedia.length) {
+        this.sidebar.postMessage({ type: 'mediaMessage', sessionId: recordToLoad.id, entryId: `user-media:${turnEntryId}`, items: attachmentMedia });
+      }
+    };
+    const canEcho = (): boolean => !this.chats.get(recordToLoad.id)?.running && (!this.chats.get(recordToLoad.id)?.jobActive || !!options.job);
+    // Echo the text immediately; attachment persistence can take time, and their resolvable media URLs arrive afterwards.
     // Running-chat submissions remain in the queue until their turn begins.
-    if (!this.chats.get(recordToLoad.id)?.running && (!this.chats.get(recordToLoad.id)?.jobActive || options.job)) display();
+    if (canEcho()) echo();
     if (created) await created;
     const attachments = queued ?? await this.saveImages(images, recordToLoad.id);
+    attachmentMedia = attachments.filter(file => file.mimeType.startsWith('image/')).flatMap(file => {
+      const hash = file.path.split(/[\\/]/).pop()?.split('.')[0];
+      const record = hash ? this.media.recordOf(hash) : undefined;
+      return record ? [this.mediaItem(record, file.name)] : [];
+    });
+    if (!displayed && canEcho()) echo();
+    if (displayed) displayMedia();
     let target: Chat;
     try { target = await this.loadChat(recordToLoad); }
     catch (error) { if (this.deletedSessions.has(recordToLoad.id)) return; throw error; }
@@ -2110,7 +2150,7 @@ class ExtensionHost implements vscode.Disposable {
     if (target.ping) { target.cli.cancel(); await target.ping; }
     if (target.jobActive && !options.job) {
       // A message sent during a job joins the job's decisions log. Sending (not queueing) ends the current step so it reruns with the message.
-      if (!displayed) display();
+      if (!displayed) { echo(); displayMedia(); }
       target.jobNotes.push({ prompt: prompt.trim(), images: attachments });
       if (mode === 'interrupt') { target.jobInterrupted = true; this.cancel(false, target.record.id); }
       return;
@@ -2125,7 +2165,7 @@ class ExtensionHost implements vscode.Disposable {
       return;
     }
     if (fromQueue && !target) return;
-    if (!displayed) display();
+    if (!displayed) { echo(); displayMedia(); }
     const active = this.active;
     const picking = !fromQueue && (active?.id === target.record.id || options.chatId === target.record.id);
     // Smart Auto picks the model for messages the user sent, not for job steps or Unify's own prompts.
@@ -2208,12 +2248,13 @@ class ExtensionHost implements vscode.Disposable {
         await this.smartAutoPick(chat, prompt, turnEntryId);
         if (chat.cancelRequested) return;
       }
-      if (!isCliProvider(record.provider) && !chat.runtime?.isRunning) {
-        const configured = this.availableModel(record.modelName);
-        if (!configured) throw new Error('The model for this chat is no longer configured.');
-        await this.switchModel(chat, { ...configured, provider: record.provider, backend: record.backend, account: record.accountId });
-      } else if (record.provider === 'codex-cli' && !(await this.refreshCodexRuntime(chat))) {
-        chat.handoffPending = true;
+      if (!usesCliChat(record)) {
+        if (!chat.runtime?.isRunning) {
+          const configured = this.availableModel(record.modelName);
+          if (!configured) throw new Error('The model for this chat is no longer configured.');
+          await this.switchModel(chat, { ...configured, provider: record.provider, backend: record.backend, account: record.accountId });
+        }
+        if (record.provider === 'codex-cli' && !(await this.refreshCodexRuntime(chat))) chat.handoffPending = true;
       }
       if (chat.cancelRequested) return;
       const hint = vscode.workspace.getConfiguration('unify').get<number>('checkpointHint', 80000);
@@ -2240,7 +2281,7 @@ class ExtensionHost implements vscode.Disposable {
       // from the transcript, which the agent can still read and search.
       const compactAt = this.autoCompactAt();
       const conversation = (record.contextTokens || 0) - (record.baseTokens || 0);
-      const live = isCliProvider(record.provider) ? !!record.cliSessionId : !!chat.sent;
+      const live = usesCliChat(record) ? !!record.cliSessionId : !!chat.sent;
       if (!options.internal && compactAt && !chat.handoffPending && live && conversation >= compactAt) {
         this.output.appendLine(`Auto compaction: "${record.name}" reached about ${Math.round(conversation / 1000)}k tokens of conversation; continuing in a fresh session from a summary.`);
         await this.freshBackendSession(chat, 'auto compaction');
@@ -2272,12 +2313,12 @@ class ExtensionHost implements vscode.Disposable {
         record.checkpoint = undefined;
         await this.saveSession(record);
       }
-      history.push({ role: 'user', text: historyPrompt + (fileContext.length ? '\nContext files:\n' + fileContext.join('\n') : ''), ...(options.internal ? { internal: true } : {}) });
+      history.push({ role: 'user', text: historyPrompt + (fileContext.length ? '\nContext files:\n' + fileContext.join('\n') : ''), displayText: shown, ...(attachmentMedia.length ? { media: attachmentMedia } : {}), ...(options.internal ? { internal: true } : {}) });
       chat.turnReply = '';
       const packsOn = this.turnOnPacks(chat, prompt);
       // Claude takes the fixed instructions as system text on every run, so they never enter the conversation. Other
       // runtimes get them once per session. Editor context is only resent when it changed.
-      const oauth = isCliProvider(record.provider);
+      const oauth = usesCliChat(record);
       const instructions = this.agentInstructions(chat, bridged);
       const context = this.editorContext();
       const session = oauth ? record.cliSessionId : this.rid(record);
@@ -2318,8 +2359,19 @@ class ExtensionHost implements vscode.Disposable {
       const freshBackend = oauth ? !record.cliSessionId : !!this.freshSessions?.delete(this.rid(record));
       chat.measureBase = freshBackend ? Math.ceil(fullPrompt.length / 4) : undefined;
       // A job step must end on its own, so jobs keep compacting between turns only.
-      chat.compactWatch = compactAt && bridged && !chat.jobActive ? { threshold: compactAt } : undefined;
-      if (oauth) {
+      chat.compactWatch = compactAt && bridged && !chat.jobActive && !isCodexCliChat(record) ? { threshold: compactAt } : undefined;
+      if (isCodexCliChat(record)) {
+        const account = this.oauthAccounts.get(record.accountId);
+        if (!account) throw new Error('The ChatGPT account for this chat is missing. Connect it again.');
+        record.cliSessionId = await chat.codexCli.prompt({ account, cwd: chat.mirror.cwd, backend: codexBackend(record.backend),
+          system: instructions, prompt: fullPrompt, sessionId: record.cliSessionId, effort: record.effort,
+          images: imageAttachments.map(file => ({ path: file.path, mimeType: file.mimeType })),
+          readOnly: this.jobReadOnly(chat), fullAccess: this.approvalMode === 'full' && !this.jobReadOnly(chat),
+          delegate: this.delegateConfig(chat.ownerId), onText: postText, onMessageBreak: breakMessage, onTool: postTool,
+          onUsage: usage => { this.logUsage(record.id, 'main', record.modelName, usage); this.noteContext(chat, usage.context ?? usage.total.input + usage.total.cacheRead); } });
+        record.lastTurnAt = Date.now();
+        await this.saveSession(record);
+      } else if (oauth) {
         const account = this.oauthAccounts.get(record.accountId);
         if (!account) throw new Error('The selected OAuth account is missing. Connect it again.');
         await this.shareGlobalInstructions(account);
@@ -2780,10 +2832,10 @@ class ExtensionHost implements vscode.Disposable {
       record.baseTokens = Math.max(0, tokens - chat.measureBase);
       chat.measureBase = undefined;
     }
-    const watch = chat.running ? chat.compactWatch : undefined;
+    const watch = chat.running && !isCodexCliChat(record) ? chat.compactWatch : undefined;
     const step = watch && compactStep(watch, tokens - (record.baseTokens || 0));
     if (!watch || !step) return;
-    const runtime = isCliProvider(record.provider) ? undefined : chat.runtime;
+    const runtime = usesCliChat(record) ? undefined : chat.runtime;
     const turn: TurnChannel = runtime ? { interrupt: () => runtime.interrupt(this.rid(record)) } : chat.cli;
     if (!sendCompactRequest(watch, turn, chatCompactRequest(tokens, step === 'urge'))) {
       // The turn is already ending; the next message compacts between turns as before.
@@ -3163,8 +3215,16 @@ class ExtensionHost implements vscode.Disposable {
   private async autoName(sessionId: string, prompt: string, cwd: string): Promise<void> {
     let choice: SidebarNameModel = {};
     try {
+      if (!this.feature('autoName')) return;
       choice = this.modelSetting('nameModel');
-      if (!this.feature('autoName') || !choice.model) return;
+      if (!choice.model) {
+        // No name model configured: name with the chat's own model at its cheapest effort.
+        const record = this.chats.get(sessionId)?.record ?? this.sessions().find(item => item.id === sessionId);
+        const model = record ? this.availableModel(record.modelName) : undefined;
+        if (!model || model.enabled === false) return;
+        const effort = lowestEffort(model.effortOptions);
+        choice = { model: model.name, ...(effort ? { effort } : {}) };
+      }
       // No two chats share a rail icon.
       const taken = (): string[] => this.sessions().flatMap(item => item.id !== sessionId && item.icon ? [item.icon] : []);
       const named = parseChatName(await this.runOneShot({ ...choice, model: choice.model }, cwd, chatTitlePrompt(prompt, taken())));
@@ -3201,6 +3261,13 @@ class ExtensionHost implements vscode.Disposable {
     let timer: NodeJS.Timeout | undefined;
     const limit = (cancel: () => void): void => { timer = setTimeout(cancel, timeoutMs); onCancel?.(cancel); };
     try {
+      if ('oauthAccount' in route && route.model.provider === 'codex-cli' && (this.chat?.mirror.cwd === cwd ? isCodexCliChat(this.chat.record) : !getUnifyFeature('agents.codexRuntime'))) {
+        const cli = new CodexCliRuntime();
+        limit(() => cli.cancel());
+        await cli.prompt({ account: route.oauthAccount, cwd, backend: codexBackend(backend), effort: choice.effort,
+          prompt, readOnly: true, system: 'Reply with only what the request asks for. Do not use tools.', onText: text => { reply += text; }, onTool: () => undefined });
+        return reply;
+      }
       if ('oauthAccount' in route && isCliProvider(route.model.provider)) {
         const cli = new OAuthCliRuntime();
         let timedOut = false;
@@ -3677,7 +3744,27 @@ class ExtensionHost implements vscode.Disposable {
         this.output.appendLine(`Mid-turn compaction: asked subagent "${name}" to checkpoint at about ${Math.round(tokens / 1000)}k tokens${step === 'urge' ? ' (again)' : ''}.`);
       };
       let runSession: (sessionTask: string) => Promise<void>;
-      if ('oauthAccount' in route && isCliProvider(route.model.provider)) {
+      if ('oauthAccount' in route && route.model.provider === 'codex-cli' && isCodexCliChat(chat.record)) {
+        const cli = new CodexCliRuntime();
+        run.cancel = () => { cancelled = true; cli.cancel(); };
+        // `codex exec` is single-turn and cannot receive a mid-turn compaction request.
+        runSession = async sessionTask => {
+          if (cancelled) throw new Error('Cancelled.');
+          await cli.prompt({ account: route.oauthAccount, cwd: chat.mirror.cwd, backend: codexBackend(backend),
+            effort, readOnly, fullAccess: this.approvalMode === 'full' && !readOnly,
+            delegate: profile.tools === false ? undefined : this.delegateConfig(owner, true),
+            prompt: promptFor(sessionTask, true), onText, onTool,
+            onUsage: usage => {
+              this.logUsage(chat.record.id, explorer ? 'explorer' : 'subagent', entry.name, usage);
+              if (explorer) {
+                const total = usage.total;
+                explorerTokens += total.input + total.cacheRead + total.cacheWrite + total.output;
+                chat.record.explorerTokens = (chat.record.explorerTokens || 0) + total.input + total.cacheRead + total.cacheWrite + total.output;
+                this.refreshSessions();
+              }
+            } });
+        };
+      } else if ('oauthAccount' in route && isCliProvider(route.model.provider)) {
         const account = route.oauthAccount;
         const cli = new OAuthCliRuntime();
         run.cancel = () => { cancelled = true; cli.cancel(); };
@@ -3822,7 +3909,9 @@ class ExtensionHost implements vscode.Disposable {
       this.postRun(chat.record.id, 'cancelling', 'Cancelling…');
       chat.stopDecider?.();
       for (const child of [...chat.children]) if (!child.background) child.cancel();
-      if (isCliProvider(chat.record.provider)) chat.cli.cancel(); else chat.runtime?.cancel(this.rid(chat.record));
+      if (isCodexCliChat(chat.record)) chat.codexCli.cancel();
+      else if (isCliProvider(chat.record.provider)) chat.cli.cancel();
+      else chat.runtime?.cancel(this.rid(chat.record));
     }
   }
 
@@ -3961,7 +4050,7 @@ class ExtensionHost implements vscode.Disposable {
     for (const chat of this.chats.values()) this.cancel(true, chat.record.id);
     const id = this.active?.id;
     for (const [key, runtime] of [...this.runtimes]) { this.runtimes.delete(key); await runtime.stop(); runtime.dispose(); }
-    for (const chat of [...this.chats.values()]) if (!chat.running || !isCliProvider(chat.record.provider)) { chat.runtime = undefined; chat.runtimeKey = undefined; await this.unloadChat(chat.record.id); }
+    for (const chat of [...this.chats.values()]) if (!chat.running || !usesCliChat(chat.record)) { chat.runtime = undefined; chat.runtimeKey = undefined; await this.unloadChat(chat.record.id); }
     if (id) await this.continueChat(id);
   }
 
@@ -4063,11 +4152,11 @@ class ExtensionHost implements vscode.Disposable {
       if (rawKind === 'read') this.noteRead(chat.mirror.cwd, location);
       if (!chat.startedTools.has(id)) { chat.startedTools.add(id); chat.segment++; }
       const rawInput = update.rawInput && typeof update.rawInput === 'object' ? JSON.stringify(update.rawInput) : undefined;
-      const shown = displayTool(title, rawInput && toolKind === 'shell' ? rawInput : detail);
+      const shown = displayTool(title, rawInput || detail);
       const state = update.status === 'failed' ? 'error' : kind === 'tool_call' || update.status === 'in_progress' ? 'running' : 'complete';
       const entryId = `tool:${chat.turnEntryId}:${id}`;
       const shownEvent = {
-        id, kind: shown.kind === 'other' ? toolKind : shown.kind, title: shown.title, detail: shown.detail, full: shown.full, state,
+        id, kind: (shown.kind === 'other' ? toolKind : shown.kind) as SidebarToolEvent['kind'], title: shown.title, detail: shown.detail, full: shown.full, state: state as SidebarToolEvent['state'],
         internal: internalToolOf({ tool: title, input: update.rawInput ?? detail }, places),
       };
       this.sidebar.postMessage({ type: 'toolEvent', sessionId: chatId, entryId, event: shownEvent });
@@ -4092,13 +4181,14 @@ class ExtensionHost implements vscode.Disposable {
     const options = Array.isArray(params.options) ? params.options as Record<string, unknown>[] : [];
     const allow = options.find(option => option.kind === 'allow_once');
     const reject = options.find(option => option.kind === 'reject_once');
-    const title = typeof tool?.title === 'string' ? tool.title : 'Unify tool';
+    const title = typeof tool?.title === 'string' ? tool.title : 'Agent tool';
     if (!parent) return reject ? String(reject.optionId || '') : undefined;
     const locations = Array.isArray(tool?.locations) ? tool.locations as Record<string, unknown>[] : [];
     const path = locations.find(item => typeof item.path === 'string')?.path;
     const isEdit = ['edit', 'delete', 'move'].includes(String(tool?.kind || ''));
     const actor: Actor = child ? { owner: child.owner, label: child.label, readOnly: child.readOnly } : PARENT;
-    const detail = `${title} ${JSON.stringify(tool?.rawInput ?? tool?.content ?? '')}`;
+    const shown = displayTool(title, tool?.rawInput && typeof tool.rawInput === 'object' ? JSON.stringify(tool.rawInput) : undefined);
+    const detail = `${shown.title}${shown.detail ? `: ${shown.detail}` : ''}${path ? ` (${path})` : ''} ${JSON.stringify(tool?.rawInput ?? tool?.content ?? '')}`;
     const verdict = await this.decideApproval(parent, actor, detail, isEdit ? { tool: 'Edit', input: { file_path: typeof path === 'string' ? path : undefined } } : { tool: title, input: {} });
     return verdict === true ? String(allow?.optionId || '') : reject ? String(reject.optionId || '') : undefined;
   }
@@ -4222,11 +4312,21 @@ class ExtensionHost implements vscode.Disposable {
         case 'checkDependencies': await this.refreshDependencies(); break;
         case 'installProvider': await this.installProvider(message.provider); break;
         case 'pageChanged': this.sidebar.setPage(message.page); if (message.page === 'accounts') this.refreshUsage(); if (message.page === 'instructions') await this.refreshInstructions(); break;
-        case 'ready': this.sidebar.setShutdown(this.shutdown.getStatus()); this.sidebar.postMessage({ type: 'usageState', usage: this.usage.snapshot() }); this.refreshUsage(); if (this.active) { this.restoreJob(this.active); this.postJob(this.active); } await this.refreshInstructions(); this.postToolpacks(); this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode }); this.refreshCustomize(); this.postUnifyFeatures(); if (this.agentRoster.size) this.sidebar.postMessage({ type: 'agentRoster', agents: [...this.agentRoster.values()] }); this.refreshMemory(); this.sync.post(); this.refreshSubagents(); this.refreshModels(); this.refreshSessions(); await this.refreshAccount(); await this.refreshAccounts(); break;
+        case 'ready': this.sidebar.setShutdown(this.shutdown.getStatus()); this.sidebar.postMessage({ type: 'usageState', usage: this.usage.snapshot() }); this.refreshUsage(); if (this.active) { this.restoreJob(this.active); this.postJob(this.active); } await this.refreshInstructions(); this.postToolpacks(); this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode }); this.sidebar.postMessage({ type: 'slashCommandsState', commands: SLASH_COMMANDS }); this.refreshCustomize(); this.postUnifyFeatures(); if (this.agentRoster.size) this.sidebar.postMessage({ type: 'agentRoster', agents: [...this.agentRoster.values()] }); this.refreshMemory(); this.sync.post(); this.refreshSubagents(); this.refreshModels(); this.refreshSessions(); await this.refreshAccount(); await this.refreshAccounts(); break;
         case 'sendPrompt': {
           const slash = parseSlash(message.prompt);
-          if (slash?.name === 'job') await this.startJob(slash.args, message.images);
-          else await this.sendPrompt(message.prompt, message.images, undefined, undefined, message.mode === 'queue' ? 'queue' : 'interrupt', { chatId: message.chatId });
+          if (slash?.name === 'job') await this.startJob(slash.args, message.images, message.chatId);
+          else if (slash?.name === 'permissions') {
+            const mode = slash.args ? parseApprovalMode(slash.args) : undefined;
+            if (mode) {
+              this.approvalMode = mode;
+              await this.context.workspaceState.update(APPROVAL_KEY, mode);
+            }
+            // With no or an unknown mode the UI opens its own picker.
+            this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode });
+          } else {
+            await this.sendPrompt(message.prompt, message.images, undefined, undefined, message.mode === 'queue' ? 'queue' : 'interrupt', { chatId: message.chatId });
+          }
           break;
         }
         case 'unqueue': { const target = this.chats.get(message.sessionId); if (target && Number.isInteger(message.index)) { target.queue.splice(message.index, 1); this.postQueue(target); } break; }
@@ -4417,13 +4517,41 @@ class ExtensionHost implements vscode.Disposable {
         refreshToolpacks: () => this.postToolpacks(),
         installToolpack: async sourcePath => { await this.toolpacks.add(sourcePath); },
         openExternal: url => vscode.env.openExternal(vscode.Uri.parse(url)),
-        getGithubAuth },
+        getGithubAuth,
+        pickOption: async (items, placeHolder) => {
+          const picked = await vscode.window.showQuickPick(
+            items.map(item => ({
+              label: item.label,
+              description: item.description,
+              detail: item.detail,
+              id: item.id,
+            })),
+            { placeHolder },
+          );
+          return picked?.id;
+        },
+        confirm: async (message, detail) => {
+          const choice = await vscode.window.showInformationMessage(message, { modal: true, detail }, 'Publish');
+          return choice === 'Publish';
+        } },
     );
     if (!handled) {
       const type = (message as { type?: unknown }).type;
       this.output.appendLine(`Unhandled sidebar message: ${typeof type === 'string' ? type : '(no type)'}`);
     }
   }
+}
+
+/** Reasoning effort levels from cheapest to most expensive; unknown values sort last. */
+const EFFORT_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+function lowestEffort(options: readonly string[] | undefined): string | undefined {
+  if (!options?.length) return undefined;
+  const rank = (level: string): number => {
+    const index = EFFORT_LEVELS.indexOf(level);
+    return index === -1 ? EFFORT_LEVELS.length : index;
+  };
+  return options.reduce((lowest, candidate) => rank(candidate) < rank(lowest) ? candidate : lowest);
 }
 
 let host: ExtensionHost | undefined;

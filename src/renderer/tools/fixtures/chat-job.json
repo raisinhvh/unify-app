@@ -1,0 +1,45 @@
+{
+  "extends": "base",
+  "persisted": {
+    "panelOpen": false,
+    "layout": { "preset": "single", "cells": ["s-job"], "splits": { "x": 0.5, "y": 0.5 }, "focused": 0 }
+  },
+  "messages": [
+    {
+      "type": "sessionState",
+      "activeSessionId": "s-job",
+      "sessions": [
+        { "id": "s-job", "name": "Pane header polish job", "updatedAt": -1, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
+        { "id": "s-acp", "name": "Fix ACP init timeout", "updatedAt": -3, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } }
+      ]
+    },
+    { "type": "runState", "sessionId": "s-job", "state": "tool", "label": "header.tsx" },
+    {
+      "type": "jobState",
+      "sessionId": "s-job",
+      "job": {
+        "phase": "work",
+        "round": 2,
+        "maxRounds": 10,
+        "criteria": [
+          { "id": "C1", "text": "The model picker sits right after the title, not at the far end of the header", "source": "spec", "status": "pass", "evidence": "header.tsx renders ModelPicker directly after the title span." },
+          { "id": "C2", "text": "Close is separated from pop-out and more by a hairline", "source": "spec", "check": "npm test -- pane-header", "status": "fail", "evidence": "pane-header.test.ts: expected a 1px divider before the close button, found none." },
+          { "id": "C3", "text": "Narrow panes hide the model picker below 240px", "source": "answer:1", "status": "pass", "evidence": "Container query at 240px sets display none on .chat-pane-model." },
+          { "id": "C4", "text": "Renderer type check stays clean", "source": "checklist", "check": "npx tsc --noEmit -p src/renderer", "status": "pending" },
+          { "id": "C5", "text": "Screenshots in Walnut Dark and Light show no clipped titles", "source": "checklist", "status": "pending" }
+        ]
+      }
+    },
+    {
+      "type": "timelineState",
+      "sessionId": "s-job",
+      "subagents": {},
+      "timeline": [
+        { "id": "u1", "kind": "message", "role": "user", "text": "/job make the pane header match the mockup: model picker after the title, hairline before close, hide the picker on narrow panes" },
+        { "id": "a1", "kind": "message", "role": "assistant", "text": "Round 1 moved the model picker and added the narrow-pane rule. The review found the hairline before close is still missing, so round 2 adds it." },
+        { "id": "t1", "kind": "tool", "event": { "id": "t1", "kind": "read", "title": "Read", "detail": "src/renderer/screens/chats/ChatPane.tsx", "state": "complete" } },
+        { "id": "t2", "kind": "tool", "event": { "id": "t2", "kind": "edit", "title": "Edit", "detail": "src/renderer/screens/chats/chat-pane.css", "state": "running" } }
+      ]
+    }
+  ]
+}

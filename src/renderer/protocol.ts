@@ -18,6 +18,7 @@ import type {
   SidebarViewState as EngineViewState,
   SidebarWebviewMessage as EngineWebviewMessage,
 } from '@engine/sidebar/view';
+import type { PackSetupState } from '@engine/hub/types';
 
 export type { AgentInfo, AgentMessage } from '@engine/unify/agentBus';
 
@@ -118,4 +119,8 @@ export interface HubInstallResultMessage {
   scriptText?: string;
   error?: string;
   requestId?: string;
+  /** On success: the pack's setup checklist when it ships a `setup.json` (see engine/hub/types.ts). */
+  setup?: PackSetupState | null;
 }
+
+export type { PackSetupState, PackSetupStep, PackSetupStepStatus } from '@engine/hub/types';

@@ -1,19 +1,18 @@
 /**
- * Hub registry selection. The local fixture is the default, so dev builds and tests never need the network;
- * pass `'github'` to read the public registry repository instead.
+ * The Toolpack Hub reads the public `raisinhvh/unify-hub` repository. Tests pass their own `HubRegistry`
+ * through the request context instead of a built-in fake.
  */
 import { GithubHubRegistry } from './githubRegistry';
-import { LocalHubRegistry } from './localRegistry';
 import { HubRegistry } from './types';
 
-export type HubRegistryKind = 'local' | 'github';
-
-export function createHubRegistry(kind: HubRegistryKind = 'local'): HubRegistry {
-  return kind === 'github' ? new GithubHubRegistry() : new LocalHubRegistry();
+export function createHubRegistry(): HubRegistry {
+  return new GithubHubRegistry();
 }
 
 export * from './types';
 export { installHubPack } from './install';
-export { GithubHubRegistry, HUB_PUBLISHERS_URL } from './githubRegistry';
-export { LocalHubRegistry } from './localRegistry';
-export { PUBLISH_NOT_APPROVED, PUBLISH_NOT_WIRED, PUBLISH_SIGNED_OUT } from './publishing';
+export { toolpackIdFor } from './ids';
+export { GithubHubRegistry, HUB_BRANCH, HUB_INDEX_URL, HUB_PUBLISHERS_URL, HUB_REPOSITORY } from './githubRegistry';
+export { PUBLISH_NOT_APPROVED, PUBLISH_SIGNED_OUT, publishAccessError } from './publishing';
+export { nextPackVersion, publishHubPack, scanPublishFiles, validateToolpackSource } from './publish';
+export type { PublishHubPackOptions, SafetyFinding, ValidatedToolpack } from './publish';

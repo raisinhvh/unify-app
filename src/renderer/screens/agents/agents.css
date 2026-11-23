@@ -1,0 +1,181 @@
+/* Agents screen. Laid out like Providers (providers.css); rows use the Settings row look (settings.css). */
+
+.agents-screen {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface);
+}
+
+.agents-screen-panel {
+  position: relative;
+  flex: none;
+  width: var(--panel-width);
+  height: 100%;
+}
+
+.agents-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.agents-page {
+  padding: 29px 40px 40px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.agents-column {
+  width: 100%;
+  max-width: 760px;
+}
+
+/* ---------------------------------------------------------------- panel */
+
+.agents-panel-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 9px 0 16px;
+}
+
+.agents-panel-header h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.agents-panel-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  padding: 4px 8px 16px;
+  overflow-y: auto;
+}
+
+.ag-general-row .tree-leading {
+  color: var(--text2);
+}
+
+.ag-panel-empty {
+  margin: 4px 0 4px 28px;
+  color: var(--text3);
+}
+
+.ag-icon-28 {
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+
+/* ---------------------------------------------------------------- pages */
+
+.ag-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 50px;
+}
+
+.ag-page-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ag-title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 28px;
+  letter-spacing: -0.015em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ag-page-status {
+  display: flex;
+  gap: 16px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text3);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.ag-status-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ag-section-head {
+  margin-top: 28px;
+  padding-bottom: 4px;
+}
+
+.ag-section-heading {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 28px;
+}
+
+.ag-section-note {
+  margin: 0;
+  color: var(--text3);
+}
+
+.ag-rows {
+  margin-top: 16px;
+}
+
+.ag-empty {
+  margin: 8px 0 0;
+  color: var(--text3);
+}
+
+.ag-text-input {
+  width: 200px;
+  height: 28px;
+  padding: 0 11px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  outline: none;
+}
+
+.ag-text-input.wide {
+  width: 360px;
+}
+
+.ag-text-input::placeholder {
+  color: var(--text3);
+}
+
+.ag-text-input:focus {
+  border-color: var(--text3);
+}
+
+.ag-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}

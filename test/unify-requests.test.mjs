@@ -394,8 +394,7 @@ test('settings and unknown messages', async () => {
   assert.deepEqual(app.update, { state: 'idle' });
 
   const check = await send({ type: 'checkForUpdates' });
-  assert.equal(ofType(check.replies, 'appInfo')[0].info.update.state, 'current');
-  assert.equal(typeof ofType(check.replies, 'appInfo')[0].info.update.checkedAt, 'number');
+  assert.equal(check.handled, false, 'update checks belong to the app updater, never a canned engine answer');
 
   const install = await send({ type: 'installUpdate' });
   assert.equal(ofType(install.replies, 'appInfo')[0].info.update.state, 'error');

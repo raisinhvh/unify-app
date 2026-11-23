@@ -7,6 +7,8 @@
  *                 `toolpacks.hub` feature is off)
  *   Installed     one row per pack: chevron (expands its tools), glyph, name, tool count, on/off switch.
  *                 Expanded packs list their tools in mono with the tool's group (read / write / run) or "off".
+ *                 A pack whose setup checklist has pending steps says "Setup" (warn; tooltip: steps left) instead of
+ *                 its tool count. "Setup needed" clipped names like "Roblox Studio" at the panel width.
  */
 import { createMemo, For, Index, onMount, Show, type JSX } from 'solid-js';
 import { Icon, IconButton, Toggle, TreeFolder, TreeItem } from '../../components';
@@ -17,6 +19,8 @@ import { browseHub, hubState } from '../hub/hubAdapter';
 import { addLocalPack, installedPacks, setPackEnabled, toolIsOn, type InstalledPack } from './adapter';
 import { Glyph } from './glyphs';
 import { currentPack, hubCategory, isOpen, selectPack, setHubCategory, setOpen } from './selection';
+import { pendingSetup, requestSetupList } from './setup';
+import './setup.css';
 import './toolpacks-panel.css';
 
 function GlyphLabel(props: { glyph: string; text: string }): JSX.Element {
@@ -33,6 +37,7 @@ function PackRow(props: { pack: InstalledPack }): JSX.Element {
   const expanded = () => isOpen(key());
   const rotation = createSpring(() => (expanded() ? 0 : -90), 'indicator', { precision: 100 });
   const selected = () => route() === 'toolpacks' && currentPack()?.id === props.pack.id;
+  const setupNeeded = () => pendingSetup(props.pack.id) > 0;
   const open = () => {
     selectPack(props.pack.id);
     navigate('toolpacks');
@@ -53,8 +58,12 @@ function PackRow(props: { pack: InstalledPack }): JSX.Element {
         <button type="button" class="tp-pack-main" ref={element => pressable(element, 0.98)} onClick={open}>
           <Glyph name={props.pack.glyph} class="tp-pack-glyph" />
           <span class="tree-label">{props.pack.name}</span>
-          <span class="tree-trailing" classList={{ warn: props.pack.state === 'error' }}>
-            {props.pack.state === 'error' ? 'error' : props.pack.enabled ? props.pack.tools.length : 'off'}
+          <span
+            class="tree-trailing"
+            classList={{ warn: props.pack.state === 'error', 'tp-setup-needed': props.pack.state !== 'error' && setupNeeded() }}
+            title={setupNeeded() ? `Setup needed: ${pendingSetup(props.pack.id)} step${pendingSetup(props.pack.id) === 1 ? '' : 's'} to finish` : undefined}
+          >
+            {props.pack.state === 'error' ? 'error' : setupNeeded() ? 'Setup' : props.pack.enabled ? props.pack.tools.length : 'off'}
           </span>
         </button>
         <Toggle checked={props.pack.enabled} onChange={on => setPackEnabled(props.pack.id, on)} label={`${props.pack.name} enabled`} />
@@ -90,6 +99,7 @@ export function ToolpacksPanel(): JSX.Element {
 
   onMount(() => {
     if (hubOn()) browseHub();
+    requestSetupList();
   });
 
   const openCategory = (id: string) => {

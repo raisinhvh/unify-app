@@ -16,7 +16,7 @@
  */
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, type JSX } from 'solid-js';
 import { post } from '../../bridge';
-import { Button, Icon, IconButton, ModelPicker, ProviderGlyph, Toggle } from '../../components';
+import { Button, Icon, IconButton, ProviderGlyph, Toggle } from '../../components';
 import { Collapse, createSpring, pressable } from '../../motion';
 import { readPersisted, writePersisted } from '../../persist';
 import { navigate } from '../../router';
@@ -457,61 +457,24 @@ function AboutPage(): JSX.Element {
   );
 }
 
-/* Models (Agents). */
+/* Agents: what is left here is how chat agents run; everything about subagents and helper models is on the Agents screen. */
 
 function AgentsPage(): JSX.Element {
-  const smartAuto = () => !!viewState.features.smartAuto;
-  const ranks = () => viewState.smartAutoRanks ?? [];
-  const profiles = () => viewState.subagentProfiles ?? [];
-  const setRank = (index: number, model: string) => {
-    const next = ranks().map((rank, position) => (position === index ? { ...rank, model } : rank));
-    post({ type: 'saveSmartAutoRanks', ranks: next });
-  };
   return (
     <>
       <SettingRows rows={rowsIn('agents')} />
-      <div class="settings-gap" />
-      <SectionHead title="Models" />
-      <Collapse open={smartAuto()}>
-        <InfoRow label="Decider model" caption="Picks a model and effort for each Smart Auto message.">
-          <ModelPicker
-            variant="regular"
-            smartAuto={false}
-            placement="bottom-end"
-            value={viewState.deciderModel?.model}
-            placeholder="Choose a model"
-            onChange={model => post({ type: 'saveDeciderModel', deciderModel: { ...viewState.deciderModel, model } })}
-          />
-        </InfoRow>
-        <For each={ranks()}>
-          {(rank, index) => (
-            <InfoRow label={`Smart Auto rank ${index() + 1}`} caption={rank.note || (index() === 0 ? 'Smartest' : undefined)}>
-              <ModelPicker
-                variant="regular"
-                smartAuto={false}
-                placement="bottom-end"
-                value={rank.model}
-                placeholder="Choose a model"
-                onChange={model => setRank(index(), model)}
-              />
-            </InfoRow>
-          )}
-        </For>
-      </Collapse>
-      <For each={profiles()} fallback={<p class="settings-empty type-caption">No subagent profiles yet.</p>}>
-        {profile => (
-          <InfoRow label={profile.name} caption={profile.description || (profile.mode === 'edit' ? 'Can edit files' : 'Read-only')}>
-            <ModelPicker
-              variant="regular"
-              smartAuto={false}
-              placement="bottom-end"
-              value={profile.model}
-              placeholder="Choose a model"
-              onChange={model => post({ type: 'saveSubagent', originalName: profile.name, profile: { ...profile, model } })}
-            />
-          </InfoRow>
-        )}
-      </For>
+      <button
+        type="button"
+        class="setting-row setting-link"
+        ref={element => pressable(element, 0.99)}
+        onClick={() => navigate('agents')}
+      >
+        <div class="setting-row-text">
+          <div class="setting-row-label">Subagents and helper models</div>
+          <div class="setting-row-description type-caption">Profiles, the explorer, chat names, review, summaries, Smart Auto and agent messaging.</div>
+        </div>
+        <Icon name="chevronRight" class="setting-link-icon" />
+      </button>
     </>
   );
 }

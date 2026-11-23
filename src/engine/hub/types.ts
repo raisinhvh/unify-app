@@ -70,11 +70,91 @@ export interface HubInstallProgress {
   error?: string;
 }
 
+/* ---------------------------------------------------------------------------------------------------------------
+ * Pack setup (companion apps): `setup.json` in a pack folder, read by `hub/setup.ts`.
+ *
+ * A pack's install script (install.js / install.ps1 / install.sh) does every step it can by itself, e.g. copying
+ * a Roblox Studio plugin into the Plugins folder. `setup.json` lists every step, automatic or not, so Unify can
+ * show a "Finish setup" checklist: automatic steps report whether they worked, manual steps tell the user exactly
+ * what to do (with a path to copy or a link to open) and can be ticked off.
+ *
+ * Strings in `detail`, `copy`, `open` and `check.exists` expand `${PACK}` (the installed pack folder), `${HOME}`
+ * and any environment variable (`${LOCALAPPDATA}`, `${APPDATA}`, ...). Paths use forward slashes in the file.
+ */
+
+/** One step in `setup.json`, as the pack author writes it. */
+export interface PackSetupStepDefinition {
+  /** Stable id, unique in the pack (lowercase, dashes). */
+  id: string;
+  /** Short imperative title: "Import the Figma plugin". */
+  title: string;
+  /** One or two sentences: what happens, or exactly what to click. */
+  detail?: string;
+  /** `auto`: the install script does it. `manual`: the user does it. */
+  kind: 'auto' | 'manual';
+  /** A path or text the user needs (shown with a Copy button). */
+  copy?: string;
+  /** A URL or folder to open (shown as an Open button). */
+  open?: string;
+  /** Done when this path exists. Without a check, auto steps are done when the script succeeded, manual steps when ticked. */
+  check?: { exists: string };
+  /** Only on these platforms (`process.platform` values). All platforms when missing. */
+  platforms?: string[];
+}
+
+export interface PackSetupDefinition {
+  /** Extra files in the pack folder to download with it (e.g. a Studio plugin the install script copies). Plain names, no folders. */
+  files?: string[];
+  steps: PackSetupStepDefinition[];
+}
+
+export type PackSetupStepStatus = 'done' | 'todo' | 'failed';
+
+/** One step as the UI sees it: tokens expanded, status worked out. */
+export interface PackSetupStep {
+  id: string;
+  title: string;
+  detail?: string;
+  kind: 'auto' | 'manual';
+  copy?: string;
+  open?: string;
+  status: PackSetupStepStatus;
+  /** Why an automatic step failed (the script's last output line, or a missing path). */
+  error?: string;
+}
+
+/** The checklist for one installed pack. `pending` counts steps that are not done. */
+export interface PackSetupState {
+  /** Installed toolpack id (folder name). */
+  id: string;
+  name: string;
+  steps: PackSetupStep[];
+  pending: number;
+  /** The pack has an install script that can be run again from the checklist. */
+  canRerunScript: boolean;
+}
+
 /** What a publish attempt answered; the screen shows `message` next to Upload. */
 export interface HubPublishResult {
   ok: boolean;
   message: string;
   url?: string;
+}
+
+/** One selectable item shown in a host picker (e.g. choosing an installed toolpack to publish). */
+export interface HubPickItem {
+  id: string;
+  label: string;
+  description?: string;
+  detail?: string;
+}
+
+/** Host services needed to interactively pick, confirm and upload a toolpack to the Hub. */
+export interface HubPublishOptions {
+  toolpacksDir: string;
+  pickOption?: (items: HubPickItem[], placeholder: string) => Promise<string | undefined>;
+  confirm?: (message: string, detail: string) => Promise<boolean>;
+  fetch?: typeof fetch;
 }
 
 /** What the request handlers need from a registry; each implementation owns its own source of packs. */
@@ -84,6 +164,6 @@ export interface HubRegistry {
   detail(id: string): Promise<HubPackDetail | undefined>;
   /** Writes the pack files (and optional install script) into `destination`. */
   download(id: string, destination: string): Promise<void>;
-  /** Checks the signed-in login against the approved publishers and answers the screen. */
-  publish(auth: GithubAuth | undefined): Promise<HubPublishResult>;
+  /** Checks approval, picks and validates an installed pack, and opens a Hub pull request. */
+  publish(auth: GithubAuth | undefined, options?: HubPublishOptions): Promise<HubPublishResult>;
 }

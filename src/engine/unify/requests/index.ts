@@ -6,6 +6,8 @@
  * (state pushes and simple switches) answer without one, exactly as their adapters expect.
  */
 import * as path from 'node:path';
+import { promises as fsp } from 'node:fs';
+import type { Dirent } from 'node:fs';
 import {
   listWorkspaceDirectory,
   readWorkspaceFile,
@@ -33,8 +35,9 @@ import {
   setModelEnabled,
   signOutAccount,
 } from './providers';
-import { setToolpackPermission, setToolpackToolEnabled } from './toolpacks';
-import { appInfoReply, updateChecked, updateInstallUnavailable } from './settings';
+import { installedHubPacks, setToolpackPermission, setToolpackToolEnabled } from './toolpacks';
+import { openSetupTarget, readPackSetup, rerunPackSetupScript, setPackSetupStepDone } from '../../hub/setup';
+import { appInfoReply, updateInstallUnavailable } from './settings';
 import {
   checkTools,
   fixTool,
@@ -43,8 +46,8 @@ import {
   setDefaultProject,
 } from './setup';
 import { handleHubRequest } from './hub';
-import { requestPaths } from './state';
-import { Audience, KnowledgeDraft, KnowledgeScope, SetupSummary, ToolKind, ToolPolicy, UnifyRequestContext, UnifyRequestMessage } from './types';
+import { RequestPaths, requestPaths, titleFromId } from './state';
+import { Audience, KnowledgeDraft, KnowledgeScope, PackSetupState, SetupSummary, ToolKind, ToolPolicy, UnifyRequestContext, UnifyRequestMessage } from './types';
 
 export { disposeUnifyRequestWatchers } from './workspace';
 
@@ -60,6 +63,29 @@ function announceWorkspace(context: UnifyRequestContext, reply: (message: unknow
 function stringField(message: UnifyRequestMessage, key: string): string {
   const value = message[key];
   return typeof value === 'string' ? value : '';
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** The folder of one installed toolpack; refuses ids that would escape the toolpacks folder. */
+function packDirectory(paths: RequestPaths, id: string): string {
+  if (!id.trim() || id !== path.basename(id) || id === '.' || id === '..') throw new Error('Unknown toolpack.');
+  return path.join(paths.toolpacksDir, id);
+}
+
+/** The display name of an installed pack, from the Hub install records or the pack's `meta.json`. */
+async function packDisplayName(paths: RequestPaths, packId: string): Promise<string> {
+  const installed = installedHubPacks(paths);
+  if (installed[packId]?.name) return installed[packId].name;
+  try {
+    const meta = JSON.parse(await fsp.readFile(path.join(paths.toolpacksDir, packId, 'meta.json'), 'utf8')) as { hubId?: unknown };
+    if (typeof meta.hubId === 'string' && installed[meta.hubId]?.name) return installed[meta.hubId].name;
+  } catch {
+    // Local packs have no meta.json; the folder name is the fallback.
+  }
+  return titleFromId(packId);
 }
 
 function isFilesType(type: string): boolean {
@@ -219,6 +245,75 @@ export async function handleUnifyRequest(
     }
     return true;
   }
+  if (type === 'toolpackSetup') {
+    const id = stringField(message, 'id');
+    try {
+      const packDir = packDirectory(paths, id);
+      const setup = await readPackSetup(packDir, id, await packDisplayName(paths, id));
+      send({ type: 'toolpackSetupState', setup });
+    } catch (error) {
+      send({ type: 'toolpackSetupError', id, message: errorText(error) });
+    }
+    return true;
+  }
+  if (type === 'toolpackSetupList') {
+    try {
+      let entries: Dirent[] = [];
+      try {
+        entries = await fsp.readdir(paths.toolpacksDir, { withFileTypes: true });
+      } catch {
+        // No installed packs yet.
+      }
+      const packs: PackSetupState[] = [];
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        try {
+          const setup = await readPackSetup(
+            path.join(paths.toolpacksDir, entry.name),
+            entry.name,
+            await packDisplayName(paths, entry.name),
+          );
+          if (setup && setup.pending > 0) packs.push(setup);
+        } catch {
+          // A malformed setup.json is reported when the user opens that pack's checklist.
+        }
+      }
+      send({ type: 'toolpackSetupList', packs });
+    } catch (error) {
+      send({ type: 'toolpackSetupError', id: '', message: errorText(error) });
+    }
+    return true;
+  }
+  if (type === 'toolpackSetupAction') {
+    const id = stringField(message, 'id');
+    const action = stringField(message, 'action');
+    try {
+      const packDir = packDirectory(paths, id);
+      if (action === 'markDone' || action === 'markTodo') {
+        const stepId = stringField(message, 'stepId');
+        if (!stepId) throw new Error('Choose a setup step first.');
+        await setPackSetupStepDone(packDir, stepId, action === 'markDone');
+      } else if (action === 'open') {
+        const stepId = stringField(message, 'stepId');
+        const setup = await readPackSetup(packDir, id, await packDisplayName(paths, id));
+        const step = setup?.steps.find(item => item.id === stepId);
+        if (!step?.open) throw new Error('This setup step has nothing to open.');
+        await openSetupTarget(step.open, context.openExternal, packDir);
+      } else if (action === 'rerunScript') {
+        await rerunPackSetupScript(packDir, {
+          packName: await packDisplayName(paths, id),
+          unifyHome: paths.unifyHome,
+        });
+      } else if (action !== 'recheck') {
+        throw new Error(`Unknown setup action "${action}".`);
+      }
+      const setup = await readPackSetup(packDir, id, await packDisplayName(paths, id));
+      send({ type: 'toolpackSetupState', setup });
+    } catch (error) {
+      send({ type: 'toolpackSetupError', id, message: errorText(error) });
+    }
+    return true;
+  }
 
   /* Providers --------------------------------------------------------------------------------------------- */
 
@@ -259,10 +354,6 @@ export async function handleUnifyRequest(
 
   if (type === 'getAppInfo') {
     send(appInfoReply(paths, context.version));
-    return true;
-  }
-  if (type === 'checkForUpdates') {
-    send({ type: 'appInfo', info: updateChecked(paths, context.version).info });
     return true;
   }
   if (type === 'installUpdate') {
@@ -311,7 +402,7 @@ export async function handleUnifyRequest(
   /* Hub --------------------------------------------------------------------------------------------------- */
 
   if (type === 'hubBrowse' || type === 'hubInstall' || type === 'hubPublish') {
-    return handleHubRequest(message, send, paths, context);
+    return handleHubRequest(message, send, paths, context, context.hubRegistry);
   }
 
   return false;

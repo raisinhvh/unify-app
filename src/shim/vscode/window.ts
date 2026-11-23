@@ -1,4 +1,5 @@
 /** window, commands, env, status bar and dialog surface. */
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { Disposable, EventEmitter } from './events';
 import { appendLog, nativeUi, outputChannel, onDidChangeWindowState, postToRenderer, registerWebviewViewProvider, requestUi, showDesktopNotification } from './host';
@@ -118,9 +119,44 @@ export const window = {
     return createEditor(document, selection);
   },
 
-  async withProgress(_options: unknown, task: (progress: { report(value: unknown): void }, token: { isCancellationRequested: boolean; onCancellationRequested(): Disposable }) => PromiseLike<unknown> | unknown): Promise<unknown> {
+  async withProgress(options: unknown, task: (progress: { report(value: unknown): void }, token: { isCancellationRequested: boolean; onCancellationRequested(): Disposable }) => PromiseLike<unknown> | unknown): Promise<unknown> {
     const token = { isCancellationRequested: false, onCancellationRequested: () => new Disposable(() => undefined) };
-    return task({ report: () => undefined }, token);
+    const settings = options && typeof options === 'object' ? options as { title?: unknown } : {};
+    const id = `progress-${randomUUID()}`;
+    const title = typeof settings.title === 'string' && settings.title ? settings.title : 'Working…';
+    let message: string | undefined;
+    let percent: number | undefined;
+    const post = (state: 'running' | 'done' | 'error', error?: string): void => {
+      postToRenderer({
+        type: 'progressNotice',
+        id,
+        title,
+        ...(message ? { message } : {}),
+        ...(percent !== undefined ? { percent } : {}),
+        ...(error ? { message: error } : {}),
+        state,
+      });
+    };
+    post('running');
+    const progress = {
+      report(value: unknown): void {
+        if (!value || typeof value !== 'object') return;
+        const report = value as { message?: unknown; increment?: unknown };
+        if (typeof report.message === 'string' && report.message) message = report.message;
+        if (typeof report.increment === 'number' && Number.isFinite(report.increment)) {
+          percent = Math.max(0, Math.min(100, (percent ?? 0) + report.increment));
+        }
+        post('running');
+      },
+    };
+    try {
+      const result = await task(progress, token);
+      post('done');
+      return result;
+    } catch (error) {
+      post('error', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   },
 
   createOutputChannel(name: string) {

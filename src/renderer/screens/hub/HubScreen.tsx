@@ -20,7 +20,9 @@ import { viewState } from '../../store';
 import { ConfirmBar } from '../toolpacks/ConfirmBar';
 import { installedPacks } from '../toolpacks/adapter';
 import { GlyphTile } from '../toolpacks/glyphs';
-import { hubCategory, setHubCategory } from '../toolpacks/selection';
+import { hubCategory, selectPack, setHubCategory } from '../toolpacks/selection';
+import { SetupChecklist } from '../toolpacks/SetupChecklist';
+import { requestSetup, setupFor } from '../toolpacks/setup';
 import { ToolpacksPanel } from '../toolpacks/ToolpacksPanel';
 import {
   browseHub,
@@ -176,6 +178,10 @@ function Detail(props: { pack: HubPack }): JSX.Element {
   const [shown, setShown] = createSignal(0);
   onMount(() => setShown(1));
   const enter = createSpring(shown, 'reveal', { fadeOnly: true });
+  // An installed pack's checklist: arrives with the install result, or is asked for when the detail opens.
+  createEffect(() => {
+    if (installed() && !setupFor(props.pack.id)) requestSetup(props.pack.id);
+  });
   return (
     <div
       class="hub-detail-body"
@@ -198,7 +204,15 @@ function Detail(props: { pack: HubPack }): JSX.Element {
 
       <Switch>
         <Match when={installed()}>
-          <Button variant="secondary" class="hub-detail-install" icon="toolpacks" onClick={() => navigate('toolpacks')}>
+          <Button
+            variant="secondary"
+            class="hub-detail-install"
+            icon="toolpacks"
+            onClick={() => {
+              selectPack(props.pack.id);
+              navigate('toolpacks');
+            }}
+          >
             Open in Toolpacks
           </Button>
         </Match>
@@ -229,6 +243,9 @@ function Detail(props: { pack: HubPack }): JSX.Element {
         }}
       />
       <p class="hub-detail-target type-caption">{installed() ? 'Installed on this device' : targetDevices()}</p>
+      <Show when={installed()}>
+        <SetupChecklist id={props.pack.id} />
+      </Show>
 
       <div class="hub-facts">
         <div class="hub-fact"><span>Version</span><span>{props.pack.version}</span></div>

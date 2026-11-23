@@ -41,6 +41,7 @@ export const featureDefinitions = {
 	'agents.messaging.scope': { group: 'Agents', label: 'Who can message whom', description: 'Limit agent-to-agent messages.', defaultValue: 'everyone', options: ['everyone', 'same-chat', 'parent-child'], scope: 'engine' },
 	'agents.messaging.showInChat': { group: 'Agents', label: 'Show agent messages', description: 'Show who → who messages in the chat timeline.', defaultValue: true, scope: 'ui' },
 	'agents.blockNativeAgents': { group: 'Agents', label: 'Block provider agent tools', description: "Disable each provider's own subagent system so Unify's is the only one.", defaultValue: true, scope: 'engine' },
+	'agents.codexRuntime': { group: 'Agents', label: 'Use Codex with DeepSeek Harness', description: 'ChatGPT (Codex) uses DeepSeek Harness for tools and subagents. On uses DeepSeek Harness; off uses Codex CLI. Applies to new chats.', defaultValue: true, scope: 'engine' },
 	'agents.maxParallel': { group: 'Agents', label: 'Parallel subagents', description: 'Most subagents running at once.', defaultValue: 4, scope: 'engine' },
 	'agents.imagesToParent': { group: 'Agents', label: 'Subagents send real images', description: 'Images a subagent sends reach the main agent as images, not file paths.', defaultValue: true, scope: 'engine' },
 	'agents.explorerRanges': { group: 'Agents', label: 'Explorer returns code ranges', description: 'The explorer ends with the exact file ranges it found, so the main agent reads only those lines.', defaultValue: true, scope: 'engine' },

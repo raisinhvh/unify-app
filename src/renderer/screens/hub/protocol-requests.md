@@ -6,7 +6,7 @@ The renderer already sends and reads them through typed adapters, so implementin
 | Screen | Adapter | Types |
 | --- | --- | --- |
 | Toolpacks | `screens/toolpacks/adapter.ts` | `ToolpackExtension`, `ToolpackRequest` |
-| Hub | `screens/hub/hubAdapter.ts` (dev answers: `hubMock.ts`) | `HubState`, `HubRequest`, `HubReply` |
+| Hub | `screens/hub/hubAdapter.ts` | `HubState`, `HubRequest`, `HubReply` |
 | Providers | `screens/providers/adapter.ts` | `AccountExtension`, `ProviderRequest` |
 
 Every new field is optional; the UI falls back when it is missing. Once added to `view.ts`, the casts in the
@@ -125,15 +125,16 @@ the confirmation.
 The UI asks the user to confirm an install before sending `hubInstall` (the pack's install script runs), and shows
 Upload only when `viewState.github.signedIn`; signed out it links to Settings instead.
 
-Today the engine answers `hubPublish` with a `hubState` whose `error` is "Publishing is not available yet."
-(later "Publishing is limited to approved accounts."). The adapter treats a `hubState` with an `error` that arrives
-while a publish is pending as the publish answer: the message shows calmly beside the Upload button, the catalogue
-keeps its packs, and the Hub does not show an error. Suggested dedicated reply, which the adapter already handles:
+`hubPublish` verifies the signed-in GitHub login against `publishers.json`, lets the user pick an installed pack
+from `storage/toolpacks`, validates `pack.ts`, scans the files to upload for API keys/tokens, PEM blocks, emails
+and absolute user paths, and shows a modal confirmation with the pack id, version and file list. On confirm it
+creates branch `publish/<id>-<version>` from `main` with one commit (`packs/<id>/pack.ts`, `packs/<id>/README.md`,
+any install script, and updated `index.json`), opens a pull request to `main`, and replies with `hubPublishResult`:
 
 ```ts
 | { type: 'hubPublishResult'; ok: boolean; message: string; url?: string }
 // ok: false, message: 'Publishing is limited to approved accounts.'
-// ok: true,  message: 'Published Containers 1.2.0', url: 'https://github.com/…/pull/12'
+// ok: true,  message: 'Opened a pull request to the Hub.', url: 'https://github.com/raisinhvh/unify-hub/pull/12'
 ```
 
 ## Providers

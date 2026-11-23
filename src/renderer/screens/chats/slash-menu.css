@@ -1,0 +1,94 @@
+/* Slash command menu above the composer (menu look: raised, radius 8, caption heading, flat rows). */
+.popover.slash-menu {
+  min-width: 220px;
+  max-width: calc(100vw - 16px);
+  padding: 0 4px;
+}
+
+/* Padding, not margin: each section sits in a Collapse that measures its offsetHeight. */
+.slash-section {
+  padding: 4px 0;
+}
+
+.slash-heading {
+  padding: 4px 8px 4px;
+  color: var(--text3);
+}
+
+.slash-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* One block for the whole list; it glides to the highlighted row (SlashMenu.tsx). */
+.slash-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 0;
+  opacity: 0;
+  border-radius: var(--radius-row);
+  background: var(--hover);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.slash-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 8px;
+  border-radius: var(--radius-row);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.slash-check {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  flex: none;
+  color: var(--text);
+}
+
+.slash-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.slash-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.slash-label {
+  flex: none;
+  white-space: nowrap;
+}
+
+.slash-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.slash-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text3);
+}

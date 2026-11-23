@@ -1,0 +1,17 @@
+{
+  "extends": "base",
+  "persisted": {
+    "route": "chats",
+    "panelOpen": false,
+    "layout": { "preset": "single", "cells": [], "splits": { "x": 0.5, "y": 0.5 }, "focused": 0 }
+  },
+  "messages": [],
+  "timed": [
+    { "after": 400, "message": { "type": "progressNotice", "id": "runtime-update", "title": "Updating agent runtime 1.2.3…", "message": "Downloading", "percent": 12, "state": "running" } },
+    { "after": 1400, "message": { "type": "progressNotice", "id": "runtime-update", "title": "Updating agent runtime 1.2.3…", "message": "Downloading", "percent": 46, "state": "running" } },
+    { "after": 2400, "message": { "type": "progressNotice", "id": "runtime-update", "title": "Updating agent runtime 1.2.3…", "message": "Unpacking", "percent": 81, "state": "running" } },
+    { "after": 3600, "message": { "type": "progressNotice", "id": "runtime-update", "title": "Agent runtime updated", "message": "Version 1.2.3", "percent": 100, "state": "done" } },
+    { "after": 9000, "message": { "type": "progressNotice", "id": "figma-setup", "title": "Setting up the Figma pack…", "message": "Copying the plugin", "state": "running" } },
+    { "after": 10500, "message": { "type": "progressNotice", "id": "figma-setup", "title": "Figma pack setup failed", "message": "Could not write to the plugin folder", "state": "error" } }
+  ]
+}

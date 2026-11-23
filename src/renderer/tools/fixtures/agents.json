@@ -1,0 +1,37 @@
+{
+  "extends": "base",
+  "persisted": {
+    "route": "agents",
+    "panelOpen": true,
+    "agentsSelection": { "kind": "general" },
+    "agentsSubagentsOpen": true
+  },
+  "messages": [
+    {
+      "type": "subagentProfilesState",
+      "profiles": [
+        { "name": "implementer", "description": "Builds a feature from a brief and runs the checks", "model": "opus-5.5", "effort": "high", "mode": "edit" },
+        { "name": "reviewer", "description": "Reviews a diff for bugs and missed cases", "model": "sonnet-5.5", "effort": "high", "mode": "read-only" },
+        { "name": "researcher", "description": "Reads docs and the web, then reports back", "model": "gpt-5.1", "mode": "read-only", "tools": false }
+      ]
+    },
+    {
+      "type": "customizeState",
+      "features": { "autoName": true, "reviewAgent": true, "smartAuto": true },
+      "explorerModel": { "model": "sonnet-5.5" },
+      "nameModel": {},
+      "reviewModel": { "model": "opus-5.5", "effort": "high" },
+      "summaryModel": {},
+      "deciderModel": { "model": "sonnet-5.5" },
+      "smartAutoRanks": [
+        { "model": "opus-5.5", "note": "Hard problems, design and debugging." },
+        { "model": "sonnet-5.5", "note": "Everyday edits and questions." }
+      ],
+      "accessibility": {},
+      "autoCompactTokens": 70000,
+      "voiceCommands": [],
+      "voiceAvailable": true,
+      "processPriority": "normal"
+    }
+  ]
+}

@@ -13,7 +13,7 @@ export const SYNCED_SETTINGS = [
 ] as const;
 
 /** `unify.*` settings that stay on each PC because they hold paths to programs installed on it. */
-export const LOCAL_SETTINGS = ['runtime.nodePath', 'runtime.cursorAgentPath', 'runtime.claudePath', 'runtime.gitPath', 'runtime.processPriority', 'runtime.powershellSpeedups', 'runtime.rustTools', 'memory.enabled'] as const;
+export const LOCAL_SETTINGS = ['runtime.nodePath', 'runtime.cursorAgentPath', 'runtime.claudePath', 'runtime.codexPath', 'runtime.gitPath', 'runtime.processPriority', 'runtime.powershellSpeedups', 'runtime.rustTools', 'memory.enabled'] as const;
 
 export const GIST_FILE = 'unify-config.json';
 export const GIST_DESCRIPTION = 'Unify config (synced by Unify; API keys and MCP secrets are not included)';

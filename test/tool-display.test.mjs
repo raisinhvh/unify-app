@@ -13,6 +13,9 @@ assert.equal(read.detail, '…/dsh/src/extension.ts');
 assert.equal(displayTool('Grep', JSON.stringify({ pattern: 'toolLabel', path: 'media' })).detail, 'media');
 assert.equal(displayTool('mcp__dsh-delegate__read_file_summaries', JSON.stringify({ paths: ['a'] })).title, 'Summaries');
 assert.equal(displayTool('mcp__claude_ai_Claude_Docs__guide').title, 'Guide');
+assert.equal(displayTool('Unify Tool', JSON.stringify({ tool: 'mcp__unify__read_file', input: { path: 'src/a.ts' } })).title, 'Read');
+assert.equal(displayTool('Unify Tool', JSON.stringify({ toolName: 'mcp__unify__edit', arguments: { file_path: 'src/a.ts' } })).detail, 'src/a.ts');
+assert.deepEqual(displayTool('Unify Tool'), { kind: 'other', title: 'Agent tool', detail: 'Running a tool through the agent runtime', full: undefined });
 
 // Codex: wrapped shell lines.
 assert.equal(unwrapShell('"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command \'sd foo bar a.ts\''), 'sd foo bar a.ts');

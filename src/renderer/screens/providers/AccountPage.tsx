@@ -8,6 +8,7 @@
 import { createEffect, createSignal, For, on, Show, type JSX } from 'solid-js';
 import { Button, Icon, IconButton, Menu, ModelPicker, ProviderGlyph, Toggle, type MenuEntry } from '../../components';
 import { createSpring, pressable } from '../../motion';
+import { viewState } from '../../store';
 import { clampPercent, resetColor, resetIn } from '../../store/usage';
 import type { SidebarUsageMetric } from '../../protocol';
 import type { AccountView } from './adapter';
@@ -21,6 +22,7 @@ import {
   openProviderUsage,
   refreshUsage,
   removeAccount,
+  removeModel,
   renameAccount,
   setAccountDefaultModel,
   setModelEnabled,
@@ -28,6 +30,7 @@ import {
   signOut,
   signedInWith,
 } from './adapter';
+import { AddModelForm } from './AddModelForm';
 import { select, selection } from './selection';
 
 function Crumb(props: { account: AccountView }): JSX.Element {
@@ -46,20 +49,38 @@ function Crumb(props: { account: AccountView }): JSX.Element {
   );
 }
 
-function MetricRow(props: { metric: SidebarUsageMetric; first: boolean; account: AccountView }): JSX.Element {
+/** Shortest and longest label column, in characters (the UI font is monospaced, so `ch` is exact). */
+const minimumLabelChars = 8;
+const maximumLabelChars = 26;
+
+/**
+ * The label column's width: the longest usage label across every account, so the bars start at the same x on
+ * every account page. Labels longer than the cap are cut with an ellipsis and keep the full text as a tooltip.
+ */
+function metricLabelChars(): number {
+  let longest = minimumLabelChars;
+  for (const usage of Object.values(viewState.usage)) {
+    for (const metric of usage?.metrics ?? []) {
+      longest = Math.max(longest, metric.label.length);
+    }
+  }
+  return Math.min(longest, maximumLabelChars);
+}
+
+function MetricRow(props:{ metric: SidebarUsageMetric; first: boolean; account: AccountView }): JSX.Element {
   const used = () => (typeof props.metric.usedPercent === 'number' ? clampPercent(props.metric.usedPercent) : 0);
   const width = createSpring(used, 'panel', { precision: 10 });
   const usedLabel = () => (typeof props.metric.usedPercent === 'number' ? `${Math.round(used())}%` : props.metric.value);
   const reset = () => props.metric.resetsAt;
   return (
     <div class="pv-metric-row">
-      <span class="pv-metric-label">{props.metric.label}</span>
+      <span class="pv-metric-label" title={props.metric.label}>{props.metric.label}</span>
       <span class="pv-metric-bar" aria-hidden="true">
         <span class="pv-metric-fill" style={{ width: `${width()}%`, background: props.account.color }} />
       </span>
       <span class="pv-metric-used type-mono">{usedLabel()}</span>
       <span class="pv-metric-reset" style={{ color: reset() ? resetColor(reset()!) : undefined }}>
-        {reset() ? `resets in ${resetIn(reset()) || 'now'}` : ''}
+        {reset() ? (resetIn(reset()) ? `resets in ${resetIn(reset())}` : 'resets now') : ''}
       </span>
       <Show when={props.first}>
         <button type="button" class="pv-view-usage" onClick={() => openProviderUsage(props.account)}>
@@ -76,6 +97,8 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
   const [menuOpen, setMenuOpen] = createSignal(false);
   const [anchor, setAnchor] = createSignal<HTMLButtonElement>();
   const [label, setLabel] = createSignal(account().label);
+  const [addingModel, setAddingModel] = createSignal(false);
+  const [editingModel, setEditingModel] = createSignal<string>();
   const models = () => accountModels(account());
   const enabledCount = () => models().filter(model => model.enabled).length;
   const defaultModel = () => account().defaultModel || models().find(model => model.enabled)?.id;
@@ -83,7 +106,11 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
   createEffect(
     on(
       () => account().id,
-      () => setLabel(account().label),
+      () => {
+        setLabel(account().label);
+        setAddingModel(false);
+        setEditingModel(undefined);
+      },
     ),
   );
 
@@ -208,7 +235,7 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
             >
               <div class="pv-setting-row pv-account-usage">
                 <span class="pv-setting-label">Usage</span>
-                <div class="pv-inline-usage">
+                <div class="pv-inline-usage" style={{ '--pv-metric-label-chars': String(metricLabelChars()) }}>
                   <For each={account().usage?.metrics}>
                     {(metric, index) => <MetricRow metric={metric} first={index() === 0} account={account()} />}
                   </For>
@@ -268,24 +295,73 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
         <div class="pv-section-divider" />
 
         <section class="pv-section">
-          <h2 class="pv-section-heading">Models</h2>
+          <div class="pv-section-heading-row">
+            <h2 class="pv-section-heading">Models</h2>
+            <Show when={models().length > 0 || addingModel()}>
+              <Button
+                variant="text"
+                icon="plus"
+                class="pv-add-model-trigger"
+                aria-expanded={addingModel()}
+                onClick={() => { setEditingModel(undefined); setAddingModel(open => !open); }}
+              >
+                Add model
+              </Button>
+            </Show>
+          </div>
+          <AddModelForm
+            account={account()}
+            open={addingModel()}
+            model={models().find(model => model.name === editingModel())}
+            onClose={() => { setAddingModel(false); setEditingModel(undefined); }}
+          />
           <Show
             when={models().length}
-            fallback={<p class="pv-section-note type-body">No models are served through this account.</p>}
+            fallback={
+              <Show when={!addingModel()}>
+                <div class="pv-models-empty">
+                  <p class="pv-models-empty-text type-body">No models yet. Add one by its model ID.</p>
+                  <Button
+                    variant="secondary"
+                    icon="plus"
+                    class="pv-models-empty-action"
+                    onClick={() => setAddingModel(true)}
+                  >
+                    Add model
+                  </Button>
+                </div>
+              </Show>
+            }
           >
             <div class="pv-models">
               <For each={models()}>
                 {model => (
                   <div class="pv-model-row">
-                    <span class="pv-model-name" classList={{ off: !model.enabled }}>
+                    <span class="pv-model-name" classList={{ off: !model.enabled }} title={model.name}>
                       {model.name}
                     </span>
                     <span class="pv-model-context">{formatContext(model.contextWindow)}</span>
-                    <Toggle
-                      checked={model.enabled}
-                      label={`Use ${model.name}`}
-                      onChange={enabled => setModelEnabled(model.id, enabled)}
-                    />
+                    <div class="pv-model-actions">
+                      <button
+                        type="button"
+                        class="pv-model-edit"
+                        aria-label={`Configure ${model.name}`}
+                        title={`Configure ${model.name}`}
+                        onClick={() => { setAddingModel(false); setEditingModel(model.name); setAddingModel(true); }}
+                      >Configure</button>
+                      <IconButton
+                        icon="close"
+                        size="small"
+                        label={`Remove ${model.name}`}
+                        class="pv-model-remove"
+                        onClick={() => removeModel(model.name)}
+                      />
+                      <Toggle
+                        checked={model.enabled}
+                        label={`Use ${model.name}`}
+                        onChange={enabled => setModelEnabled(model.id, enabled)}
+                      />
+                    </div>
                   </div>
                 )}
               </For>

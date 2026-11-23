@@ -5,6 +5,7 @@
  */
 import type { JSX } from 'solid-js';
 import type { RouteId } from '../router';
+import { AgentsScreen } from './agents/AgentsScreen';
 import { FilesScreen } from './files/FilesScreen';
 import { HubScreen } from './hub/HubScreen';
 import { KnowledgeScreen } from './knowledge/KnowledgeScreen';
@@ -19,6 +20,7 @@ const screens: Record<ScreenRoute, () => JSX.Element> = {
   knowledge: () => <KnowledgeScreen />,
   toolpacks: () => <ToolpacksScreen />,
   hub: () => <HubScreen />,
+  agents: () => <AgentsScreen />,
   providers: () => <ProvidersScreen />,
   settings: () => <SettingsScreen />,
   setup: () => null,

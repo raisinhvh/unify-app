@@ -1,0 +1,237 @@
+/*
+ * Finish setup checklist (SetupChecklist.tsx). A raised card like the confirm bar: header line, step rows split
+ * by hairlines, footer actions. Complete: only the header line stays, in the done tone.
+ */
+.tp-setup {
+  container-type: inline-size;
+  margin-top: 16px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-menu);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.tp-setup-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 8px 4px 12px;
+}
+
+.tp-setup-header-glyph {
+  display: inline-flex;
+  flex: none;
+}
+
+/* The header's box is a status, not a control: dashed while steps are left. */
+.tp-setup-header-glyph .status-todo .tp-setup-box {
+  stroke-dasharray: 2.2 1.6;
+}
+
+.tp-setup-heading {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: var(--weight-heading);
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.tp-setup-count {
+  color: var(--text3);
+  white-space: nowrap;
+}
+
+.tp-setup-spacer {
+  flex: 1;
+}
+
+.tp-setup-body {
+  border-top: 1px solid var(--border);
+}
+
+.tp-setup-steps {
+  display: flex;
+  flex-direction: column;
+}
+
+.tp-setup-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 8px 10px 10px;
+}
+
+.tp-setup-step + .tp-setup-step {
+  border-top: 1px solid var(--border);
+}
+
+.tp-setup-tick {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-top: -2px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: inherit;
+  transition: background-color 120ms ease-out;
+}
+
+button.tp-setup-tick {
+  cursor: pointer;
+}
+
+button.tp-setup-tick:hover {
+  background: var(--hover);
+}
+
+button.tp-setup-tick:focus-visible {
+  outline: 1px solid var(--text3);
+  outline-offset: 1px;
+}
+
+/* Glyph: the box is the frame, done fills it faintly in the add tone and draws the check. */
+.tp-setup-glyph {
+  flex: none;
+  overflow: visible;
+}
+
+.tp-setup-box {
+  fill: var(--add);
+  stroke: var(--text3);
+  stroke-width: 1.25;
+  transition: stroke 160ms ease-out;
+}
+
+.tp-setup-glyph.status-done .tp-setup-box {
+  stroke: var(--add);
+}
+
+.tp-setup-glyph.status-failed .tp-setup-box {
+  fill: var(--del);
+  fill-opacity: 0.14;
+  stroke: var(--del);
+}
+
+.tp-setup-check {
+  fill: none;
+  stroke: var(--add);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tp-setup-mark {
+  fill: var(--del);
+}
+
+.tp-setup-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tp-setup-title {
+  color: var(--text);
+  transition: color 160ms ease-out;
+}
+
+.tp-setup-step.done .tp-setup-title {
+  color: var(--text2);
+}
+
+.tp-setup-detail {
+  color: var(--text3);
+}
+
+.tp-setup-error {
+  color: var(--del);
+}
+
+.tp-setup-path {
+  align-self: flex-start;
+  max-width: 100%;
+  margin-top: 4px;
+  padding: 2px 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-row);
+  color: var(--text2);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tp-setup-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  margin-top: -4px;
+}
+
+.tp-setup .tp-setup-action {
+  height: 24px;
+}
+
+.tp-setup-copy-label {
+  transition: color 160ms ease-out;
+}
+
+.tp-setup-copy-label.copied {
+  color: var(--add);
+}
+
+.tp-setup-footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 4px 8px 4px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.tp-setup-footer-error {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--del);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Narrow (the Hub's detail column): the actions move under the text, lined up with it. */
+@container (max-width: 420px) {
+  .tp-setup-step {
+    flex-wrap: wrap;
+  }
+
+  .tp-setup-text {
+    flex-basis: calc(100% - 30px);
+  }
+
+  .tp-setup-actions {
+    width: 100%;
+    margin-top: 0;
+    margin-left: 24px;
+  }
+
+  .tp-setup-actions:empty {
+    display: none;
+  }
+}
+
+/* The Toolpacks panel's "Setup" marker. */
+.tree-trailing.tp-setup-needed {
+  color: var(--warn);
+}

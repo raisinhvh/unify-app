@@ -1,0 +1,245 @@
+/* /job bar at the top of a chat (JobBar.tsx). Card like the changes bar; criteria hang off a guide line. */
+
+/* The pane is a flex column: the timeline gives way, the bar keeps its height. */
+.job-bar-slot {
+  flex: none;
+}
+
+/* Padding, not margin: the slot is a Collapse that measures its content's offsetHeight. */
+.job-bar-frame {
+  padding: 0 8px 6px;
+}
+
+.job-bar {
+  padding: 4px 8px 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.job-bar-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+
+.job-bar-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: none;
+  white-space: nowrap;
+}
+
+.job-bar-round {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.job-bar-of {
+  color: var(--text2);
+}
+
+.job-bar-phase {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--text3);
+}
+
+.job-bar-spacer {
+  flex: 1;
+}
+
+.job-bar-counts {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: none;
+  color: var(--text2);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.job-bar-counts-word {
+  color: var(--text3);
+}
+
+.job-bar-chevron {
+  flex: none;
+  color: var(--text3);
+  transition: color 120ms ease;
+}
+
+.job-bar-head:hover .job-bar-chevron {
+  color: var(--text);
+}
+
+.job-bar-reason {
+  padding: 0 0 6px 20px;
+  color: var(--text2);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.job-bar-reason-stopped {
+  color: var(--warn);
+}
+
+/* Status cell: the loader and the marks share one 12px square and blend into each other. */
+.job-glyph {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: var(--text3);
+}
+
+.job-glyph > * {
+  grid-area: 1 / 1;
+}
+
+.job-glyph-mark {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+}
+
+/* Pending: an empty box, like an unticked checklist line. */
+.job-glyph-pending::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--text3);
+  border-radius: 2px;
+  box-sizing: border-box;
+}
+
+.job-glyph-fail {
+  color: var(--del);
+}
+
+.job-glyph-stop {
+  color: var(--warn);
+}
+
+/* Criteria: a tree under the head's glyph (glyph centre = 10px card padding + 6px). */
+.job-criteria {
+  position: relative;
+  max-height: min(320px, 40vh);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 2px 0 6px 0;
+}
+
+.job-criteria::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 0;
+  bottom: 10px;
+  width: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+.job-criteria-empty {
+  padding: 4px 0 2px 20px;
+  color: var(--text3);
+}
+
+.job-criterion-slot {
+  padding-left: 16px;
+}
+
+.job-criterion {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+/* Lines the 12px glyph up with the first 16px text line. */
+.job-criterion > .job-glyph {
+  margin-top: 2px;
+}
+
+.job-criterion-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.job-criterion-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.job-criterion-id {
+  flex: none;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.job-criterion-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.job-criterion-pass .job-criterion-text {
+  color: var(--text2);
+}
+
+/* Source tag: a flat label, not a button. */
+.job-criterion-source {
+  flex: none;
+  padding: 0 5px;
+  color: var(--text3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.job-criterion-check {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.job-criterion-evidence {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  padding-top: 1px;
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.job-criterion-fail .job-criterion-evidence {
+  color: var(--text2);
+}

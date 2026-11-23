@@ -38,6 +38,7 @@ type ToolLike = Pick<SidebarToolEvent, 'title' | 'detail' | 'full' | 'kind'> & {
 };
 
 const explorerProfile = 'explorer';
+const noMediaIds: ReadonlySet<string> = new Set();
 
 function isExplorer(chatId: string, agentId: string): boolean {
   return viewState.subagents[chatId]?.[agentId]?.profile === explorerProfile;
@@ -47,7 +48,33 @@ type FeedItem =
   | Exclude<SidebarTimelineItem, { kind: 'tool' } | { kind: 'diff' }>
   | { id: string; kind: 'toolbatch'; tools: SidebarToolEvent[] };
 
-function feedItems(timeline: SidebarTimelineItem[]): FeedItem[] {
+/**
+ * Attachments arrive as their own `mediaMessage` entry (`user-media:<turn>` or `history-media:<index>`), not on the
+ * user message. Pair them by id so the bubble can show them inline, and hide the standalone media row.
+ */
+function pairUserMedia(timeline: SidebarTimelineItem[]): {
+  media: Map<string, MediaItem[]>;
+  hidden: Set<string>;
+} {
+  const userMessages = new Set(
+    timeline.filter(entry => entry.kind === 'message' && entry.role === 'user').map(entry => entry.id),
+  );
+  const media = new Map<string, MediaItem[]>();
+  const hidden = new Set<string>();
+  for (const entry of timeline) {
+    if (entry.kind !== 'media') continue;
+    const match = /^(user|history)-media:(.+)$/.exec(entry.id);
+    if (!match) continue;
+    const messageId = `${match[1]}:${match[2]}`;
+    // An image-only send has no user message, so leave its media row standing rather than hiding it.
+    if (!userMessages.has(messageId)) continue;
+    media.set(messageId, [...(media.get(messageId) || []), ...entry.items]);
+    hidden.add(entry.id);
+  }
+  return { media, hidden };
+}
+
+function feedItems(timeline: SidebarTimelineItem[], hiddenMedia: ReadonlySet<string>): FeedItem[] {
   const items: FeedItem[] = [];
   for (const entry of timeline) {
     if (entry.kind === 'tool') {
@@ -55,11 +82,23 @@ function feedItems(timeline: SidebarTimelineItem[]): FeedItem[] {
       const last = items[items.length - 1];
       if (last?.kind === 'toolbatch') last.tools.push(entry.event);
       else items.push({ id: `batch:${entry.id}`, kind: 'toolbatch', tools: [entry.event] });
-    } else if (entry.kind !== 'diff') {
+    } else if (entry.kind !== 'diff' && !hiddenMedia.has(entry.id)) {
       items.push(entry);
     }
   }
   return items;
+}
+
+/**
+ * The engine appends the names of non-image attachments to the echoed text as a final `[Files: …]` line. Split it
+ * off so the bubble can show real attachment chips (and so image names the media already covers do not repeat).
+ */
+function splitFilesMarker(text: string): { text: string; files: string[] } {
+  const match = /(?:^|\n\n)\[Files: ([\s\S]*)\]\s*$/.exec(text);
+  if (!match) return { text, files: [] };
+  const files = match[1].split(/,\s+/).map(name => name.trim()).filter(Boolean);
+  if (!files.length) return { text, files: [] };
+  return { text: text.slice(0, match.index).trimEnd(), files };
 }
 
 /* Tool rows */
@@ -240,13 +279,46 @@ function ToolBatch(props: { item: Extract<FeedItem, { kind: 'toolbatch' }> }): J
 
 /* Messages */
 
-function UserMessage(props: { chatId: string; item: Extract<FeedItem, { kind: 'message' }> }): JSX.Element {
+function UserMessage(props: {
+  chatId: string;
+  item: Extract<FeedItem, { kind: 'message' }>;
+  media: MediaItem[];
+}): JSX.Element {
   const [editing, setEditing] = createSignal(false);
   let editor: HTMLTextAreaElement | undefined;
-  const images = () => userImages()[props.item.id] || [];
+  const thumbs = new Map<string, HTMLElement>();
+  const legacyImages = (): MediaItem[] =>
+    (userImages()[props.item.id] || [])
+      .filter(image => image.mimeType.startsWith('image/'))
+      .map(image => ({ name: image.name, mimeType: image.mimeType, file: `data:${image.mimeType};base64,${image.data}` }));
+  // Backend media wins when it is there; the store's sent-image copy keeps older engines working before it arrives.
+  const images = createMemo((): MediaItem[] => {
+    const received = props.media.filter(isImage);
+    return uniqueMedia(received.length ? received : legacyImages());
+  });
+  const parts = createMemo(() => {
+    const parsed = splitFilesMarker(props.item.text);
+    const imageNames = new Set(images().map(image => image.name));
+    return { text: parsed.text, files: parsed.files.filter(name => !imageNames.has(name)) };
+  });
+  const openImage = (image: MediaItem) => {
+    const items = images();
+    const index = items.findIndex(item => mediaKey(item) === mediaKey(image));
+    openMediaViewer({ items, index: Math.max(0, index), origin: at => thumbs.get(mediaKey(items[at])) });
+  };
   const save = () => {
     const text = editor?.value.trim();
-    if (text) post({ type: 'editMessage', sessionId: props.chatId, entryId: props.item.id, text, chatId: props.chatId });
+    if (text) {
+      // Keep non-image attachment names when editing; the engine only re-adds them on a fresh send.
+      const files = parts().files;
+      post({
+        type: 'editMessage',
+        sessionId: props.chatId,
+        entryId: props.item.id,
+        text: files.length ? `${text}\n\n[Files: ${files.join(', ')}]` : text,
+        chatId: props.chatId,
+      });
+    }
     setEditing(false);
   };
   return (
@@ -261,7 +333,7 @@ function UserMessage(props: { chatId: string; item: Extract<FeedItem, { kind: 'm
                 queueMicrotask(() => element.focus());
               }}
               aria-label="Edit message"
-              value={props.item.text}
+              value={parts().text}
               onKeyDown={event => {
                 if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault();
@@ -279,10 +351,37 @@ function UserMessage(props: { chatId: string; item: Extract<FeedItem, { kind: 'm
       >
         <Show when={feature('chats.imagesInBubble') && images().length}>
           <div class="bubble-images">
-            <For each={images()}>{image => <img src={`data:${image.mimeType};base64,${image.data}`} alt={image.name} />}</For>
+            <For each={images()}>
+              {image => (
+                <button
+                  type="button"
+                  class="bubble-image"
+                  title={image.name}
+                  aria-label={`View ${image.name}`}
+                  ref={element => thumbs.set(mediaKey(image), element)}
+                  onClick={() => openImage(image)}
+                >
+                  <img src={thumbSource(image)} alt="" draggable={false} />
+                </button>
+              )}
+            </For>
           </div>
         </Show>
-        <div class="message-content">{props.item.text}</div>
+        <Show when={parts().text}>
+          <div class="message-content">{parts().text}</div>
+        </Show>
+        <Show when={parts().files.length}>
+          <div class="bubble-files">
+            <For each={parts().files}>
+              {name => (
+                <span class="bubble-file" title={name}>
+                  <Icon name="file" size={12} />
+                  <span class="bubble-file-name">{name}</span>
+                </span>
+              )}
+            </For>
+          </div>
+        </Show>
         <Show when={!isRunning(props.chatId)}>
           <button type="button" class="message-edit" aria-label="Edit message" onClick={() => setEditing(true)}>
             <Icon name="edit" size={12} />
@@ -566,6 +665,7 @@ function showAgentMessage(chatId: string, entry: AgentMessageEntry): boolean {
 function FeedRow(props: {
   chatId: string;
   item: Accessor<FeedItem | undefined>;
+  userMedia: Accessor<ReadonlyMap<string, MediaItem[]>>;
   parentMedia: Accessor<ReadonlySet<string>>;
   onOpenSubagent: (id: string) => void;
 }): JSX.Element {
@@ -576,7 +676,11 @@ function FeedRow(props: {
           <Match when={item().kind === 'message' && (item() as Extract<FeedItem, { kind: 'message' }>)}>
             {message => (
               <Show when={message().role === 'user'} fallback={<AssistantMessage text={message().text} />}>
-                <UserMessage chatId={props.chatId} item={message()} />
+                <UserMessage
+                  chatId={props.chatId}
+                  item={message()}
+                  media={props.userMedia().get(message().id) || []}
+                />
               </Show>
             )}
           </Match>
@@ -642,9 +746,12 @@ export function Timeline(props: { chatId: string }): JSX.Element {
   let stickToBottom = true;
 
   const feed = createMemo(() => {
-    const items = feedItems(viewState.timeline[props.chatId] || []);
+    const timeline = viewState.timeline[props.chatId] || [];
+    const paired = pairUserMedia(timeline);
+    // With the feature off the engine's media row stays where it was; only turn it inline when the bubble shows it.
+    const items = feedItems(timeline, feature('chats.imagesInBubble') ? paired.hidden : noMediaIds);
     const byId = new Map(items.map(item => [item.id, item]));
-    return { order: items.map(item => item.id), byId };
+    return { order: items.map(item => item.id), byId, userMedia: paired.media };
   });
 
   const parentMedia = createMemo(() => inlineMediaKeys(viewState.timeline[props.chatId] || []));
@@ -681,6 +788,7 @@ export function Timeline(props: { chatId: string }): JSX.Element {
                 <FeedRow
                   chatId={props.chatId}
                   item={() => feed().byId.get(id)}
+                  userMedia={() => feed().userMedia}
                   parentMedia={parentMedia}
                   onOpenSubagent={setOpenedSubagent}
                 />

@@ -9,11 +9,20 @@
  * height opens (onProgress reports 0..1 so the Shell moves the content below with it, no jump) while the bar
  * slides down a few px and fades in. A new notice replaces the old one in place: the old line slides up and
  * fades out while the new one slides in, in the same bar. Reduced motion: no slide, height snaps, fades only.
+ *
+ * A notice with the same `key` as the line on screen updates that line in place instead (a progress task
+ * moving on): the loader morphs (e.g. 'pull' → 'done'), the text retypes, and the thin determinate bar under
+ * the text springs to the new percent. The bar fills to the end and fades once percent reaches 100 or goes away.
+ *
+ *   <EngineNotice onProgress={…} />   the engine's last error first, else the newest progress task (ProgressNotice)
  */
 import { createEffect, createSignal, For, on, onCleanup, Show, type Accessor, type JSX } from 'solid-js';
 import { prefersReducedMotion, Spring } from '../motion';
+import { RetypeText } from '../motion/organic';
 import { engineError, setEngineError } from '../store';
 import { Button, IconButton } from './Button';
+import { Loader, type LoaderShape } from './loaders';
+import { useProgressNotice } from './ProgressNotice';
 import './notice.css';
 
 export type NoticeTone = 'error' | 'warning' | 'info';
@@ -22,6 +31,14 @@ export interface NoticeData {
   message: string;
   tone?: NoticeTone;
   action?: { label: string; run: () => void };
+  /** Same key as the line on screen: update it in place rather than sliding a new line in. */
+  key?: string;
+  /** Muted text after the message. */
+  detail?: string;
+  /** A loader or status glyph in place of the tone glyph; it morphs when it changes. */
+  loader?: LoaderShape;
+  /** 0-100: a thin determinate bar under the text. */
+  percent?: number;
 }
 
 export interface NoticeProps {
@@ -36,7 +53,8 @@ const slideDistance = 6;
 
 interface Layer {
   id: number;
-  notice: NoticeData;
+  notice: Accessor<NoticeData>;
+  setNotice: (notice: NoticeData) => void;
   /** 0 = gone, 1 = settled. */
   presence: Spring;
   /** True once a newer notice replaced this line: it slides up instead of down. */
@@ -88,7 +106,9 @@ function NoticeLine(props: { layer: Layer }): JSX.Element {
   };
   const stopListening = props.layer.presence.onChange(apply);
   onCleanup(stopListening);
-  const tone = () => props.layer.notice.tone ?? 'error';
+  const notice = () => props.layer.notice();
+  const tone = () => notice().tone ?? 'error';
+  const fullText = () => (notice().detail ? `${notice().message} · ${notice().detail}` : notice().message);
   return (
     <div
       ref={line => {
@@ -99,11 +119,22 @@ function NoticeLine(props: { layer: Layer }): JSX.Element {
       classList={{ leaving: props.layer.leaving() }}
       aria-hidden={props.layer.leaving() ? 'true' : undefined}
     >
-      <ToneGlyph tone={tone()} />
-      <span class="notice-message" title={props.layer.notice.message}>
-        {props.layer.notice.message}
+      <Show when={notice().loader} fallback={<ToneGlyph tone={tone()} />}>
+        <Loader id={notice().loader} size={14} class="notice-glyph notice-loader" />
+      </Show>
+      <span class="notice-text" title={fullText()}>
+        <span class="notice-message">
+          <RetypeText value={notice().message} speed="fast" data-motion="notice-message" />
+        </span>
+        <Show when={notice().detail}>
+          {detail => (
+            <span class="notice-detail">
+              <RetypeText value={detail()} speed="fast" data-motion="notice-detail" />
+            </span>
+          )}
+        </Show>
       </span>
-      <Show when={props.layer.notice.action}>
+      <Show when={notice().action}>
         {action => (
           <Button variant="text" class="notice-action" tabIndex={props.layer.leaving() ? -1 : undefined} onClick={() => action().run()}>
             {action().label}
@@ -147,6 +178,13 @@ export function Notice(props: NoticeProps): JSX.Element {
 
   const addLayer = (notice: NoticeData, animate: boolean) => {
     const token = prefersReducedMotion() ? 'control' : 'panel';
+    // Same key as the line on screen: the line itself moves on (loader morph, retyped text).
+    const current = layers().filter(item => !item.leaving()).at(-1);
+    if (notice.key && current && current.notice().key === notice.key) {
+      current.setNotice(notice);
+      current.presence.set(1, token);
+      return;
+    }
     // The line on screen slides up and out from wherever it is; lines already leaving keep going.
     for (const item of layers()) {
       if (!item.leaving()) {
@@ -157,9 +195,11 @@ export function Notice(props: NoticeProps): JSX.Element {
       item.presence.set(0, token);
     }
     const [leaving, setLeaving] = createSignal(false);
+    const [layerNotice, setLayerNotice] = createSignal(notice);
     const layer: Layer = {
       id: nextLayerId,
-      notice,
+      notice: layerNotice,
+      setNotice: setLayerNotice,
       presence: new Spring(animate ? 0 : 1, 'panel', 1),
       leaving,
       setLeaving,
@@ -172,6 +212,39 @@ export function Notice(props: NoticeProps): JSX.Element {
     setLayers(current => [...current, layer]);
     if (animate) layer.presence.set(1, token);
   };
+
+  // The determinate bar: width and opacity on their own springs. It appears at the task's percent (from empty
+  // when it was hidden), follows each update, and once full (or when percent goes away) fades out.
+  let meter: HTMLDivElement | undefined;
+  let meterFill: HTMLDivElement | undefined;
+  const meterWidth = new Spring(0, 'panel', 0.01);
+  const meterOpacity = new Spring(0, 'control', 0.01);
+  const applyMeterWidth = (value: number) => {
+    if (meterFill) meterFill.style.transform = `scaleX(${Math.max(0, Math.min(1, value))})`;
+  };
+  const applyMeterOpacity = (value: number) => {
+    if (meter) meter.style.opacity = String(Math.max(0, Math.min(1, value)));
+  };
+  meterWidth.onChange(applyMeterWidth);
+  meterOpacity.onChange(applyMeterOpacity);
+  meterWidth.onRest(value => {
+    if (value >= 0.999) meterOpacity.set(0, 'exit');
+  });
+  createEffect(on(() => props.notice?.percent, percent => {
+    if (percent === undefined) {
+      meterOpacity.set(0, 'exit');
+      return;
+    }
+    const target = Math.max(0, Math.min(100, percent)) / 100;
+    if (meterOpacity.value < 0.05) meterWidth.jump(0);
+    if (target < 0.999) meterOpacity.set(1, 'control');
+    if (prefersReducedMotion()) {
+      meterWidth.jump(target);
+      if (target >= 0.999) meterOpacity.set(0, 'control');
+    } else {
+      meterWidth.set(target, 'panel');
+    }
+  }));
 
   createEffect(on(() => props.notice, notice => {
     const reduced = prefersReducedMotion();
@@ -193,6 +266,8 @@ export function Notice(props: NoticeProps): JSX.Element {
   onCleanup(() => {
     progress.stop();
     fade.stop();
+    meterWidth.stop();
+    meterOpacity.stop();
     for (const layer of layers()) layer.presence.stop();
   });
 
@@ -217,6 +292,22 @@ export function Notice(props: NoticeProps): JSX.Element {
           <div class="notice-lines">
             <For each={layers()}>{layer => <NoticeLine layer={layer} />}</For>
           </div>
+          <div
+            ref={element => {
+              meter = element;
+              applyMeterOpacity(meterOpacity.value);
+            }}
+            class="notice-meter"
+            aria-hidden="true"
+          >
+            <div
+              ref={element => {
+                meterFill = element;
+                applyMeterWidth(meterWidth.value);
+              }}
+              class="notice-meter-fill"
+            />
+          </div>
           <IconButton icon="close" label="Dismiss" size="small" class="notice-dismiss" onClick={() => props.onDismiss()} />
         </div>
       </Show>
@@ -224,11 +315,17 @@ export function Notice(props: NoticeProps): JSX.Element {
   );
 }
 
-/** The engine's last error as a notice; dismissing clears it. */
+/** The engine's last error as a notice, else the newest progress task; dismissing clears whichever is shown. */
 export function EngineNotice(props: { onProgress?: (progress: number) => void }): JSX.Element {
+  const progressNotice = useProgressNotice();
   const notice = (): NoticeData | undefined => {
     const message = engineError();
-    return message ? { message, tone: 'error' } : undefined;
+    if (message) return { message, tone: 'error', key: `engine-error:${message}` };
+    return progressNotice.notice();
   };
-  return <Notice notice={notice()} onDismiss={() => setEngineError(undefined)} onProgress={props.onProgress} />;
+  const dismiss = () => {
+    if (engineError()) setEngineError(undefined);
+    else progressNotice.dismiss();
+  };
+  return <Notice notice={notice()} onDismiss={dismiss} onProgress={props.onProgress} />;
 }

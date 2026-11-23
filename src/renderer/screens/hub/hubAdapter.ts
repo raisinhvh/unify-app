@@ -1,18 +1,17 @@
 /**
  * Toolpack Hub data (registry: GitHub `raisinhvh/unify-hub`; the engine fetches it, never the renderer).
  *
- * The engine answers the Hub messages (src/engine/unify/requests/hub.ts, protocol-requests.md › Hub):
- *   - in the app (a host bridge exists) every request goes to the engine and only engine replies count;
- *   - in a plain-browser dev preview (vite dev, no host bridge) hubMock.ts answers instead (a fake catalogue
- *     and a fake download), so the screen can be built and screenshotted. Production builds drop the mock.
+ * The engine answers the Hub messages (src/engine/unify/requests/hub.ts, protocol-requests.md › Hub); only
+ * engine replies count. There is no stand-in catalogue: without an engine the Hub stays empty.
  * Nothing here contacts GitHub, and publishing is only ever a request to the engine.
  */
 import { createSignal } from 'solid-js';
-import { hasHostBridge, post } from '../../bridge';
+import { post } from '../../bridge';
 import { readPersisted, writePersisted } from '../../persist';
 import type { HubInstallMessage, HubInstallResultMessage, SidebarWebviewMessage } from '../../protocol';
 import { onHostMessage } from '../../store';
 import { feature } from '../../store/features';
+import { applySetup } from '../toolpacks/setup';
 
 export interface HubPack {
   id: string;
@@ -142,8 +141,11 @@ function applyInstallResult(result: HubInstallResultMessage): void {
     setScriptConsent({ id: result.id, target, scriptName: result.scriptName ?? 'Install script', scriptText: result.scriptText ?? '' });
     return;
   }
-  if (result.ok) setInstall(result.id, undefined);
-  else setInstall(result.id, { id: result.id, percent: 100, state: 'error', error: result.error ?? 'The install failed.' });
+  if (result.ok) {
+    setInstall(result.id, undefined);
+    // The pack's "Finish setup" checklist (Hub detail and Toolpacks), when it ships one.
+    if (result.setup) applySetup(result.setup);
+  } else setInstall(result.id, { id: result.id, percent: 100, state: 'error', error: result.error ?? 'The install failed.' });
 }
 
 function applyReply(reply: HubReply): void {
@@ -179,9 +181,6 @@ onHostMessage(message => {
 
 function send(request: HubRequest): void {
   post(request as unknown as SidebarWebviewMessage);
-  if (import.meta.env.DEV && !hasHostBridge()) {
-    void import('./hubMock').then(mock => mock.answer(request, applyReply));
-  }
 }
 
 /** Loads the catalogue once (pass refresh to fetch again). */

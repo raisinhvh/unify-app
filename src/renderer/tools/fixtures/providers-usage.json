@@ -1,0 +1,52 @@
+{
+  "extends": "base",
+  "persisted": {
+    "route": "providers",
+    "panelOpen": true,
+    "providerSelection": { "kind": "account", "id": "acc-claude" }
+  },
+  "messages": [
+    {
+      "type": "accountsState",
+      "cursor": { "connected": false, "label": "Not connected" },
+      "accounts": [
+        { "id": "acc-claude", "provider": "claude-cli", "label": "Claude Max", "isDefault": true, "authType": "oauth" },
+        { "id": "acc-claude-work", "provider": "claude-cli", "label": "Work", "authType": "oauth" },
+        { "id": "acc-codex", "provider": "codex-cli", "label": "ChatGPT Plus", "isDefault": true, "authType": "oauth" }
+      ]
+    },
+    {
+      "type": "usageState",
+      "usage": {
+        "acc-claude": {
+          "status": "ready",
+          "fetchedAt": -1,
+          "plan": { "name": "Max", "monthlyUsd": 100 },
+          "metrics": [
+            { "label": "5-hour", "value": "38%", "usedPercent": 38, "resetsAt": 32 },
+            { "label": "Weekly", "value": "21%", "usedPercent": 21, "resetsAt": 2820 },
+            { "label": "Weekly limit for Fable", "value": "64%", "usedPercent": 64, "resetsAt": 2820 }
+          ]
+        },
+        "acc-claude-work": {
+          "status": "ready",
+          "fetchedAt": -1,
+          "plan": { "name": "Pro", "monthlyUsd": 20 },
+          "metrics": [
+            { "label": "5-hour", "value": "82%", "usedPercent": 82, "resetsAt": 140 },
+            { "label": "Weekly", "value": "47%", "usedPercent": 47, "resetsAt": 5000 }
+          ]
+        },
+        "acc-codex": {
+          "status": "ready",
+          "fetchedAt": -1,
+          "plan": { "name": "Plus", "monthlyUsd": 20 },
+          "metrics": [
+            { "label": "5-hour", "value": "14%", "usedPercent": 14, "resetsAt": -1 },
+            { "label": "Weekly", "value": "9%", "usedPercent": 9, "resetsAt": 9000 }
+          ]
+        }
+      }
+    }
+  ]
+}

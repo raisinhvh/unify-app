@@ -30,7 +30,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.96.0",
-    "electron": "31.7.7",
+    "electron": "45.4.1",
     "electron-builder": "^25.1.8",
     "monaco-editor": "^0.52.0",
     "rcedit": "^5.0.2",
@@ -596,6 +596,11 @@
           "type": "string",
           "default": "",
           "description": "Optional Claude Code executable for Claude subscription browser sign-in and model runs."
+        },
+        "unify.runtime.codexPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Codex CLI executable when Use Codex with DeepSeek Harness is off."
         },
         "unify.runtime.maxWorkspaceFiles": {
           "type": "integer",

@@ -685,10 +685,16 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  margin-top: 20px;
 }
 
-.pv-section-heading-row .pv-section-heading {
-  margin-top: 20px;
+.pv-section-heading-row .pv-section-heading,
+.pv-section-divider + .pv-section .pv-section-heading-row .pv-section-heading {
+  margin-top: 0;
+}
+
+.pv-add-model-trigger {
+  margin-left: auto;
 }
 
 .pv-section-note {
@@ -767,19 +773,26 @@
 }
 
 /*
- * All metric rows live in one shared grid so the label column is sized to the longest label
- * across every row and the bars stay aligned. The label column grows to its content first
- * (capped by the label's max-width so an extremely long label wraps to two lines instead of
- * being ellipsized) and the bar gives way before anything else is squeezed. Each row is a
- * subgrid, so it keeps its own row while sharing the parent's column tracks.
+ * All metric rows live in one shared grid; each row is a subgrid, so it keeps its own row while sharing the
+ * parent's column tracks. The label column is a fixed width in `ch` (the UI font is monospaced), set by
+ * AccountPage to the longest label across every account: bars start at the same x on every account page and
+ * never under a label. Labels past the cap end in an ellipsis with the full text as a tooltip. The grid's own
+ * font size is the labels' size, so `ch` measures them exactly.
  */
 .pv-inline-usage {
   display: grid;
   flex: 1;
   min-width: 0;
-  grid-template-columns: minmax(0, max-content) minmax(120px, 164px) 48px 108px 1fr;
+  grid-template-columns:
+    calc(var(--pv-metric-label-chars, 12) * 1ch)
+    minmax(96px, 164px)
+    40px
+    max-content
+    1fr;
   grid-auto-rows: 36px;
+  column-gap: 16px;
   align-items: center;
+  font-size: 12px;
 }
 
 .pv-metric-row {
@@ -790,18 +803,19 @@
 }
 
 .pv-metric-label {
-  max-width: 220px;
+  min-width: 0;
   overflow: hidden;
   color: var(--text3);
   font-size: 12px;
   line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .pv-metric-bar {
   display: block;
-  width: calc(100% - 12px);
+  width: 100%;
   height: 4px;
-  margin-right: 12px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 2px;
@@ -857,6 +871,7 @@
 }
 
 .pv-model-name {
+  padding-right: 12px;
   overflow: hidden;
   color: var(--text);
   font-size: 13px;
@@ -875,8 +890,131 @@
   line-height: 14px;
 }
 
-.pv-model-row .toggle {
+.pv-model-actions {
+  display: inline-flex;
+  align-items: center;
   justify-self: end;
+  gap: 8px;
+}
+
+.pv-model-edit {
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text2);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.pv-model-edit:hover,
+.pv-model-edit:focus-visible {
+  color: var(--text);
+}
+
+.pv-model-remove {
+  opacity: 0;
+  color: var(--text3);
+}
+
+.pv-model-row:hover .pv-model-remove,
+.pv-model-row:focus-within .pv-model-remove,
+.pv-model-remove:focus-visible {
+  opacity: 1;
+}
+
+.pv-model-remove:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.pv-models-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  padding: 6px 0;
+}
+
+.pv-models-empty-text {
+  margin: 0;
+  color: var(--text3);
+}
+
+.pv-models-empty-action.button {
+  flex: none;
+  height: 28px;
+  font-size: 12px;
+}
+
+.pv-model-form-shell {
+  width: 100%;
+}
+
+.pv-model-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pv-model-input {
+  width: 260px;
+  max-width: 100%;
+}
+
+.pv-load-models.button {
+  flex: none;
+  height: 28px;
+  color: var(--text2);
+}
+
+.pv-model-form-feedback {
+  margin: 0;
+  padding: 2px 0 4px 180px;
+  color: var(--text3);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.pv-model-form-feedback.error {
+  color: var(--del);
+}
+
+.pv-model-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 0 180px;
+}
+
+.pv-model-save.button {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.pv-spinner {
+  display: inline-block;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: pv-spin 650ms linear infinite;
+}
+
+@keyframes pv-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pv-spinner {
+    animation: none;
+  }
 }
 
 .pv-section-note.type-body {

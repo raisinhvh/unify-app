@@ -19,6 +19,7 @@ export const ENGINE_FEATURE_DEFAULTS = {
   'agents.messaging': true,
   'agents.messaging.scope': 'everyone',
   'agents.blockNativeAgents': true,
+  'agents.codexRuntime': true,
   'agents.maxParallel': 4,
   'agents.imagesToParent': true,
   'agents.explorerRanges': true,

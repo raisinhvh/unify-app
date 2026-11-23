@@ -9,16 +9,13 @@
  * `needsScriptConsent` with the script so the Hub screen can show it, and no pack folder is installed.
  * The caller retries with `allowScript: true` after the user agrees.
  */
-import { spawn } from 'node:child_process';
 import { promises as fsp } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
-import { toolpackIdFor } from './fixtures/packSource';
-import { HubInstallProgress, HubInstallRequest, HubRegistry } from './types';
+import { toolpackIdFor } from './ids';
+import { INSTALL_SCRIPT_NAMES, readPackSetup, runPackInstallScript } from './setup';
+import { HubInstallProgress, HubInstallRequest, HubRegistry, PackSetupState } from './types';
 import type { InstalledHubPack } from '../unify/requests/toolpacks';
-
-const INSTALL_TIMEOUT = 60_000;
-const SCRIPT_NAMES = ['install.js', 'install.ps1', 'install.sh'];
 /** The most of an install script the consent screen is sent; longer scripts are truncated with a note. */
 const MAX_SCRIPT_TEXT_BYTES = 64 * 1024;
 
@@ -37,6 +34,8 @@ function scriptTextForUi(text: string): string {
 export interface InstallHubPackOptions extends HubInstallRequest {
   registry: HubRegistry;
   toolpacksDir: string;
+  /** Unify's data home, passed to the install script as `UNIFY_HOME`. */
+  unifyHome?: string;
   reply: (message: unknown) => void;
   onInstalled?: (pack: InstalledHubPack) => void;
 }
@@ -51,6 +50,8 @@ export interface HubInstallResult {
   /** The install script the user must agree to run. */
   scriptName?: string;
   scriptText?: string;
+  /** The pack's setup checklist, when it ships a `setup.json`. */
+  setup?: PackSetupState | null;
 }
 
 interface ExistingMeta {
@@ -60,52 +61,7 @@ interface ExistingMeta {
 }
 
 function installScriptFor(files: string[]): string | undefined {
-  return SCRIPT_NAMES.find(name => files.includes(name));
-}
-
-function windowsPowerShellPath(): string {
-  const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
-  return path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-}
-
-function commandFor(script: string): { command: string; args: string[] } | undefined {
-  if (script.endsWith('.js')) return { command: process.execPath, args: [script] };
-  if (script.endsWith('.ps1')) return { command: windowsPowerShellPath(), args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script] };
-  if (script.endsWith('.sh')) return { command: 'bash', args: [script] };
-  return undefined;
-}
-
-/** Runs one install script in the pack folder with a hard timeout. */
-function runInstallScript(destination: string, script: string): Promise<void> {
-  const invocation = commandFor(script);
-  if (!invocation) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const child = spawn(invocation.command, invocation.args, {
-      cwd: destination,
-      windowsHide: true,
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let output = '';
-    let done = false;
-    const finish = (error?: Error): void => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      error ? reject(error) : resolve();
-    };
-    const timer = setTimeout(() => {
-      child.kill();
-      finish(new Error(`The install script took longer than ${INSTALL_TIMEOUT / 1000}s.`));
-    }, INSTALL_TIMEOUT);
-    child.stdout?.on('data', chunk => { if (output.length < 16_000) output += chunk.toString(); });
-    child.stderr?.on('data', chunk => { if (output.length < 16_000) output += chunk.toString(); });
-    child.once('error', error => finish(error));
-    child.once('close', code => {
-      if (code === 0) finish();
-      else finish(new Error(`The install script exited with code ${code}${output ? `: ${output.slice(-2000)}` : '.'}`));
-    });
-  });
+  return INSTALL_SCRIPT_NAMES.find(name => files.includes(name));
 }
 
 async function readExistingMeta(destination: string): Promise<ExistingMeta> {
@@ -212,7 +168,11 @@ export async function installHubPack(options: InstallHubPackOptions): Promise<Hu
     };
     await fsp.writeFile(path.join(destination, 'meta.json'), `${JSON.stringify(meta, null, 2)}\n`, 'utf8');
 
-    if (scriptName) await runInstallScript(destination, scriptName);
+    if (scriptName) {
+      const result = await runPackInstallScript(destination, scriptName, { unifyHome: options.unifyHome });
+      // With a setup.json the pack stays installed and its checklist shows the failed step and how to fix it.
+      if (!result.ok && !files.includes('setup.json')) throw new Error(result.error ?? 'The install script failed.');
+    }
 
     const installed: InstalledHubPack = {
       id: pack.id,
@@ -226,8 +186,9 @@ export async function installHubPack(options: InstallHubPackOptions): Promise<Hu
       installedAt: Date.now(),
     };
     options.onInstalled?.(installed);
+    const setup = await readPackSetup(destination, packId, pack.name);
     send({ id, percent: 100, state: 'done' });
-    return { ok: true, id, pack: installed };
+    return { ok: true, id, pack: installed, setup };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     send({ id, percent: 100, state: 'error', error: message });

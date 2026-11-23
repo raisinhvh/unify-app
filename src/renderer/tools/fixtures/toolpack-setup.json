@@ -1,0 +1,109 @@
+{
+  "extends": "base",
+  "persisted": {
+    "route": "toolpacks",
+    "panelOpen": true,
+    "toolpackSelected": "roblox-studio",
+    "toolpackTreeOpen": ["installed"]
+  },
+  "messages": [
+    {
+      "type": "toolpacksState",
+      "packs": [
+        {
+          "id": "roblox-studio",
+          "name": "Roblox Studio",
+          "icon": "roblox",
+          "description": "Read and edit the open place in Roblox Studio: instances, scripts, playtests.",
+          "version": "1.4.0",
+          "source": "hub",
+          "enabled": true,
+          "state": "running",
+          "status": "Connected",
+          "tools": [
+            { "name": "studio_tree", "description": "List instances under a path" },
+            { "name": "studio_get_properties", "description": "Read an instance's properties" },
+            { "name": "studio_set_property", "description": "Set a property on an instance" },
+            { "name": "studio_run_playtest", "description": "Start a playtest and capture output" }
+          ],
+          "logs": []
+        },
+        {
+          "id": "figma",
+          "name": "Figma",
+          "icon": "figma",
+          "description": "Inspect and edit the open Figma file through the Unify bridge plugin.",
+          "version": "0.9.2",
+          "source": "hub",
+          "enabled": true,
+          "state": "running",
+          "status": "Waiting for the plugin",
+          "tools": [
+            { "name": "figma_get_selection", "description": "Read the current selection" },
+            { "name": "figma_execute", "description": "Run plugin code in the open file" }
+          ],
+          "logs": []
+        },
+        {
+          "id": "blender",
+          "name": "Blender",
+          "icon": "blender",
+          "description": "Drive Blender over its Python API.",
+          "version": "2.1.0",
+          "source": "local",
+          "enabled": true,
+          "state": "running",
+          "status": "Connected",
+          "tools": [
+            { "name": "blender_list_objects", "description": "List objects in the scene" },
+            { "name": "blender_render", "description": "Render the active camera" }
+          ],
+          "logs": []
+        }
+      ]
+    },
+    {
+      "type": "hubState",
+      "hub": {
+        "packs": [
+          { "id": "figma", "name": "Figma", "author": "unify", "category": "design", "description": "Inspect and edit the open Figma file through the Unify bridge plugin.", "icon": "figma", "installs": 5200, "tools": ["figma_get_selection", "figma_execute"], "version": "0.9.2", "updatedAt": 1795000000000, "publishedAt": 1780000000000, "license": "MIT" },
+          { "id": "roblox-studio", "name": "Roblox Studio", "author": "unify", "category": "games", "description": "Read and edit the open place in Roblox Studio.", "icon": "roblox", "installs": 12400, "tools": ["studio_tree", "studio_get_properties", "studio_set_property", "studio_run_playtest"], "version": "1.4.0", "updatedAt": 1795000000000, "publishedAt": 1770000000000, "license": "MIT" },
+          { "id": "blender", "name": "Blender", "author": "community", "category": "3d", "description": "Drive Blender over its Python API.", "icon": "blender", "installs": 860, "tools": ["blender_list_objects", "blender_render"], "version": "2.1.0", "updatedAt": 1794000000000, "publishedAt": 1785000000000, "license": "MIT" }
+        ],
+        "categories": [
+          { "id": "design", "label": "Design" },
+          { "id": "games", "label": "Games" },
+          { "id": "3d", "label": "3D" }
+        ],
+        "featured": [],
+        "authors": 2,
+        "devices": [{ "id": "this", "label": "This PC", "current": true }],
+        "fetchedAt": 1795800000000
+      }
+    },
+    {
+      "type": "toolpackSetupList",
+      "packs": [
+        {
+          "id": "roblox-studio",
+          "name": "Roblox Studio",
+          "pending": 1,
+          "canRerunScript": true,
+          "steps": [
+            { "id": "install-plugin", "title": "Install the Studio companion plugin", "detail": "The install script copied UnifyBridge.rbxm into your Studio Plugins folder.", "kind": "auto", "status": "done" },
+            { "id": "restart-studio", "title": "Restart Roblox Studio", "detail": "Studio loads new plugins when it starts. Close every Studio window, then open your place again.", "kind": "manual", "status": "todo" }
+          ]
+        },
+        {
+          "id": "figma",
+          "name": "Figma",
+          "pending": 1,
+          "canRerunScript": false,
+          "steps": [
+            { "id": "import-plugin", "title": "Import the plugin in Figma", "detail": "In Figma: Plugins › Development › Import plugin from manifest…, then pick this file.", "kind": "manual", "copy": "C:/Users/User/AppData/Roaming/Unify/toolpacks/figma/plugin/manifest.json", "open": "C:/Users/User/AppData/Roaming/Unify/toolpacks/figma/plugin", "status": "todo" }
+          ]
+        }
+      ]
+    }
+  ]
+}

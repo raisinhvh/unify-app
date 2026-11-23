@@ -6,7 +6,7 @@
  * Every app module is imported *after* the mock bridge is installed: the store reads the persisted state
  * at module scope, so a static import would touch `window.unify` before it exists and blank the page.
  */
-import type { SidebarAccount, SidebarHostMessage, SidebarModel } from '../../protocol';
+import type { SidebarAccount, SidebarHostMessage, SidebarModel, SidebarWebviewMessage } from '../../protocol';
 import type { ThemeId } from '../../theme';
 
 const minute = 60_000;
@@ -34,7 +34,7 @@ const accounts: SidebarAccount[] = [
   { id: 'self-hosted-homelab', provider: 'self-hosted', label: 'homelab', isDefault: true, authType: 'api-key', baseURL: 'http://homelab.local:11434/v1' },
 ];
 
-const models: Model[] = [
+const initialModels: Model[] = [
   model('opus-5.5', 'Opus 5.5', 'claude-cli', 'anthropic-work', 1_000_000),
   model('sonnet-5.5', 'Sonnet 5.5', 'claude-cli', 'anthropic-work', 1_000_000),
   model('haiku-5.5', 'Haiku 5.5', 'claude-cli', 'anthropic-work', 200_000),
@@ -47,6 +47,13 @@ const models: Model[] = [
   model('opencode-air', 'OpenCode Air', 'opencode-go', 'opencode-go', 128_000),
   model('codestral', 'Codestral', 'mistral', 'mistral-api', 256_000),
   model('llama-3.3', 'Llama 3.3 70B', 'self-hosted', 'self-hosted-homelab', 128_000),
+  model('qwen2.5-coder:32b', 'Qwen 2.5 Coder 32B', 'self-hosted', 'self-hosted-homelab', 128_000),
+];
+
+const cursorBackends = [
+  { value: 'auto', name: 'Auto' },
+  { value: 'claude-4.5-sonnet', name: 'Claude 4.5 Sonnet' },
+  { value: 'gpt-5.5', name: 'GPT-5.5' },
 ];
 
 function messages(state: string): SidebarHostMessage[] {
@@ -118,7 +125,8 @@ function messages(state: string): SidebarHostMessage[] {
       type: 'modelState',
       selectedModelId: 'opus-5.5',
       selectedEffort: 'high',
-      models,
+      cursorBackends,
+      models: initialModels,
     },
   ];
 }
@@ -127,7 +135,8 @@ async function boot(): Promise<void> {
   const { installMockBridge } = await import('../../dev/mockBridge');
   await installMockBridge();
 
-  const [{ render }, { TooltipHost }, { NavRail }, router, store, theme, screens, dialog, selection] = await Promise.all([
+  const [{ bridge, setBridge }, { render }, { TooltipHost }, { NavRail }, router, store, theme, screens, dialog, selection] = await Promise.all([
+    import('../../bridge'),
     import('solid-js/web'),
     import('../../components'),
     import('../../shell/NavRail'),
@@ -141,11 +150,56 @@ async function boot(): Promise<void> {
   await import('../../shell/shell.css');
   await import('./preview.css');
 
+  const baseBridge = bridge();
+  let previewModels = [...initialModels];
+  const emit = (message: SidebarHostMessage) => {
+    const mock = (window as unknown as { __unifyMock?: { emit: (msg: SidebarHostMessage) => void } }).__unifyMock;
+    mock?.emit(message);
+  };
+  setBridge({
+    ...baseBridge,
+    post: (message: SidebarWebviewMessage) => {
+      if (message.type === 'saveModel') {
+        window.setTimeout(() => {
+          const entry: Model = {
+            id: message.name,
+            name: message.name,
+            provider: message.provider,
+            backend: message.backend,
+            account: message.account,
+            enabled: true,
+          };
+          previewModels = previewModels.filter(item => item.name !== (message.originalName || message.name)).concat(entry);
+          emit({ type: 'modelState', selectedModelId: previewModels[0]?.id, cursorBackends, models: previewModels });
+          emit({ type: 'modelSaved' });
+        }, 120);
+        return;
+      }
+      if (message.type === 'removeModel') {
+        previewModels = previewModels.filter(item => item.name !== message.name && item.id !== message.name);
+        emit({ type: 'modelState', selectedModelId: previewModels[0]?.id, cursorBackends, models: previewModels });
+        return;
+      }
+      if (message.type === 'listProviderModels') {
+        window.setTimeout(() => {
+          emit({
+            type: 'providerModels',
+            accountId: message.accountId,
+            models: ['llama3.3:70b', 'qwen2.5-coder:32b', 'deepseek-r1:32b'],
+          });
+        }, 150);
+        return;
+      }
+      baseBridge.post(message);
+    },
+  });
+
   theme.installTheme();
   const params = new URLSearchParams(location.search);
   const themeName = params.get('theme');
   if (themeName) theme.setTheme(themeName as ThemeId);
   const state = params.get('state') || 'usage';
+  const accountId = params.get('account') || 'anthropic-work';
   const root = document.getElementById('root');
   if (!root) throw new Error('#root is missing');
 
@@ -178,9 +232,8 @@ async function boot(): Promise<void> {
   store.connectStore();
 
   window.setTimeout(() => {
-    const mock = (window as unknown as { __unifyMock?: { emit: (message: SidebarHostMessage) => void } }).__unifyMock;
-    for (const message of messages(state)) mock?.emit(message);
-    selection.select(state === 'account' ? { kind: 'account', id: 'anthropic-work' } : { kind: 'usage' });
+    for (const message of messages(state)) emit(message);
+    selection.select(state === 'account' ? { kind: 'account', id: accountId } : { kind: 'usage' });
     selection.setAddProviderOpen(state === 'add');
     const expand = params.get('add');
     if (expand) {
@@ -188,6 +241,11 @@ async function boot(): Promise<void> {
         const rows = [...document.querySelectorAll<HTMLButtonElement>('.provider-add-row, .pv-add-row')];
         rows.find(row => row.textContent?.includes(expand))?.click();
       }, 300);
+    }
+    if (params.get('addModel') === '1') {
+      window.setTimeout(() => {
+        document.querySelector<HTMLButtonElement>('.pv-add-model-trigger, .pv-models-empty-action')?.click();
+      }, 240);
     }
   }, 40);
 }

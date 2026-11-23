@@ -460,6 +460,15 @@ type SidebarHostPayload =
    */
   | { type: 'editorOpen'; path: string; startLine?: number; endLine?: number }
   | { type: 'editorDiff'; title: string; leftPath: string; rightPath: string; leftLabel?: string; rightLabel?: string }
+  /**
+   * Unify: long-running work the user started outside a chat (agent runtime update, toolpack setup script),
+   * shown in the notice row. Backs `vscode.window.withProgress` in the shim. One `id` per task: `running`
+   * updates replace the line in place; `percent` (0-100) is set when the task knows it; `done` / `error`
+   * end it (the UI lets `done` linger briefly, `error` stays until dismissed).
+   */
+  | { type: 'progressNotice'; id: string; title: string; message?: string; percent?: number; state: 'running' | 'done' | 'error' }
+  /** The slash commands the composer offers (sent on `ready`). */
+  | { type: 'slashCommandsState'; commands: SidebarSlashCommand[] }
   | { type: 'error'; message: string };
 
 /** Engine → UI messages. Chat-specific ones carry sessionId, or chatId when they concern an agent. */

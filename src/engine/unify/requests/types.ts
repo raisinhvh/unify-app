@@ -10,6 +10,7 @@
  */
 
 import type { GithubAuth } from '../github';
+import type { HubPickItem, HubRegistry, PackSetupState } from '../../hub/types';
 
 export type { GithubAuth };
 
@@ -51,6 +52,12 @@ export interface UnifyRequestContext {
   openExternal?: (url: string) => void | Promise<void>;
   /** The signed-in GitHub account, if any. */
   getGithubAuth?: () => Promise<GithubAuth | undefined>;
+  /** Shows a picker to the user and returns the chosen item's id, or undefined when cancelled. */
+  pickOption?: (items: HubPickItem[], placeholder: string) => Promise<string | undefined>;
+  /** Shows a modal confirmation dialog and returns true only when the user confirms. */
+  confirm?: (message: string, detail: string) => Promise<boolean>;
+  /** The Hub registry to read; the public GitHub registry when missing. Tests pass their own. */
+  hubRegistry?: HubRegistry;
 }
 
 /* ---------------------------------------------------------------------------------------------------------------
@@ -171,7 +178,23 @@ export type ToolPolicy = 'always' | 'ask' | 'off';
 
 export type ToolpackRequest =
   | { type: 'toolpackToolEnabled'; id: string; tool: string; enabled: boolean }
-  | { type: 'toolpackPermission'; id: string; group: ToolKind; policy: ToolPolicy };
+  | { type: 'toolpackPermission'; id: string; group: ToolKind; policy: ToolPolicy }
+  /** The setup checklist of one installed pack (`id` = toolpack folder id). Replies `toolpackSetupState`. */
+  | { type: 'toolpackSetup'; requestId?: string; id: string }
+  /** Every installed pack's checklist that still has pending steps. Replies `toolpackSetupList`. */
+  | { type: 'toolpackSetupList'; requestId?: string }
+  /**
+   * `markDone` / `markTodo`: tick a manual step (persisted in the pack folder's `setup-state.json`).
+   * `recheck`: re-evaluate every `check`. `open`: open the step's `open` URL or folder.
+   * `rerunScript`: run the pack's install script again (the user already consented at install).
+   * Replies `toolpackSetupState`, or `toolpackSetupError` with a message.
+   */
+  | { type: 'toolpackSetupAction'; requestId?: string; id: string; action: 'markDone' | 'markTodo' | 'recheck' | 'open' | 'rerunScript'; stepId?: string };
+
+export type ToolpackSetupReply =
+  | { type: 'toolpackSetupState'; requestId?: string; setup: PackSetupState | null }
+  | { type: 'toolpackSetupList'; requestId?: string; packs: PackSetupState[] }
+  | { type: 'toolpackSetupError'; requestId?: string; id: string; message: string };
 
 /* ---------------------------------------------------------------------------------------------------------------
  * Providers (screens/providers/adapter.ts)
@@ -242,4 +265,7 @@ export type {
   HubPack,
   HubPackDetail,
   HubState,
+  PackSetupState,
+  PackSetupStep,
+  PackSetupStepStatus,
 } from '../../hub/types';

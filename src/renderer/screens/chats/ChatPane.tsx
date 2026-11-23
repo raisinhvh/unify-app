@@ -2,6 +2,7 @@
  * One chat in a tiled pane (Figma 12 Chat pane 306:3030, 11 Shell 306:2201).
  *
  *   header    grip (hold-drag to rearrange, see shell/PaneGrid) · title · model picker · pop out · more · close
+ *   job       JobBar.tsx: the chat's /job run (round, phase, criteria), only while it has one
  *   timeline  Timeline.tsx
  *   status    what the agent is doing right now (loader + label) while it runs
  *   changes   files this turn edited, with review / apply / reject (DSH renderChanges)
@@ -17,6 +18,7 @@ import type { PaneContext } from '../../shell/PaneGrid';
 import { markRead, viewState } from '../../store';
 import { ModelPicker } from '../../components/ModelPicker';
 import { Composer } from './Composer';
+import { JobBar } from './JobBar';
 import { Timeline } from './Timeline';
 import './chat-pane.css';
 
@@ -166,10 +168,13 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
           placement="bottom-end"
           title="Model"
         />
-        <IconButton icon="pop" label="Pop out (coming soon)" size="small" disabled />
-        <IconButton ref={setMoreAnchor} icon="more" label="More" size="small" active={moreOpen()} onClick={() => setMoreOpen(!moreOpen())} />
-        <IconButton icon="close" label="Close pane" size="small" onClick={() => props.context.close()} />
+        <div class="chat-pane-actions">
+          <IconButton class="chat-pane-popout" icon="pop" label="Pop out (coming soon)" size="small" disabled />
+          <IconButton ref={setMoreAnchor} icon="more" label="More" size="small" active={moreOpen()} onClick={() => setMoreOpen(!moreOpen())} />
+          <IconButton icon="close" label="Close pane" size="small" onClick={() => props.context.close()} />
+        </div>
       </header>
+      <JobBar chatId={chatId()} />
       <Timeline chatId={chatId()} />
       <div class="chat-pane-bottom">
         <StatusLine chatId={chatId()} />

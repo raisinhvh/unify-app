@@ -3,9 +3,10 @@
  * renderer when it exists, then runs Electron. A rebuild of the main bundle
  * restarts Electron so engine changes are picked up immediately.
  */
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import electronPath from 'electron';
 
 const root = process.cwd();
@@ -50,6 +51,29 @@ function startElectron() {
   });
 }
 
+/**
+ * Agent sandboxes label the workspace folder "Low Mandatory Level" so sandboxed tools can write
+ * to it. Windows starts any executable that carries that label at low integrity, so Electron
+ * would run unable to write AppData or ~/.unify: it then crashes on start (0x80000003), fails its
+ * single-instance lock, or shows an EPERM dialog. Relabel Electron's own folder to medium.
+ */
+function ensureElectronRunsAtMediumIntegrity() {
+  if (!isWindows) return;
+  const electronDist = dirname(electronPath);
+  const check = spawnSync('icacls', [electronPath], { encoding: 'utf8' });
+  if (!/Low Mandatory Level/i.test(check.stdout || '')) return;
+  const fix = spawnSync('icacls', [electronDist, '/setintegritylevel', '(OI)(CI)M', '/T', '/C', '/Q'], { encoding: 'utf8' });
+  const recheck = spawnSync('icacls', [electronPath], { encoding: 'utf8' });
+  if (fix.status === 0 && !/Low Mandatory Level/i.test(recheck.stdout || '')) {
+    console.log('Relabelled Electron to medium integrity (the workspace folder is labelled low by an agent sandbox).');
+    return;
+  }
+  console.error(`\nElectron is labelled low integrity and could not be relabelled from this terminal.`);
+  console.error('Run this once from a normal (non-sandboxed) terminal, then start Unify again:');
+  console.error(`  icacls "${electronDist}" /setintegritylevel (OI)(CI)M /T /C /Q\n`);
+  process.exit(1);
+}
+
 function restartElectron() {
   if (!electron || electron.exitCode !== null) {
     startElectron();
@@ -74,6 +98,23 @@ function shutdown(code = 0) {
 
 process.on('SIGINT', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
+
+// Unify keeps its state in ~/.unify (or UNIFY_HOME). Sandboxed terminals (agent shells, some IDE
+// terminals) block writes outside the project, and Electron would then die on an EPERM dialog.
+const stateRoot = process.env.UNIFY_HOME ? resolve(process.env.UNIFY_HOME) : join(homedir(), '.unify');
+try {
+  mkdirSync(join(stateRoot, 'storage'), { recursive: true });
+  const probe = join(stateRoot, `.write-probe-${process.pid}`);
+  writeFileSync(probe, '');
+  rmSync(probe);
+} catch (error) {
+  console.error(`\nUnify cannot write to ${stateRoot} (${error.code || error.message}).`);
+  console.error('This terminal is sandboxed and blocks writes outside the project folder.');
+  console.error('Start Unify from a normal terminal or by double-clicking run.cmd in Explorer.\n');
+  process.exit(1);
+}
+
+ensureElectronRunsAtMediumIntegrity();
 
 if (!existsSync(join(root, 'node_modules'))) {
   console.log('Installing dependencies...');

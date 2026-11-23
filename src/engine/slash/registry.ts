@@ -3,7 +3,22 @@ export interface SlashCommand { name: string; description: string; usage: string
 
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'job', description: 'Plan a checklist from your spec, then work and review until it passes', usage: '/job <spec>' },
+  { name: 'permissions', description: 'Show or change the approval mode for this workspace', usage: '/permissions [ask | auto | full]' },
 ];
+
+export const APPROVAL_MODES = {
+  ask: { label: 'Ask approval', description: 'Ask before running tools' },
+  auto: { label: 'Approve for me', description: 'Routine actions run automatically; risky ones still ask' },
+  full: { label: 'Full access', description: 'No approval prompts; unrestricted file and network access' },
+} as const;
+
+export type ApprovalMode = keyof typeof APPROVAL_MODES;
+
+/** Only recognized modes are allowed through to the approval setting. */
+export function parseApprovalMode(value: string): ApprovalMode | undefined {
+  const mode = value.trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(APPROVAL_MODES, mode) ? mode as ApprovalMode : undefined;
+}
 
 /** Splits a message that starts with a known `/name`. Unknown commands return undefined so they are sent as ordinary text. */
 export function parseSlash(text: string): { name: string; args: string } | undefined {

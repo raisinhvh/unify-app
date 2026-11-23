@@ -5,13 +5,14 @@
  *   breadcrumb + more menu (reload, logs, remove)
  *   title row     glyph tile, name, description
  *   meta strip    version, source, synced devices            Enabled switch
+ *   Finish setup  the pack's setup checklist while it has one (SetupChecklist)
  *   Tools         "22 of 24 enabled", filter; groups Read / Write / Run with a permission picker each,
  *                 one row per tool with its own switch
  *
  * Extra pack fields (version, source, kinds, per-tool switches, permissions) come through adapter.ts and fall
  * back when the engine does not send them yet.
  */
-import { createMemo, createSignal, For, Index, Show, type JSX } from 'solid-js';
+import { createMemo, createSignal, For, Index, onMount, Show, type JSX } from 'solid-js';
 import { Button, Icon, IconButton, Menu, Select, Toggle } from '../../components';
 import { Collapse, createSpring, pressable } from '../../motion';
 import { RollingNumber } from '../../motion/organic';
@@ -31,6 +32,8 @@ import {
   type ToolPolicy,
 } from './adapter';
 import { ConfirmBar } from './ConfirmBar';
+import { SetupChecklist } from './SetupChecklist';
+import { requestSetup } from './setup';
 import { ToolpacksPanel } from './ToolpacksPanel';
 import { GlyphTile } from './glyphs';
 import { currentPack, selectPack } from './selection';
@@ -117,6 +120,8 @@ function PackDetail(props: { pack: InstalledPack }): JSX.Element {
   const groupTools = (kind: ToolKind): PackTool[] => toolsByKind()[kind];
   const hasTools = () => filtered().length > 0;
 
+  onMount(() => requestSetup(props.pack.id));
+
   const sourceLabel = () => (props.pack.source === 'hub' ? 'Toolpack Hub' : props.pack.source === 'local' ? 'a folder' : undefined);
 
   return (
@@ -199,6 +204,8 @@ function PackDetail(props: { pack: InstalledPack }): JSX.Element {
           </Show>
         </div>
       </Show>
+
+      <SetupChecklist id={props.pack.id} />
 
       <div class="tp-tools-header">
         <h2 class="type-heading">Tools</h2>

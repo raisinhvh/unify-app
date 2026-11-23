@@ -70,6 +70,25 @@ export function agentName(agentId: string): string | undefined {
 /** Last error the engine reported, shown as a notice. */
 export const [engineError, setEngineError] = createSignal<string | undefined>();
 
+/** One long-running task outside a chat (agent runtime update, toolpack setup), from `progressNotice`. */
+export interface ProgressTask {
+  id: string;
+  title: string;
+  message?: string;
+  /** 0-100 when the task knows it. */
+  percent?: number;
+  state: 'running' | 'done' | 'error';
+  /** Epoch ms of the last update. */
+  updatedAt: number;
+}
+
+/** Every progress task still on screen, oldest first. The notice row shows the newest one; dismiss removes it. */
+export const [progressTasks, setProgressTasks] = createSignal<ProgressTask[]>([]);
+
+export function dismissProgressTask(id: string): void {
+  setProgressTasks(current => current.filter(task => task.id !== id));
+}
+
 /** Fields a subagentEvent may carry beyond the protocol's own (the profile's effort and speed chips). */
 interface SubagentEventExtras {
   effort?: string;
@@ -132,6 +151,24 @@ export function applyHostMessage(message: SidebarHostMessage): void {
             delete (table as Record<string, unknown>)[message.sessionId];
           }
         }));
+        break;
+      case 'progressNotice': {
+        const task: ProgressTask = {
+          id: message.id,
+          title: message.title,
+          message: message.message,
+          percent: message.percent,
+          state: message.state,
+          updatedAt: Date.now(),
+        };
+        setProgressTasks(current => {
+          const others = current.filter(item => item.id !== task.id);
+          return [...others, task];
+        });
+        break;
+      }
+      case 'slashCommandsState':
+        setViewState('slashCommands', message.commands || []);
         break;
       case 'jobState':
         setViewState(produce(state => {

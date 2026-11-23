@@ -6,10 +6,13 @@ import { createSignal, For, Index, Show, type JSX } from 'solid-js';
 import { post } from '../bridge';
 import { createSpring, pressable } from '../motion';
 import { RollingNumber } from '../motion/organic';
-import { clampPercent, resetColor, resetIn, usageSummary } from '../store/usage';
+import { navigate } from '../router';
+import { select as selectProvider } from '../screens/providers/selection';
+import { clampPercent, resetColor, resetIn, usageSummary, type UsageEntry } from '../store/usage';
 import { providerNames } from '../store/providers';
 import { IconButton } from './Button';
 import { Popover } from './Popover';
+import { ProviderGlyph } from './ProviderGlyph';
 import './usage.css';
 
 function StackedBar(props: { class: string }): JSX.Element {
@@ -23,6 +26,53 @@ function StackedBar(props: { class: string }): JSX.Element {
         }}
       </Index>
     </div>
+  );
+}
+
+/**
+ * Providers › that account: its page holds the per-limit usage bars. Only the in-app view; the engine's
+ * `openProviderUsage` would also open the provider's dashboard in the browser.
+ */
+function openAccountUsage(accountId: string): void {
+  selectProvider({ kind: 'account', id: accountId });
+  navigate('providers');
+}
+
+/** Time until the limit resets ("32m", "1d 23h"), "now" once it is due, nothing when unknown. */
+function resetLabel(at: number | undefined): string {
+  if (!at) return '';
+  return resetIn(at) || 'now';
+}
+
+/**
+ * One account: its provider logo in the account's bar colour (the legend for the stacked bar), the account name,
+ * then the percent used and the time until it resets. The whole row opens the account in Providers.
+ */
+function UsageRow(props: { entry: UsageEntry; onOpen: () => void }): JSX.Element {
+  const provider = () => providerNames[props.entry.account.provider] || props.entry.account.provider;
+  const reset = () => resetLabel(props.entry.binding.resetsAt);
+  return (
+    <button
+      type="button"
+      class="usage-row"
+      ref={element => pressable(element, 0.98)}
+      aria-label={`${props.entry.account.label}, ${provider()} ${props.entry.binding.label}, ${Math.round(props.entry.used)}% used${reset() ? `, resets ${reset() === 'now' ? 'now' : `in ${reset()}`}` : ''}. Open in Providers`}
+      onClick={() => props.onOpen()}
+    >
+      <span class="usage-glyph" style={{ color: props.entry.color }}>
+        <ProviderGlyph provider={props.entry.account.provider} size={14} />
+      </span>
+      <span class="usage-name">{props.entry.account.label}</span>
+      <span class="usage-used">
+        <RollingNumber value={`${Math.round(props.entry.used)}%`} />
+      </span>
+      <span
+        class="usage-reset type-caption"
+        style={{ color: props.entry.binding.resetsAt ? resetColor(props.entry.binding.resetsAt) : undefined }}
+      >
+        {reset()}
+      </span>
+    </button>
   );
 }
 
@@ -65,29 +115,13 @@ export function UsageMeter(): JSX.Element {
           <div class="usage-rows">
             <For each={summary().entries}>
               {entry => (
-                <div class="usage-row">
-                  <span class="usage-swatch" style={{ background: entry.color }} />
-                  <span class="usage-account">
-                    <span class="usage-name">{entry.account.label}</span>
-                    <span class="usage-detail type-caption">
-                      {providerNames[entry.account.provider] || entry.account.provider}
-                      {/* Spacing alone separates the provider from the limit (no separator glyph). */}
-                      <span style={{ 'margin-left': '0.75em' }}>{entry.binding.label}</span>
-                    </span>
-                  </span>
-                  <span class="usage-values">
-                    <span class="usage-used">
-                      <RollingNumber value={`${Math.round(entry.used)}%`} />
-                    </span>
-                    <Show when={resetIn(entry.binding.resetsAt)}>
-                      {text => (
-                        <span class="usage-reset type-caption" style={{ color: resetColor(entry.binding.resetsAt!) }}>
-                          resets in {text()}
-                        </span>
-                      )}
-                    </Show>
-                  </span>
-                </div>
+                <UsageRow
+                  entry={entry}
+                  onOpen={() => {
+                    setOpen(false);
+                    openAccountUsage(entry.account.id);
+                  }}
+                />
               )}
             </For>
           </div>

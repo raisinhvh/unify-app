@@ -9,14 +9,18 @@
  *   <Composer placeholder="…" onSubmit={(prompt, images) => …} />                 Home decides what sending means
  *
  * @ mentions: the protocol has no file search yet, so "@" is plain text for now (see screens/README.md).
+ *
+ * Slash commands: "/" at the start opens SlashMenu above the composer (commands, and the approval-mode picker for
+ * /permissions). The input keeps focus; the menu reads the text and caret and gets first look at each keydown.
  */
-import { createSignal, For, Show, type JSX } from 'solid-js';
+import { batch, createSignal, For, Show, type JSX } from 'solid-js';
 import { Button, Icon, IconButton, Menu, type MenuEntry } from '../../components';
 import { ModelPicker } from '../../components/ModelPicker';
 import { Collapse, Presence } from '../../motion';
 import { post } from '../../bridge';
 import type { SidebarImage } from '../../protocol';
 import { rememberSentImages, setEngineError, viewState } from '../../store';
+import { SlashMenu, type SlashMenuApi } from './SlashMenu';
 import './composer.css';
 
 const maxAttachments = 8;
@@ -24,6 +28,9 @@ const maxAttachmentBytes = 10 * 1024 * 1024;
 const maxTotalBytes = 20 * 1024 * 1024;
 const isImageMime = (mime: string) => /^image\/(png|jpeg|gif|webp)$/.test(mime);
 const isTextMime = (mime: string) => mime.startsWith('text/') || mime === 'application/json' || mime === 'application/xml';
+
+/** Numbers composers, so each slash menu's option ids are unique on the page. */
+let composerCount = 0;
 
 interface Attachment extends SidebarImage {
   size: number;
@@ -60,6 +67,11 @@ export function Composer(props: ComposerProps): JSX.Element {
   const [dragOver, setDragOver] = createSignal(false);
   const [sendButton, setSendButton] = createSignal<HTMLButtonElement>();
   const [attachButton, setAttachButton] = createSignal<HTMLButtonElement>();
+  const [form, setForm] = createSignal<HTMLFormElement>();
+  const [caret, setCaret] = createSignal(0);
+  composerCount += 1;
+  const composerId = `composer-${composerCount}`;
+  const [slashMenu, setSlashMenu] = createSignal<SlashMenuApi>();
   let input: HTMLTextAreaElement | undefined;
   let fileInput: HTMLInputElement | undefined;
   let attachmentQueue: Promise<void> = Promise.resolve();
@@ -114,7 +126,27 @@ export function Composer(props: ComposerProps): JSX.Element {
 
   function clear(): void {
     setText('');
+    setCaret(0);
     setAttachments([]);
+    resize();
+  }
+
+  const readCaret = () => {
+    if (input) setCaret(input.selectionStart ?? input.value.length);
+  };
+
+  /** Replaces the text (a picked slash command) and keeps typing at the end. */
+  function insertText(value: string): void {
+    if (input) {
+      input.value = value;
+      input.focus();
+      input.setSelectionRange(value.length, value.length);
+    }
+    // One update: the slash menu never sees the new text with the old caret.
+    batch(() => {
+      setText(value);
+      setCaret(value.length);
+    });
     resize();
   }
 
@@ -178,6 +210,7 @@ export function Composer(props: ComposerProps): JSX.Element {
         </div>
       </Collapse>
       <form
+        ref={setForm}
         class="composer"
         classList={{ 'drag-over': dragOver() }}
         onSubmit={event => {
@@ -233,13 +266,21 @@ export function Composer(props: ComposerProps): JSX.Element {
           class="composer-input"
           rows={1}
           aria-label="Message"
+          role={slashMenu()?.open() ? 'combobox' : undefined}
+          aria-autocomplete={slashMenu()?.open() ? 'list' : undefined}
+          aria-expanded={slashMenu()?.open() ? true : undefined}
+          aria-activedescendant={slashMenu()?.activeId()}
           placeholder={props.placeholder}
           value={text()}
           onInput={event => {
             setText(event.currentTarget.value);
+            readCaret();
             resize();
           }}
+          onKeyUp={readCaret}
+          onPointerUp={readCaret}
           onKeyDown={event => {
+            if (slashMenu()?.handleKey(event)) return;
             if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
               event.preventDefault();
               if (running() && event.altKey) send('queue');
@@ -302,6 +343,18 @@ export function Composer(props: ComposerProps): JSX.Element {
           }}
         />
       </form>
+      <SlashMenu
+        anchor={form()}
+        text={text()}
+        caret={caret()}
+        idPrefix={composerId}
+        onInsert={insertText}
+        onApplied={() => {
+          clear();
+          input?.focus();
+        }}
+        ref={setSlashMenu}
+      />
       <Menu
         anchor={sendButton()}
         open={sendMenuOpen() && running()}
