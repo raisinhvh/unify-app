@@ -72,6 +72,21 @@ function selectionFromOptions(options: unknown): Selection | undefined {
   return undefined;
 }
 
+interface ProgressCancellationSource {
+  cancel(): void;
+}
+
+/** Running `withProgress` tasks by notice id, so the renderer can cancel them. */
+const progressCancellations = new Map<string, ProgressCancellationSource>();
+
+/** Cancels a running progress task; false when its notice id is unknown or already settled. */
+function cancelProgress(id: string): boolean {
+  const source = progressCancellations.get(id);
+  if (!source) return false;
+  source.cancel();
+  return true;
+}
+
 export const window = {
   get activeTextEditor() { return activeTextEditor(); },
   get visibleTextEditors() { return visibleTextEditors(); },
@@ -119,9 +134,18 @@ export const window = {
     return createEditor(document, selection);
   },
 
-  async withProgress(options: unknown, task: (progress: { report(value: unknown): void }, token: { isCancellationRequested: boolean; onCancellationRequested(): Disposable }) => PromiseLike<unknown> | unknown): Promise<unknown> {
-    const token = { isCancellationRequested: false, onCancellationRequested: () => new Disposable(() => undefined) };
-    const settings = options && typeof options === 'object' ? options as { title?: unknown } : {};
+  async withProgress(options: unknown, task: (progress: { report(value: unknown): void }, token: { isCancellationRequested: boolean; onCancellationRequested(listener: () => void): Disposable }) => PromiseLike<unknown> | unknown): Promise<unknown> {
+    const settings = options && typeof options === 'object'
+      ? options as { title?: unknown; cancellable?: unknown }
+      : {};
+    const cancellable = settings.cancellable === true;
+    const cancellation = new EventEmitter<void>();
+    const token = {
+      isCancellationRequested: false,
+      onCancellationRequested(listener: () => void): Disposable {
+        return cancellation.event(listener);
+      },
+    };
     const id = `progress-${randomUUID()}`;
     const title = typeof settings.title === 'string' && settings.title ? settings.title : 'Working…';
     let message: string | undefined;
@@ -134,9 +158,19 @@ export const window = {
         ...(message ? { message } : {}),
         ...(percent !== undefined ? { percent } : {}),
         ...(error ? { message: error } : {}),
+        ...(cancellable ? { cancellable: true } : {}),
         state,
       });
     };
+    if (cancellable) {
+      progressCancellations.set(id, {
+        cancel(): void {
+          if (token.isCancellationRequested) return;
+          token.isCancellationRequested = true;
+          cancellation.fire();
+        },
+      });
+    }
     post('running');
     const progress = {
       report(value: unknown): void {
@@ -151,12 +185,20 @@ export const window = {
     };
     try {
       const result = await task(progress, token);
-      post('done');
+      if (token.isCancellationRequested) post('error', 'Cancelled');
+      else post('done');
       return result;
     } catch (error) {
-      post('error', error instanceof Error ? error.message : String(error));
+      post('error', token.isCancellationRequested ? 'Cancelled' : error instanceof Error ? error.message : String(error));
       throw error;
+    } finally {
+      progressCancellations.delete(id);
     }
+  },
+
+  /** Cancels a running `withProgress` task; the engine reaches this through `vscode.window`. */
+  __unifyCancelProgress(id: string): boolean {
+    return cancelProgress(id);
   },
 
   createOutputChannel(name: string) {

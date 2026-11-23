@@ -21,7 +21,8 @@
  *
  * The mock answers a few messages so the UI can be clicked through: newSession (with an optional project),
  * selectSession, sendPrompt (echo + a short streamed reply), cancel, approvalResponse (including "always
- * allow"), and setUnifyFeature (persisted into the mock state and echoed as unifyFeaturesState). Host events
+ * allow"), cancelProgress (logged; the fixture's timeline moves the task on), and setUnifyFeature
+ * (persisted into the mock state and echoed as unifyFeaturesState). Host events
  * the fixtures do not drive (agentMessage, agentRoster, approvalRequest, ...) can be pushed from the console
  * through `__unifyMock.emit({...})`. Everything else is logged.
  */
@@ -214,6 +215,9 @@ export async function installMockBridge(): Promise<void> {
         if (sessionId) emit({ type: 'approvalResolved', sessionId, id: message.id, allowed: message.allow === true });
         console.info(`[mock] approval ${message.id}: ${message.allow ? 'allowed' : 'rejected'}${message.always ? ' (always allow)' : ''}`);
         break;
+      case 'cancelProgress':
+        console.info(`[mock] cancel progress ${message.id}`);
+        break;
       case 'cancel':
         if (sessionId) {
           emit({ type: 'runState', sessionId, state: 'cancelling' });
@@ -245,6 +249,10 @@ export async function installMockBridge(): Promise<void> {
       maximize: () => console.info('[mock] maximize'),
       close: () => console.info('[mock] close'),
       isMaximized: async () => false,
+    },
+    // Opens the pop-out UI in a browser window with the same fixture, so it can be clicked through.
+    popOut: chatId => {
+      window.open(`?popout=${encodeURIComponent(chatId)}&fixture=${encodeURIComponent(fixtureName)}`, '_blank', 'width=560,height=760');
     },
     pickFolder: async () => window.prompt('Folder path (dev mock)') || undefined,
     openExternal: url => window.open(url, '_blank'),

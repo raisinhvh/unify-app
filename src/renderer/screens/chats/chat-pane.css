@@ -19,6 +19,11 @@
   flex: none;
 }
 
+/* Pop-out window: no grip, so the title starts where the grip's left edge was. */
+.chat-pane-header.standalone {
+  padding-left: 14px;
+}
+
 .chat-pane-grip {
   display: grid;
   place-items: center;
@@ -82,7 +87,7 @@
   flex: none;
 }
 
-/* Narrow panes: drop the disabled pop-out first, then the model line, so More and Close never clump. */
+/* Narrow panes: drop the pop-out button first (More still has every action), then the model line, so More and Close never clump. */
 @container chat-pane (max-width: 320px) {
   .chat-pane-popout {
     display: none;

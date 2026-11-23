@@ -99,6 +99,12 @@ export interface SidebarNameModel { model?: string; effort?: string; speed?: str
 export interface SidebarSmartAutoRank { model: string; effort?: string; note?: string }
 /** A slash command offered in the composer menu. */
 export interface SidebarSlashCommand { name: string; description: string; usage: string }
+/**
+ * A prompt queued by `/schedule` to be sent later. `chatId` is the chat it was scheduled from (undefined from Home:
+ * it then starts a new chat when it fires). `dueAt` is epoch ms. Prompts that came due while Unify was closed
+ * are sent on the next start.
+ */
+export interface SidebarScheduledPrompt { id: string; chatId?: string; prompt: string; dueAt: number; createdAt: number; imageCount?: number }
 /** A /job run as shown in the job bar at the top of the chat. */
 export interface SidebarJob {
   phase: JobPhase;
@@ -191,7 +197,16 @@ type SidebarWebviewPayload =
   | { type: 'openTerminal' }
   | { type: 'voiceStart' }
   | { type: 'voiceStop' }
-  | { type: 'saveVoiceCommands'; commands: VoiceCommand[] };
+  | { type: 'saveVoiceCommands'; commands: VoiceCommand[] }
+  /** Unify pop-out: re-send one chat's timeline, run state, queue and job without selecting it. */
+  | { type: 'loadChat'; sessionId: string }
+  /** Unify schedule: drop a pending scheduled prompt, or send it right away. */
+  | { type: 'cancelScheduledPrompt'; id: string }
+  | { type: 'sendScheduledPromptNow'; id: string }
+  /** Unify: stop a cancellable `progressNotice` task (fires the shim's withProgress cancellation token). */
+  | { type: 'cancelProgress'; id: string }
+  /** Unify `@` mentions: fuzzy-search project files and folders; answered with `workspaceFileResults`. */
+  | { type: 'searchWorkspaceFiles'; requestId: string; query: string; limit?: number };
 
 /**
  * UI → engine messages. `chatId` names the chat a message concerns; omitted means the active chat.
@@ -466,9 +481,13 @@ type SidebarHostPayload =
    * updates replace the line in place; `percent` (0-100) is set when the task knows it; `done` / `error`
    * end it (the UI lets `done` linger briefly, `error` stays until dismissed).
    */
-  | { type: 'progressNotice'; id: string; title: string; message?: string; percent?: number; state: 'running' | 'done' | 'error' }
+  | { type: 'progressNotice'; id: string; title: string; message?: string; percent?: number; state: 'running' | 'done' | 'error'; /** The task honours cancellation; the UI shows Cancel, which posts `cancelProgress`. */ cancellable?: boolean }
   /** The slash commands the composer offers (sent on `ready`). */
   | { type: 'slashCommandsState'; commands: SidebarSlashCommand[] }
+  /** Every pending scheduled prompt, soonest first (sent on `ready` and whenever the list changes). */
+  | { type: 'scheduledPromptsState'; prompts: SidebarScheduledPrompt[] }
+  /** Reply to `searchWorkspaceFiles`: project-relative paths (folders end in "/"), best match first. */
+  | { type: 'workspaceFileResults'; requestId: string; query: string; results: { path: string; kind: 'file' | 'folder' }[] }
   | { type: 'error'; message: string };
 
 /** Engine → UI messages. Chat-specific ones carry sessionId, or chatId when they concern an agent. */

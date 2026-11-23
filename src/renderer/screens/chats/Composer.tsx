@@ -8,18 +8,26 @@
  *   <Composer chatId={id} placeholder="Reply, @ to mention a file" />            posts sendPrompt for that chat
  *   <Composer placeholder="…" onSubmit={(prompt, images) => …} />                 Home decides what sending means
  *
- * @ mentions: the protocol has no file search yet, so "@" is plain text for now (see screens/README.md).
+ * Slash commands: "/" at the start opens SlashMenu above the composer (commands, the approval-mode picker for
+ * /permissions, quick times for /schedule). "@" at a word start opens MentionMenu (workspace file search); a
+ * picked file stays plain "@path" text. Only one menu is open at a time; the input keeps focus and the open menu
+ * reads the text and caret and gets first look at each keydown.
  *
- * Slash commands: "/" at the start opens SlashMenu above the composer (commands, and the approval-mode picker for
- * /permissions). The input keeps focus; the menu reads the text and caret and gets first look at each keydown.
+ * Attach menu: Image, File, and (when the bridge offers them) Folder as context ("@folder/ " at the caret) and
+ * Screenshot (a captured image attachment).
+ *
+ * Dev screenshots: a fixture may persist `devComposer: { target: '<chatId>' | 'home', text }`; that composer
+ * starts with the text typed (and its menus open), since tools/shot.mjs cannot type.
  */
-import { batch, createSignal, For, Show, type JSX } from 'solid-js';
+import { batch, createSignal, For, onMount, Show, type JSX } from 'solid-js';
 import { Button, Icon, IconButton, Menu, type MenuEntry } from '../../components';
 import { ModelPicker } from '../../components/ModelPicker';
 import { Collapse, Presence } from '../../motion';
-import { post } from '../../bridge';
+import { bridge, post } from '../../bridge';
+import { readPersisted } from '../../persist';
 import type { SidebarImage } from '../../protocol';
 import { rememberSentImages, setEngineError, viewState } from '../../store';
+import { MentionMenu, type MentionMenuApi } from './MentionMenu';
 import { SlashMenu, type SlashMenuApi } from './SlashMenu';
 import './composer.css';
 
@@ -44,6 +52,22 @@ export interface ComposerProps {
   onSubmit?: (prompt: string, images: SidebarImage[]) => void;
   autofocus?: boolean;
   class?: string;
+}
+
+/** A path for "@" mentions: project-relative inside the open project, else absolute, always with "/". */
+function mentionPath(folder: string, projectPath: string | undefined): string {
+  const path = folder.replace(/\\/g, '/').replace(/\/+$/, '');
+  const project = projectPath?.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!project) return path;
+  if (path.toLowerCase() === project.toLowerCase()) return '.';
+  if (path.toLowerCase().startsWith(`${project.toLowerCase()}/`)) return path.slice(project.length + 1);
+  return path;
+}
+
+/** "data:image/png;base64,…" → its mime type and base64 payload. */
+function parseDataUrl(dataUrl: string): { mimeType: string; data: string } | undefined {
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(dataUrl);
+  return match ? { mimeType: match[1], data: match[2] } : undefined;
 }
 
 function readFileBase64(file: File): Promise<string> {
@@ -72,6 +96,9 @@ export function Composer(props: ComposerProps): JSX.Element {
   composerCount += 1;
   const composerId = `composer-${composerCount}`;
   const [slashMenu, setSlashMenu] = createSignal<SlashMenuApi>();
+  const [mentionMenu, setMentionMenu] = createSignal<MentionMenuApi>();
+  /** The menu that owns the keys and the combobox state right now, if any. */
+  const openMenu = () => (slashMenu()?.open() ? slashMenu() : mentionMenu()?.open() ? mentionMenu() : undefined);
   let input: HTMLTextAreaElement | undefined;
   let fileInput: HTMLInputElement | undefined;
   let attachmentQueue: Promise<void> = Promise.resolve();
@@ -150,6 +177,76 @@ export function Composer(props: ComposerProps): JSX.Element {
     resize();
   }
 
+  /** Replaces text[start, end) (an "@query") and puts the caret after the new text. */
+  function replaceRange(start: number, end: number, value: string): void {
+    const current = text();
+    const next = current.slice(0, start) + value + current.slice(end);
+    const caretAt = start + value.length;
+    if (input) {
+      input.value = next;
+      input.focus();
+      input.setSelectionRange(caretAt, caretAt);
+    }
+    batch(() => {
+      setText(next);
+      setCaret(caretAt);
+    });
+    resize();
+  }
+
+  /** Inserts at the caret, with a space before it when the caret follows a word. */
+  function insertAtCaret(value: string): void {
+    const current = text();
+    const at = input ? input.selectionStart ?? current.length : current.length;
+    const needsSpace = at > 0 && !/\s/.test(current[at - 1]);
+    replaceRange(at, input ? input.selectionEnd ?? at : at, (needsSpace ? ' ' : '') + value);
+  }
+
+  async function addFolderContext(): Promise<void> {
+    const host = bridge();
+    const folder = await host.pickContextFolder?.();
+    if (!folder) return;
+    insertAtCaret(`@${mentionPath(folder, host.projectPath)}/ `);
+  }
+
+  async function addScreenshot(): Promise<void> {
+    setEngineError(undefined);
+    try {
+      const shot = await bridge().captureScreen?.();
+      if (!shot) return;
+      const parsed = parseDataUrl(shot.dataUrl);
+      if (!parsed) throw new Error('unreadable capture');
+      const size = Math.floor((parsed.data.length * 3) / 4);
+      const current = attachments();
+      if (current.length >= maxAttachments) {
+        setEngineError(`Attach up to ${maxAttachments} files.`);
+        return;
+      }
+      if (current.reduce((sum, item) => sum + item.size, 0) + size > maxTotalBytes) {
+        setEngineError('Total attachments must stay under 20 MB.');
+        return;
+      }
+      const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '');
+      const extension = parsed.mimeType.split('/')[1] || 'png';
+      setAttachments([...current, { name: `screenshot-${stamp}.${extension}`, ...parsed, size }]);
+      input?.focus();
+    } catch (error) {
+      setEngineError(`Could not capture the screen: ${String(error)}`);
+    }
+  }
+
+  onMount(() => {
+    if (!import.meta.env.DEV) return;
+    const preset = readPersisted<{ target?: string; text?: string } | undefined>('devComposer', undefined);
+    // `?compose=<text>` overrides the fixture's text; `?slash=<text>` types "/<text>" (a "/" can't be in a
+    // tools/shot.mjs query, it lands in the file name).
+    const query = new URLSearchParams(window.location.search);
+    const slashText = query.get('slash');
+    const presetText = query.get('compose') ?? (slashText !== null ? `/${slashText}` : preset?.text);
+    if (!presetText || preset?.target !== (props.chatId ?? 'home')) return;
+    window.setTimeout(() => insertText(presetText), 300);
+  });
+
   function send(mode?: 'interrupt' | 'queue'): void {
     const prompt = text().trim();
     if (reading() || (!prompt && !attachments().length)) return;
@@ -178,10 +275,16 @@ export function Composer(props: ComposerProps): JSX.Element {
     { id: 'queue', label: 'Queue', hint: 'after this turn' },
   ];
 
-  const attachMenuItems: MenuEntry[] = [
-    { id: 'image', label: 'Image' },
-    { id: 'file', label: 'File' },
-  ];
+  /** Folder and Screenshot only when the host can do them. */
+  const attachMenuItems = (): MenuEntry[] => {
+    const host = bridge();
+    return [
+      { id: 'image', label: 'Image' },
+      { id: 'file', label: 'File' },
+      ...(host.pickContextFolder ? [{ id: 'folder', label: 'Folder as context' }] : []),
+      ...(host.captureScreen ? [{ id: 'screenshot', label: 'Screenshot' }] : []),
+    ];
+  };
 
   const openPicker = (accept: string) => {
     if (!fileInput) return;
@@ -266,10 +369,10 @@ export function Composer(props: ComposerProps): JSX.Element {
           class="composer-input"
           rows={1}
           aria-label="Message"
-          role={slashMenu()?.open() ? 'combobox' : undefined}
-          aria-autocomplete={slashMenu()?.open() ? 'list' : undefined}
-          aria-expanded={slashMenu()?.open() ? true : undefined}
-          aria-activedescendant={slashMenu()?.activeId()}
+          role={openMenu() ? 'combobox' : undefined}
+          aria-autocomplete={openMenu() ? 'list' : undefined}
+          aria-expanded={openMenu() ? true : undefined}
+          aria-activedescendant={openMenu()?.activeId()}
           placeholder={props.placeholder}
           value={text()}
           onInput={event => {
@@ -281,6 +384,7 @@ export function Composer(props: ComposerProps): JSX.Element {
           onPointerUp={readCaret}
           onKeyDown={event => {
             if (slashMenu()?.handleKey(event)) return;
+            if (mentionMenu()?.handleKey(event)) return;
             if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
               event.preventDefault();
               if (running() && event.altKey) send('queue');
@@ -355,6 +459,15 @@ export function Composer(props: ComposerProps): JSX.Element {
         }}
         ref={setSlashMenu}
       />
+      <MentionMenu
+        anchor={form()}
+        text={text()}
+        caret={caret()}
+        idPrefix={composerId}
+        disabled={!!slashMenu()?.open()}
+        onReplace={replaceRange}
+        ref={setMentionMenu}
+      />
       <Menu
         anchor={sendButton()}
         open={sendMenuOpen() && running()}
@@ -371,10 +484,12 @@ export function Composer(props: ComposerProps): JSX.Element {
         open={attachMenuOpen()}
         onClose={() => setAttachMenuOpen(false)}
         placement="top-start"
-        items={attachMenuItems}
+        items={attachMenuItems()}
         onSelect={id => {
           setAttachMenuOpen(false);
-          openPicker(id === 'image' ? 'image/png,image/jpeg,image/gif,image/webp' : '');
+          if (id === 'folder') void addFolderContext();
+          else if (id === 'screenshot') void addScreenshot();
+          else openPicker(id === 'image' ? 'image/png,image/jpeg,image/gif,image/webp' : '');
         }}
       />
     </div>

@@ -4,7 +4,8 @@
  *   <Notice notice={{ message, tone: 'error', action: { label, run } }} onDismiss={…} onProgress={…} />
  *   <EngineNotice onProgress={…} />   the engine's last error (store engineError), dismiss clears it
  *
- * One line: a tone glyph (the only coloured part), the message, an optional text action and a dismiss button,
+ * One line: a tone glyph (the only coloured part), the message, an optional text action (e.g. a progress task's
+ * Cancel, which can be disabled while it takes effect) and a dismiss button,
  * on the raised surface with the app's control radius. It enters and leaves on the Panel spring: the row's
  * height opens (onProgress reports 0..1 so the Shell moves the content below with it, no jump) while the bar
  * slides down a few px and fades in. A new notice replaces the old one in place: the old line slides up and
@@ -30,7 +31,8 @@ export type NoticeTone = 'error' | 'warning' | 'info';
 export interface NoticeData {
   message: string;
   tone?: NoticeTone;
-  action?: { label: string; run: () => void };
+  /** A text action at the end of the line; `disabled` greys it out (e.g. 'Cancelling…' while a cancel is pending). */
+  action?: { label: string; run: () => void; disabled?: boolean };
   /** Same key as the line on screen: update it in place rather than sliding a new line in. */
   key?: string;
   /** Muted text after the message. */
@@ -136,7 +138,13 @@ function NoticeLine(props: { layer: Layer }): JSX.Element {
       </span>
       <Show when={notice().action}>
         {action => (
-          <Button variant="text" class="notice-action" tabIndex={props.layer.leaving() ? -1 : undefined} onClick={() => action().run()}>
+          <Button
+            variant="text"
+            class="notice-action"
+            tabIndex={props.layer.leaving() ? -1 : undefined}
+            disabled={action().disabled}
+            onClick={() => action().run()}
+          >
             {action().label}
           </Button>
         )}

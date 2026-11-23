@@ -23,6 +23,32 @@ export interface UnifyBridge {
   window: UnifyWindowControls;
   pickFolder(): Promise<string | undefined>;
   openExternal(url: string): void;
+  /**
+   * Pop-out windows (main process). `popOut` opens the chat in its own frameless window, or focuses the one
+   * already open for it. A popped-out window loads the same renderer with `?popout=<chatId>` in its URL
+   * (see `popoutChatId()` below). Missing outside Electron.
+   */
+  popOut?(chatId: string): void;
+  /** Chats currently shown in pop-out windows (main window only cares). */
+  onPopoutsChanged?(listener: (chatIds: string[]) => void): () => void;
+  /**
+   * Screenshot of the primary display for the composer's "Screenshot" attachment. Unify's own windows are hidden
+   * for the capture and shown again. Resolves undefined when the OS refuses (e.g. macOS screen permission).
+   */
+  captureScreen?(): Promise<{ dataUrl: string; width: number; height: number } | undefined>;
+  /** Folder picker for "Folder as context" (any folder; defaults to the project). */
+  pickContextFolder?(): Promise<string | undefined>;
+  /** Absolute path of the open project folder (main process `projectPath`). */
+  projectPath?: string;
+}
+
+/** The chat this window shows on its own, when it is a pop-out window (`?popout=<chatId>`). */
+export function popoutChatId(): string | undefined {
+  try {
+    return new URLSearchParams(window.location.search).get('popout') || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 interface VsCodeApi {

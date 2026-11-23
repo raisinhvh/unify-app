@@ -10,7 +10,7 @@ import { batch, createSignal } from 'solid-js';
 import { createStore, produce, reconcile } from 'solid-js/store';
 import { bridge, post } from '../bridge';
 import { readPersisted, writePersisted } from '../persist';
-import type { AgentInfo, SidebarHostMessage, SidebarImage, SidebarTimelineItem, SidebarViewState } from '../protocol';
+import type { AgentInfo, SidebarHostMessage, SidebarImage, SidebarScheduledPrompt, SidebarTimelineItem, SidebarViewState } from '../protocol';
 import { defaultViewState, readBootState } from './defaults';
 
 const [viewState, setViewState] = createStore<SidebarViewState>({ ...defaultViewState(), ...readBootStateSafe() });
@@ -78,9 +78,14 @@ export interface ProgressTask {
   /** 0-100 when the task knows it. */
   percent?: number;
   state: 'running' | 'done' | 'error';
+  /** The task honours cancellation: show Cancel, which posts `cancelProgress`. */
+  cancellable?: boolean;
   /** Epoch ms of the last update. */
   updatedAt: number;
 }
+
+/** Pending `/schedule` prompts, soonest first (engine `scheduledPromptsState`). */
+export const [scheduledPrompts, setScheduledPrompts] = createSignal<SidebarScheduledPrompt[]>([]);
 
 /** Every progress task still on screen, oldest first. The notice row shows the newest one; dismiss removes it. */
 export const [progressTasks, setProgressTasks] = createSignal<ProgressTask[]>([]);
@@ -159,6 +164,7 @@ export function applyHostMessage(message: SidebarHostMessage): void {
           message: message.message,
           percent: message.percent,
           state: message.state,
+          cancellable: message.cancellable,
           updatedAt: Date.now(),
         };
         setProgressTasks(current => {
@@ -169,6 +175,9 @@ export function applyHostMessage(message: SidebarHostMessage): void {
       }
       case 'slashCommandsState':
         setViewState('slashCommands', message.commands || []);
+        break;
+      case 'scheduledPromptsState':
+        setScheduledPrompts(message.prompts || []);
         break;
       case 'jobState':
         setViewState(produce(state => {

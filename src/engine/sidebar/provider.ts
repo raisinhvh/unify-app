@@ -60,6 +60,22 @@ export class UnifySidebarProvider implements vscode.WebviewViewProvider {
   public timeline(sessionId: string): SidebarTimelineItem[] { return this.state.timeline[sessionId] || []; }
   public subagents(sessionId: string): Record<string, SidebarSubagent> { return this.state.subagents[sessionId] || {}; }
 
+  /**
+   * Re-sends what the UI knows about one chat (timeline, run state, queue, job) without selecting it, so a window
+   * that opened late (a pop-out) can show the chat. Returns false when nothing is held for it yet.
+   */
+  public resendChat(sessionId: string): boolean {
+    if (!this.hasTimeline(sessionId)) return false;
+    void this.postMessage({ type: 'timelineState', sessionId, timeline: this.timeline(sessionId), subagents: this.subagents(sessionId) });
+    const run = this.state.runStates[sessionId];
+    if (run) void this.postMessage({ type: 'runState', sessionId, state: run.state, label: run.label });
+    const queue = this.state.queues[sessionId];
+    if (queue) void this.postMessage({ type: 'queueState', sessionId, items: queue });
+    const job = this.state.jobs[sessionId];
+    if (job) void this.postMessage({ type: 'jobState', sessionId, job });
+    return true;
+  }
+
   public setPage(page: SidebarViewState['page']): void { this.state.page = page; }
 
   /** Unify power status, read from the engine's shutdown controller on reload and on every change. */

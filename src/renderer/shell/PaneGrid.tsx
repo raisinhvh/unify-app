@@ -36,6 +36,8 @@ export interface PaneContext {
   /** Call from a header's pointerdown: becomes a drag once the pointer moves. */
   startDrag: (event: PointerEvent) => void;
   close: () => void;
+  /** The pane fills a pop-out window on its own: no drag grip, no pop-out button. */
+  standalone?: boolean;
 }
 
 export interface PaneGridProps {

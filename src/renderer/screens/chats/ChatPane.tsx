@@ -8,17 +8,19 @@
  *   changes   files this turn edited, with review / apply / reject (DSH renderChanges)
  *   composer  Composer.tsx, bound to this chat
  *
- * Pop out is a stub until the backend has a window API for it.
+ * Pop out (only where the bridge has `popOut`) moves the chat into its own window and closes this pane.
+ * A standalone context (the pop-out window, Popout.tsx) hides the grip and the pop-out button.
  */
 import { createSignal, For, Show, type JSX } from 'solid-js';
 import { Button, Icon, IconButton, Loader, Menu, actionLabel, actionLoader, chatAction, type MenuEntry } from '../../components';
 import { Collapse } from '../../motion';
-import { post } from '../../bridge';
+import { bridge, post } from '../../bridge';
 import type { PaneContext } from '../../shell/PaneGrid';
 import { markRead, viewState } from '../../store';
 import { ModelPicker } from '../../components/ModelPicker';
 import { Composer } from './Composer';
 import { JobBar } from './JobBar';
+import { ScheduleBar } from './ScheduleBar';
 import { Timeline } from './Timeline';
 import './chat-pane.css';
 
@@ -119,6 +121,12 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
     if (id === 'delete') post({ type: 'deleteSession', sessionId: chatId() });
   };
 
+  const canPopOut = () => !props.context.standalone && !!bridge().popOut;
+  const popOut = () => {
+    bridge().popOut!(chatId());
+    props.context.close();
+  };
+
   const commitRename = (value: string) => {
     const name = value.trim();
     setRenaming(false);
@@ -127,15 +135,20 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
 
   return (
     <div class="chat-pane" onPointerDown={() => markRead(chatId())}>
-      <header class="chat-pane-header">
-        <span
-          class="chat-pane-grip"
-          data-drag-handle
-          aria-label="Drag to rearrange"
-          onPointerDown={event => props.context.startDrag(event)}
-        >
-          <Icon name="grip" size={14} />
-        </span>
+      <header
+        class="chat-pane-header"
+        classList={{ standalone: !!props.context.standalone }}
+      >
+        <Show when={!props.context.standalone}>
+          <span
+            class="chat-pane-grip"
+            data-drag-handle
+            aria-label="Drag to rearrange"
+            onPointerDown={event => props.context.startDrag(event)}
+          >
+            <Icon name="grip" size={14} />
+          </span>
+        </Show>
         <Show
           when={!renaming()}
           fallback={
@@ -169,7 +182,15 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
           title="Model"
         />
         <div class="chat-pane-actions">
-          <IconButton class="chat-pane-popout" icon="pop" label="Pop out (coming soon)" size="small" disabled />
+          <Show when={canPopOut()}>
+            <IconButton
+              class="chat-pane-popout"
+              icon="pop"
+              label="Pop out"
+              size="small"
+              onClick={popOut}
+            />
+          </Show>
           <IconButton ref={setMoreAnchor} icon="more" label="More" size="small" active={moreOpen()} onClick={() => setMoreOpen(!moreOpen())} />
           <IconButton icon="close" label="Close pane" size="small" onClick={() => props.context.close()} />
         </div>
@@ -179,6 +200,7 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
       <div class="chat-pane-bottom">
         <StatusLine chatId={chatId()} />
         <ChangesBar visible={props.context.focused()} />
+        <ScheduleBar chatId={chatId()} />
         <Composer chatId={chatId()} placeholder="Reply, @ to mention a file" />
       </div>
       <Menu anchor={moreAnchor()} open={moreOpen()} onClose={() => setMoreOpen(false)} placement="bottom-end" items={moreItems()} onSelect={onMore} />

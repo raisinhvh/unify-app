@@ -1,0 +1,75 @@
+/* "@" file mention menu above the composer (MentionMenu.tsx). Same surface and rows as the slash menu. */
+.popover.mention-menu {
+  min-width: 220px;
+  max-width: calc(100vw - 16px);
+  padding: 4px 4px;
+}
+
+.mention-heading {
+  padding: 4px 8px 4px;
+  color: var(--text3);
+}
+
+.mention-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-height: min(320px, 40vh);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* One block for the whole list; it glides to the highlighted row. */
+.mention-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 0;
+  opacity: 0;
+  border-radius: var(--radius-row);
+  background: var(--hover);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.mention-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-row);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mention-icon {
+  flex: none;
+  color: var(--text3);
+}
+
+.mention-name {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-directory {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text3);
+  font-size: 11px;
+}
+
+.mention-empty {
+  padding: 6px 8px 8px;
+  color: var(--text3);
+}

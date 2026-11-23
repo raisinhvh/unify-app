@@ -1,0 +1,23 @@
+{
+  "extends": "chat-slash",
+  "persisted": {
+    "devComposer": { "target": "s-slash", "text": "Tidy up @set" }
+  },
+  "timed": [
+    {
+      "after": 900,
+      "message": {
+        "type": "workspaceFileResults",
+        "requestId": "fixture",
+        "query": "set",
+        "results": [
+          { "path": "src/renderer/screens/settings/", "kind": "folder" },
+          { "path": "src/renderer/screens/settings/SettingsScreen.tsx", "kind": "file" },
+          { "path": "src/renderer/screens/settings/settings.css", "kind": "file" },
+          { "path": "src/renderer/screens/settings/catalog.ts", "kind": "file" },
+          { "path": "src/engine/unify/settings.ts", "kind": "file" }
+        ]
+      }
+    }
+  ]
+}

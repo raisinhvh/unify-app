@@ -1,7 +1,8 @@
 /**
  * Home (Figma 10 Home 306:1556, 10b choose project 306:11820): the bottom layer of the window.
  *
- * It holds the backdrop logo, the display title, a composer that starts a new chat, and the project chip
+ * It holds the backdrop logo, the display title, a composer that starts a new chat, the prompts scheduled from
+ * Home (ScheduleBar with no chatId), and the project chip
  * that picks which folder that chat starts in. Panes and screens are drawn over it; the shell marks it
  * `inert` while something covers it, so it never takes focus from behind.
  *
@@ -18,6 +19,7 @@ import { onHostMessage, rememberSentImages, viewState } from '../../store';
 import { openChat } from '../../shell/layout';
 import { Composer } from './Composer';
 import { openProjectFolder, ProjectPicker } from './ProjectPicker';
+import { ScheduleBar } from './ScheduleBar';
 import { parentFolder, selectedProject } from './projects';
 import './home.css';
 
@@ -89,6 +91,7 @@ export function Home(props: { covered: boolean }): JSX.Element {
       >
         <h1 class="home-title type-display">Unify</h1>
         <Composer class="home-composer" placeholder={placeholder()} onSubmit={start} autofocus={!props.covered} />
+        <ScheduleBar />
         <div class="home-project">
           <Button
             ref={setChip}

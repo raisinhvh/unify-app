@@ -1,9 +1,13 @@
 /** Slash commands typed at the start of a chat message. Add an entry here to offer a new command in the composer menu. */
 export interface SlashCommand { name: string; description: string; usage: string }
 
+/** Usage text shared by the command menu and the `/schedule` parse errors. */
+export const SCHEDULE_USAGE = '/schedule <in 2h | at 15:30 | 9am tomorrow> <prompt>';
+
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'job', description: 'Plan a checklist from your spec, then work and review until it passes', usage: '/job <spec>' },
   { name: 'permissions', description: 'Show or change the approval mode for this workspace', usage: '/permissions [ask | auto | full]' },
+  { name: 'schedule', description: 'Send a prompt later, at a time or after a delay', usage: SCHEDULE_USAGE },
 ];
 
 export const APPROVAL_MODES = {

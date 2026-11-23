@@ -1,0 +1,77 @@
+/* Scheduled prompts by the composer (ScheduleBar.tsx). Card like the job bar; one compact line per prompt. */
+
+/* Inside a flex column the bar keeps its height. */
+.schedule-bar-slot {
+  flex: none;
+}
+
+/* Padding, not margin: the slot is a Collapse that measures its content's offsetHeight. */
+.schedule-bar-frame {
+  padding: 0 0 2px;
+}
+
+.schedule-bar {
+  padding: 2px 4px 2px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.schedule-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.schedule-row-glyph {
+  flex: none;
+  color: var(--text3);
+}
+
+.schedule-row-prompt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.schedule-row-images {
+  flex: none;
+  color: var(--text3);
+  white-space: nowrap;
+}
+
+.schedule-row-due {
+  flex: none;
+  color: var(--text2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.schedule-row-countdown {
+  flex: none;
+  min-width: 56px;
+  color: var(--text3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.schedule-row-send.button {
+  flex: none;
+  height: 22px;
+  padding: 0 6px;
+  color: var(--text2);
+  font-size: 12px;
+  border-radius: var(--radius-row);
+}
+
+.schedule-row-send.button:hover {
+  color: var(--text);
+  background: var(--hover);
+}

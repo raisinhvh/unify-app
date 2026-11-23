@@ -4,11 +4,13 @@
  *
  *   cellRects(preset, splits)    fractional rectangles for each cell
  *   openChat / closeChat / focusPane / dropChat / setSplit    the only ways to change the layout
+ *   setPoppedOutChats            chats shown in their own windows (bridge onPopoutsChanged); never opened as panes
  *
  * Presets grow and shrink with the number of chats: closing a pane in Grid falls back to Three, then Columns,
  * then Single. Nothing open means no panes: Home shows through.
  */
 import { createRoot, createSignal } from 'solid-js';
+import { bridge } from '../bridge';
 import { readPersisted, writePersisted } from '../persist';
 
 export type PresetId = 'single' | 'columns' | 'rows' | 'three' | 'grid';
@@ -161,11 +163,33 @@ export const openChats = (): string[] => layout().cells.filter((cell): cell is s
 
 export const isChatOnScreen = (chatId: string): boolean => openChats().includes(chatId);
 
+/** Chats currently shown in pop-out windows (main window only). */
+const [poppedOutChats, setPoppedOutSignal] = createSignal<string[]>([]);
+export { poppedOutChats };
+
+/** Records which chats are popped out and closes any pane still showing one of them. */
+export function setPoppedOutChats(chatIds: string[]): void {
+  setPoppedOutSignal(chatIds);
+  const popped = new Set(chatIds);
+  for (const chatId of openChats()) {
+    if (popped.has(chatId)) closeChat(chatId);
+  }
+}
+
+/** True when the chat lives in a pop-out window: focus that window instead of opening a pane. */
+function focusPoppedOut(chatId: string): boolean {
+  if (!poppedOutChats().includes(chatId)) return false;
+  const popOut = bridge().popOut;
+  if (popOut) popOut(chatId);
+  return true;
+}
+
 /**
- * Shows a chat. Already on screen: focus it. `beside` adds a pane (growing the preset); otherwise it replaces
+ * Shows a chat. Popped out: focus its window instead. Already on screen: focus it. `beside` adds a pane (growing the preset); otherwise it replaces
  * the focused pane, or fills the first pane when none is open.
  */
 export function openChat(chatId: string, options: { beside?: boolean } = {}): void {
+  if (focusPoppedOut(chatId)) return;
   const state = layout();
   const existing = state.cells.indexOf(chatId);
   if (existing >= 0) {
@@ -227,6 +251,7 @@ export function setSplit(axis: 'x' | 'y', value: number): void {
  * cells left over stay empty and wait for a chat.
  */
 export function dropChat(chatId: string, preset: PresetId, cellIndex: number): void {
+  if (focusPoppedOut(chatId)) return;
   const state = layout();
   const others = openChats().filter(id => id !== chatId);
   const count = presetCellCount[preset];

@@ -86,9 +86,11 @@
   font-size: 11px;
 }
 
+/* Up to two lines, so longer descriptions (/job) read in full; the highlight block measures each row. */
 .slash-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--text3);
 }

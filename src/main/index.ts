@@ -5,12 +5,15 @@
  * bridges the engine's sidebar provider to a BrowserWindow over IPC and a
  * loopback asset server (used by the legacy sidebar for its media).
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, safeStorage, shell, type OpenDialogOptions } from 'electron';
+import {
+  app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, Notification, safeStorage, screen, shell,
+  type BrowserWindowConstructorOptions, type OpenDialogOptions,
+} from 'electron';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 import { activate, deactivate } from '../engine/extension';
 import { getSidebarHtml, initialSidebarState } from '../engine/sidebar/view';
@@ -123,6 +126,11 @@ const bufferedMessages: unknown[] = [];
 const pendingUi = new Map<string, (result: unknown) => void>();
 const promptResolvers = new Map<string, (value: string | undefined) => void>();
 let rendererState: unknown;
+
+/** Chats shown in their own windows, keyed by chat id, plus each window's load state and message buffer. */
+const popoutWindows = new Map<string, BrowserWindow>();
+const popoutLoaded = new Map<string, boolean>();
+const popoutMessages = new Map<string, unknown[]>();
 
 /* ------------------------------------------------------------------ */
 /* Secrets                                                             */
@@ -464,6 +472,21 @@ function asStringArray(items: unknown[]): string[] {
   return items.map(item => typeof item === 'string' ? item : String((item as { label?: unknown })?.label ?? ''));
 }
 
+/** Quotes a value for a POSIX shell (used by `bash -lc` and Terminal's `do script`). */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Escapes a value for a double-quoted AppleScript string literal. */
+function appleScriptString(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/** Quotes one argument for cmd.exe (only used with `windowsVerbatimArguments`). */
+function cmdArgument(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
 function nativeUi(): UiAdapter {
   return {
     async showMessage(level, message, detail, items = [], modal = false) {
@@ -536,29 +559,74 @@ function nativeUi(): UiAdapter {
     createTerminal(options) {
       const cwd = options.cwd || projectPath;
       const name = options.name || 'Terminal';
-      const open = (): void => {
+      let showTimer: NodeJS.Timeout | undefined;
+
+      const launch = (command: string, args: string[], verbatim = false): void => {
         try {
-          if (process.platform === 'win32') {
-            spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', `cd /d "${cwd}"`], { cwd, detached: true, stdio: 'ignore', windowsHide: false });
-          } else if (process.platform === 'darwin') {
-            spawn('open', ['-a', 'Terminal', cwd], { detached: true, stdio: 'ignore' });
-          } else {
-            spawn('x-terminal-emulator', [], { cwd, detached: true, stdio: 'ignore' });
-          }
+          const child = spawn(command, args, {
+            cwd,
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: false,
+            windowsVerbatimArguments: verbatim,
+          });
+          child.on('error', error => mainLog(`terminal: ${error.message}`));
         } catch (error) {
           mainLog(`terminal: ${error instanceof Error ? error.message : String(error)}`);
         }
       };
+
+      /** Opens a terminal in `cwd`; with `text`, that terminal runs it and stays open. */
+      const open = (text?: string): void => {
+        if (process.platform === 'win32') {
+          if (!text) {
+            launch('cmd.exe', ['/c', 'start', cmdArgument(name), 'cmd.exe'], true);
+            return;
+          }
+          // Passing the commands through a batch file keeps quoting and
+          // special characters out of cmd.exe's command line.
+          const scriptPath = join(tmpdir(), `unify-terminal-${randomBytes(6).toString('hex')}.cmd`);
+          writeFileSync(scriptPath, `@echo off\r\ncd /d "${cwd}"\r\n${text}\r\n`, 'utf8');
+          launch('cmd.exe', ['/c', 'start', cmdArgument(name), 'cmd.exe', '/k', cmdArgument(scriptPath)], true);
+        } else if (process.platform === 'darwin') {
+          if (!text) {
+            launch('open', ['-a', 'Terminal', cwd]);
+            return;
+          }
+          const command = `cd ${shellQuote(cwd)}; ${text}`;
+          launch('osascript', ['-e', `tell application "Terminal" to do script ${appleScriptString(command)}`]);
+        } else if (!text) {
+          launch('x-terminal-emulator', []);
+        } else {
+          const command = `cd ${shellQuote(cwd)} && ${text}; exec bash`;
+          launch('x-terminal-emulator', ['-e', 'bash', '-lc', command]);
+        }
+      };
+
+      const cancelPendingShow = (): void => {
+        if (!showTimer) return;
+        clearTimeout(showTimer);
+        showTimer = undefined;
+      };
+
       return {
         name,
-        show: open,
-        sendText(text: string) {
-          // Native terminals cannot be scripted without a PTY; open one in the
-          // right folder so the user can paste.
-          mainLog(`terminal sendText ignored: ${text.slice(0, 120)}`);
-          open();
+        show() {
+          cancelPendingShow();
+          // A sendText right after show() should fill the only window that opens,
+          // so the bare terminal waits a moment for it.
+          showTimer = setTimeout(() => {
+            showTimer = undefined;
+            open();
+          }, 150);
         },
-        dispose() { /* The native terminal outlives the request. */ },
+        sendText(text: string) {
+          cancelPendingShow();
+          open(text);
+        },
+        dispose() {
+          cancelPendingShow();
+        },
       };
     },
   };
@@ -568,7 +636,8 @@ function nativeUi(): UiAdapter {
 /* Renderer bridge                                                     */
 /* ------------------------------------------------------------------ */
 
-function sendToRenderer(message: unknown): void {
+/** Sends a message to the main window, buffering it until that window has loaded. */
+function sendToMainWindow(message: unknown): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (!windowLoaded) {
     bufferedMessages.push(message);
@@ -578,19 +647,61 @@ function sendToRenderer(message: unknown): void {
 }
 
 /**
+ * Engine messages go to the main window and to every loaded pop-out. A pop-out
+ * that is still loading keeps its own buffer until `did-finish-load`.
+ */
+function sendToRenderer(message: unknown): void {
+  sendToMainWindow(message);
+  for (const [chatId, window] of popoutWindows) {
+    if (window.isDestroyed()) continue;
+    if (!popoutLoaded.get(chatId)) {
+      popoutMessages.get(chatId)?.push(message);
+      continue;
+    }
+    window.webContents.send('unify:message', message);
+  }
+}
+
+/**
  * Delivers a UI request on both channels: `unify:message` keeps the legacy
  * sidebar working, and `unify:ui-request` is what the preload's
- * `onUiRequest()` listener subscribes to.
+ * `onUiRequest()` listener subscribes to. Pop-outs never answer UI requests,
+ * so these go to the main window only.
  */
 function sendUiRequest(request: UiRequest): void {
-  sendToRenderer({ type: 'uiRequest', request });
+  sendToMainWindow({ type: 'uiRequest', request });
   if (!mainWindow || mainWindow.isDestroyed() || !windowLoaded) return;
   mainWindow.webContents.send('unify:ui-request', request);
 }
 
+/** Sends the engine messages a freshly loaded pop-out buffered while loading. */
+function flushPopoutMessages(chatId: string): void {
+  const window = popoutWindows.get(chatId);
+  if (!window || window.isDestroyed()) return;
+  for (const message of popoutMessages.get(chatId)?.splice(0) ?? []) {
+    window.webContents.send('unify:message', message);
+  }
+}
+
 function flushRendererMessages(): void {
-  if (!mainWindow) return;
-  for (const message of bufferedMessages.splice(0)) mainWindow.webContents.send('unify:message', message);
+  if (mainWindow) {
+    for (const message of bufferedMessages.splice(0)) mainWindow.webContents.send('unify:message', message);
+  }
+  for (const chatId of popoutWindows.keys()) {
+    if (popoutLoaded.get(chatId)) flushPopoutMessages(chatId);
+  }
+}
+
+/** Tells the main window which chats currently have a pop-out (the preload forwards this). */
+function announcePopouts(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('unify:popouts', [...popoutWindows.keys()]);
+}
+
+function closePopouts(): void {
+  for (const window of [...popoutWindows.values()]) {
+    if (!window.isDestroyed()) window.close();
+  }
 }
 
 function persistRendererState(): void {
@@ -600,6 +711,41 @@ function persistRendererState(): void {
 /* ------------------------------------------------------------------ */
 /* Window                                                              */
 /* ------------------------------------------------------------------ */
+
+/** Options every Unify shell window shares (main window and pop-outs). */
+function shellWindowOptions(): BrowserWindowConstructorOptions {
+  return {
+    show: false,
+    // macOS keeps its traffic lights, inset into the custom drag strip; the
+    // other platforms draw their own window buttons in the renderer.
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 } }
+      : { frame: false }),
+    backgroundColor: '#0D0B09',
+    title: 'Unify',
+    icon: join(extensionPath, 'build', 'icon.png'),
+    webPreferences: {
+      preload: join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      // The preload only needs `electron` (no Node built-ins), so the shell can
+      // run sandboxed like Electron recommends.
+      sandbox: true,
+      spellcheck: false,
+    },
+  };
+}
+
+/** Chrome shared by every shell window: external links and the maximize state the renderer draws. */
+function attachWindowChrome(window: BrowserWindow): void {
+  if (process.platform !== 'darwin') window.setMenu(null);
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  window.on('maximize', () => window.webContents.send('unify:maximized', true));
+  window.on('unmaximize', () => window.webContents.send('unify:maximized', false));
+}
 
 function loadShell(window: BrowserWindow): Promise<void> {
   if (isDev) {
@@ -613,6 +759,76 @@ function loadShell(window: BrowserWindow): Promise<void> {
   }
   mainLog(`loading legacy sidebar ${assetOrigin}/legacy`);
   return window.loadURL(`${assetOrigin}/legacy?token=${assetToken}`);
+}
+
+/** Loads the same renderer in pop-out mode, with `?popout=<chatId>` in its URL. */
+function loadPopoutShell(window: BrowserWindow, chatId: string): Promise<void> {
+  if (isDev) {
+    const separator = devUrl.includes('?') ? '&' : '?';
+    const url = `${devUrl}${separator}popout=${encodeURIComponent(chatId)}`;
+    mainLog(`loading dev pop-out ${url}`);
+    return window.loadURL(url);
+  }
+  const built = join(extensionPath, 'dist', 'renderer', 'index.html');
+  mainLog(`loading pop-out renderer ${built} for ${chatId}`);
+  return window.loadFile(built, { query: { popout: chatId } });
+}
+
+/**
+ * Opens a chat in its own window, or focuses the window already showing it.
+ * The legacy sidebar has no pop-out mode, so it only logs there.
+ */
+function openPopout(chatId: string): void {
+  const existing = popoutWindows.get(chatId);
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore();
+    existing.focus();
+    return;
+  }
+  const built = join(extensionPath, 'dist', 'renderer', 'index.html');
+  if (cli.legacy || (!isDev && !existsSync(built))) {
+    mainLog(`pop-out windows need the built renderer; ignoring ${chatId}`);
+    return;
+  }
+
+  const mainBounds = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : undefined;
+  const window = new BrowserWindow({
+    ...shellWindowOptions(),
+    width: 560,
+    height: 760,
+    minWidth: 380,
+    minHeight: 420,
+    ...(mainBounds ? { x: mainBounds.x + 48, y: mainBounds.y + 48 } : {}),
+  });
+  attachWindowChrome(window);
+  window.once('ready-to-show', () => window.show());
+  popoutWindows.set(chatId, window);
+  popoutLoaded.set(chatId, false);
+  popoutMessages.set(chatId, []);
+  announcePopouts();
+
+  window.webContents.on('did-finish-load', () => {
+    popoutLoaded.set(chatId, true);
+    flushPopoutMessages(chatId);
+    mainLog(`pop-out loaded ${window.webContents.getURL()}`);
+  });
+  window.webContents.on('preload-error', (_event, preloadPath, error) => {
+    mainLog(`pop-out preload failed (${preloadPath}): ${error.message}`);
+  });
+  window.webContents.on('did-fail-load', (_event, code, description, url) => {
+    mainLog(`pop-out failed to load (${code} ${description}) ${url}`);
+  });
+  window.on('closed', () => {
+    // A stale close event must not remove a newer window for the same chat.
+    if (popoutWindows.get(chatId) !== window) return;
+    popoutWindows.delete(chatId);
+    popoutLoaded.delete(chatId);
+    popoutMessages.delete(chatId);
+    announcePopouts();
+  });
+  loadPopoutShell(window, chatId).catch(error => {
+    mainLog(`pop-out load failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
 }
 
 function createApplicationMenu(): void {
@@ -634,35 +850,14 @@ function createApplicationMenu(): void {
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
+    ...shellWindowOptions(),
     width: 1320,
     height: 900,
     minWidth: 900,
     minHeight: 620,
-    show: false,
-    // macOS keeps its traffic lights, inset into the custom drag strip; the
-    // other platforms draw their own window buttons in the renderer.
-    ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 } }
-      : { frame: false }),
-    backgroundColor: '#0D0B09',
-    title: 'Unify',
-    icon: join(extensionPath, 'build', 'icon.png'),
-    webPreferences: {
-      preload: join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      // The preload only needs `electron` (no Node built-ins), so the shell can
-      // run sandboxed like Electron recommends.
-      sandbox: true,
-      spellcheck: false,
-    },
   });
-  if (process.platform !== 'darwin') window.setMenu(null);
+  attachWindowChrome(window);
   window.once('ready-to-show', () => window.show());
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
-    return { action: 'deny' };
-  });
   window.webContents.on('did-finish-load', () => {
     windowLoaded = true;
     flushRendererMessages();
@@ -679,10 +874,12 @@ function createWindow(): BrowserWindow {
   window.webContents.on('did-fail-load', (_event, code, description, url) => {
     mainLog(`shell failed to load (${code} ${description}) ${url}`);
   });
-  window.on('maximize', () => window.webContents.send('unify:maximized', true));
-  window.on('unmaximize', () => window.webContents.send('unify:maximized', false));
   window.on('closed', () => {
-    if (mainWindow === window) mainWindow = undefined;
+    if (mainWindow === window) {
+      mainWindow = undefined;
+      // Pop-outs are views of the same engine; closing the shell closes them.
+      closePopouts();
+    }
   });
   return window;
 }
@@ -705,6 +902,48 @@ async function captureScreenshot(window: BrowserWindow): Promise<void> {
   }
 }
 
+/**
+ * Screenshot of the primary display for the composer's attachment flow.
+ * Every visible Unify window is hidden for a moment so the app does not cover
+ * what the user is trying to capture, then shown again in `finally`.
+ */
+async function capturePrimaryScreen(): Promise<{ dataUrl: string; width: number; height: number } | undefined> {
+  const windows = [
+    ...(mainWindow && !mainWindow.isDestroyed() ? [mainWindow] : []),
+    ...[...popoutWindows.values()].filter(window => !window.isDestroyed()),
+  ];
+  const hidden: BrowserWindow[] = [];
+  try {
+    for (const window of windows) {
+      if (window.isVisible() && !window.isMinimized()) {
+        window.hide();
+        hidden.push(window);
+      }
+    }
+    await new Promise(resolveDelay => setTimeout(resolveDelay, 250));
+
+    const display = screen.getPrimaryDisplay();
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: {
+        width: Math.round(display.size.width * display.scaleFactor),
+        height: Math.round(display.size.height * display.scaleFactor),
+      },
+    });
+    const source = sources.find(item => String(item.display_id) === String(display.id)) ?? sources[0];
+    if (!source || !source.thumbnail || source.thumbnail.isEmpty()) return undefined;
+    const size = source.thumbnail.getSize();
+    return { dataUrl: source.thumbnail.toDataURL(), width: size.width, height: size.height };
+  } catch (error) {
+    mainLog(`screen capture failed: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  } finally {
+    for (const window of hidden) {
+      if (!window.isDestroyed()) window.show();
+    }
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* IPC                                                                 */
 /* ------------------------------------------------------------------ */
@@ -713,15 +952,18 @@ function installIpc(): void {
   ipcMain.on('unify:post', (_event, message: unknown) => {
     receiveRendererMessage(message);
   });
-  ipcMain.on('unify:window', (_event, action: string) => {
-    if (!mainWindow) return;
-    if (action === 'minimize') mainWindow.minimize();
+  ipcMain.on('unify:window', (event, action: string) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || window.isDestroyed()) return;
+    if (action === 'minimize') window.minimize();
     else if (action === 'maximize') {
-      if (mainWindow.isMaximized()) mainWindow.unmaximize();
-      else mainWindow.maximize();
-    } else if (action === 'close') mainWindow.close();
+      if (window.isMaximized()) window.unmaximize();
+      else window.maximize();
+    } else if (action === 'close') window.close();
   });
-  ipcMain.handle('unify:is-maximized', () => mainWindow?.isMaximized() ?? false);
+  ipcMain.handle('unify:is-maximized', event => {
+    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
+  });
   ipcMain.handle('unify:pick-folder', async () => {
     if (!mainWindow) return undefined;
     const picked = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], title: 'Open project folder' });
@@ -746,9 +988,33 @@ function installIpc(): void {
   ipcMain.on('unify:state-get', event => {
     event.returnValue = rendererState;
   });
-  ipcMain.on('unify:state-set', (_event, value: unknown) => {
+  ipcMain.on('unify:state-set', (event, value: unknown) => {
+    // A pop-out is a second view of the main window's state; never let it
+    // persist a state the main window did not choose.
+    if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return;
     rendererState = value;
     persistRendererState();
+  });
+  ipcMain.on('unify:project-path', event => {
+    event.returnValue = projectPath;
+  });
+  ipcMain.on('unify:popout', (_event, chatId: unknown) => {
+    if (typeof chatId !== 'string' || !chatId) return;
+    openPopout(chatId);
+  });
+  ipcMain.handle('unify:popouts-get', () => [...popoutWindows.keys()]);
+  ipcMain.handle('unify:capture-screen', () => capturePrimaryScreen());
+  ipcMain.handle('unify:pick-context-folder', async event => {
+    const parent = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+    const options: OpenDialogOptions = {
+      title: 'Add a folder as context',
+      defaultPath: projectPath,
+      properties: ['openDirectory'],
+    };
+    const picked = parent
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options);
+    return picked.canceled ? undefined : picked.filePaths[0];
   });
   ipcMain.handle('unify:setup-status', () => shimSetupStatus());
   ipcMain.handle('unify:check-for-updates', () => checkForUpdatesNow());

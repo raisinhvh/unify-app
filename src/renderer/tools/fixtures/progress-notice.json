@@ -12,6 +12,8 @@
     { "after": 2400, "message": { "type": "progressNotice", "id": "runtime-update", "title": "Updating agent runtime 1.2.3…", "message": "Unpacking", "percent": 81, "state": "running" } },
     { "after": 3600, "message": { "type": "progressNotice", "id": "runtime-update", "title": "Agent runtime updated", "message": "Version 1.2.3", "percent": 100, "state": "done" } },
     { "after": 9000, "message": { "type": "progressNotice", "id": "figma-setup", "title": "Setting up the Figma pack…", "message": "Copying the plugin", "state": "running" } },
-    { "after": 10500, "message": { "type": "progressNotice", "id": "figma-setup", "title": "Figma pack setup failed", "message": "Could not write to the plugin folder", "state": "error" } }
+    { "after": 10500, "message": { "type": "progressNotice", "id": "figma-setup", "title": "Figma pack setup failed", "message": "Could not write to the plugin folder", "state": "error" } },
+    { "after": 12000, "message": { "type": "progressNotice", "id": "index-build", "title": "Indexing the project…", "message": "1,204 of 3,880 files", "percent": 31, "state": "running", "cancellable": true } },
+    { "after": 13500, "message": { "type": "progressNotice", "id": "index-build", "title": "Indexing the project…", "message": "2,611 of 3,880 files", "percent": 67, "state": "running", "cancellable": true } }
   ]
 }

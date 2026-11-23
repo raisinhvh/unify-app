@@ -7,6 +7,7 @@
  * The menu is derived from the composer text, it holds no text of its own:
  *   "/"  "/jo"            the command list, filtered by what is typed before the caret
  *   "/permissions " (+ a partial mode)   the approval-mode picker, with a check on the current mode
+ *   "/schedule " (+ a partial pick)       quick "when" picks; a pick is inserted with the caret left for the prompt
  * Arrow keys move the highlight, Enter or Tab picks, Escape closes until the text changes. The composer
  * passes its keydown to `api.handleKey` first; focus never leaves the input (rows cancel mousedown).
  *
@@ -35,7 +36,25 @@ type SlashCommand = (typeof viewState)['slashCommands'][number];
 const builtInCommands: SlashCommand[] = [
   { name: 'job', description: 'Plan a checklist from your spec, then work and review until it passes', usage: '/job <spec>' },
   { name: 'permissions', description: 'Show or change the approval mode for this workspace', usage: '/permissions [ask | auto | full]' },
+  { name: 'schedule', description: 'Send a prompt later, after a delay or at a time', usage: '/schedule <when> <prompt>' },
 ];
+
+/** Quick "when" picks after "/schedule " (forms the engine's parser accepts), with the time each stands for. */
+const schedulePicks: { when: string; dueAt: (now: Date) => Date }[] = [
+  { when: 'in 30m', dueAt: now => new Date(now.getTime() + 30 * 60_000) },
+  { when: 'in 1h', dueAt: now => new Date(now.getTime() + 60 * 60_000) },
+  { when: 'in 3h', dueAt: now => new Date(now.getTime() + 180 * 60_000) },
+  { when: 'tomorrow 9am', dueAt: now => new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 9, 0) },
+];
+
+/** "Today at 15:42" / "Tomorrow at 09:00", a quick pick's description. */
+function describeDue(due: Date, now: Date): string {
+  const time = `${String(due.getHours()).padStart(2, '0')}:${String(due.getMinutes()).padStart(2, '0')}`;
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  if (due.toDateString() === now.toDateString()) return `Today at ${time}`;
+  if (due.toDateString() === tomorrow.toDateString()) return `Tomorrow at ${time}`;
+  return `${due.toLocaleDateString(undefined, { weekday: 'short' })} at ${time}`;
+}
 
 /** Copied from src/engine/slash/registry.ts APPROVAL_MODES (engine runtime code stays out of the renderer). */
 const approvalModes: { mode: ApprovalMode; label: string; description: string }[] = [
@@ -47,7 +66,7 @@ const approvalModes: { mode: ApprovalMode; label: string; description: string }[
 /** Widest the menu gets over a wide composer. */
 const maxMenuWidth = 440;
 
-type SlashViewKind = 'commands' | 'modes';
+type SlashViewKind = 'commands' | 'modes' | 'schedule';
 
 interface SlashView {
   kind: SlashViewKind;
@@ -92,6 +111,13 @@ function slashView(text: string, caret: number): SlashView | undefined {
   if (!text.startsWith('/')) return undefined;
   const modeMatch = /^\/permissions\s+(\S*)$/i.exec(text);
   if (modeMatch && caret === text.length) return { kind: 'modes', query: modeMatch[1].toLowerCase() };
+  // Open while what follows "/schedule " is still the start of a pick; a whole pick (plus the prompt) closes it.
+  const scheduleMatch = /^\/schedule\s+(.*)$/i.exec(text);
+  if (scheduleMatch) {
+    const typed = scheduleMatch[1].toLowerCase();
+    const partialPick = schedulePicks.some(pick => pick.when.startsWith(typed) && pick.when !== typed);
+    return partialPick && caret === text.length ? { kind: 'schedule', query: typed } : undefined;
+  }
   const whitespace = text.search(/\s/);
   const tokenEnd = whitespace < 0 ? text.length : whitespace;
   if (caret > tokenEnd) return undefined;
@@ -135,10 +161,23 @@ export function SlashMenu(props: SlashMenuProps): JSX.Element {
         checked: viewState.approvalMode === item.mode,
       }));
 
+  const scheduleEntries = (query: string): SlashEntry[] => {
+    const now = new Date();
+    return schedulePicks
+      .filter(pick => pick.when.startsWith(query) && pick.when !== query)
+      .map(pick => ({
+        id: pick.when,
+        label: pick.when,
+        description: describeDue(pick.dueAt(now), now),
+      }));
+  };
+
   const liveEntries = createMemo<SlashEntry[]>(() => {
     const current = view();
     if (!current) return [];
-    return current.kind === 'commands' ? commandEntries(current.query) : modeEntries(current.query);
+    if (current.kind === 'modes') return modeEntries(current.query);
+    if (current.kind === 'schedule') return scheduleEntries(current.query);
+    return commandEntries(current.query);
   });
 
   const open = () => !!view() && liveEntries().length > 0 && dismissedAt() !== props.text;
@@ -147,6 +186,7 @@ export function SlashMenu(props: SlashMenuProps): JSX.Element {
   const shownKind = createMemo<SlashViewKind>(previous => (open() ? view()!.kind : previous), 'commands');
   const shownCommands = createMemo<SlashEntry[]>(previous => (open() && view()!.kind === 'commands' ? liveEntries() : previous), []);
   const shownModes = createMemo<SlashEntry[]>(previous => (open() && view()!.kind === 'modes' ? liveEntries() : previous), []);
+  const shownSchedule = createMemo<SlashEntry[]>(previous => (open() && view()!.kind === 'schedule' ? liveEntries() : previous), []);
 
   // A new list starts on its first row; the mode picker starts on the current mode.
   createEffect(on(() => [view()?.kind, view()?.query] as const, ([kind, query]) => {
@@ -172,6 +212,10 @@ export function SlashMenu(props: SlashMenuProps): JSX.Element {
     if (current.kind === 'modes') {
       post({ type: 'setApproval', mode: entry.id as ApprovalMode });
       props.onApplied();
+      return;
+    }
+    if (current.kind === 'schedule') {
+      props.onInsert(`/schedule ${entry.id} `);
       return;
     }
     props.onInsert(`/${entry.id} `);
@@ -238,6 +282,17 @@ export function SlashMenu(props: SlashMenuProps): JSX.Element {
           kind="modes"
           entries={shownModes()}
           highlight={sectionHighlight('modes')}
+          optionId={optionId}
+          onHover={setHighlight}
+          onPick={pick}
+        />
+      </Collapse>
+      <Collapse open={shownKind() === 'schedule'}>
+        <SlashSection
+          heading="When"
+          kind="schedule"
+          entries={shownSchedule()}
+          highlight={sectionHighlight('schedule')}
           optionId={optionId}
           onHover={setHighlight}
           onPick={pick}

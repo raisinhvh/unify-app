@@ -192,6 +192,126 @@ export function findWorkspaceFiles(root: string | undefined, query: string, limi
 }
 
 /* ---------------------------------------------------------------------------------------------------------------
+ * Fuzzy workspace search for `@` mentions
+ */
+
+/** One project-relative match; folders end in `/`. */
+export interface WorkspaceSearchResult {
+  path: string;
+  kind: 'file' | 'folder';
+}
+
+/** Search-only ignores on top of the tree's list: build output and Unify's own data folder. */
+const SEARCH_IGNORED = new Set([...IGNORED_DIRECTORIES, 'out', 'coverage', '.unify']);
+const SEARCH_CACHE_MS = 10_000;
+
+interface SearchEntry extends WorkspaceSearchResult {
+  modified: number;
+}
+
+interface SearchCache {
+  at: number;
+  entries: SearchEntry[];
+}
+
+const searchCaches = new Map<string, SearchCache>();
+
+function modifiedAt(file: string): number {
+  try {
+    return fs.statSync(file).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * One walk of the project, cached briefly: `@` typing sends a request per keystroke, and the file
+ * list changes far more slowly than the query.
+ */
+function searchEntries(root: string): SearchEntry[] {
+  const cached = searchCaches.get(root);
+  const now = Date.now();
+  if (cached && now - cached.at < SEARCH_CACHE_MS) return cached.entries;
+  const entries: SearchEntry[] = [];
+  const ignore = new GitIgnore(root);
+  ignore.refresh();
+  let visited = 0;
+  const walk = (directory: string, depth: number): void => {
+    if (visited >= MAX_SEARCH_FILES || depth > MAX_SEARCH_DEPTH) return;
+    let dirents: fs.Dirent[];
+    try {
+      dirents = fs.readdirSync(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of dirents) {
+      if (visited >= MAX_SEARCH_FILES) return;
+      if (entry.isSymbolicLink()) continue;
+      const full = path.join(directory, entry.name);
+      const relative = relativeToWorkspace(root, full);
+      if (entry.isDirectory()) {
+        if (SEARCH_IGNORED.has(entry.name) || ignore.ignores(relative, true)) continue;
+        visited += 1;
+        entries.push({ path: `${relative}/`, kind: 'folder', modified: modifiedAt(full) });
+        walk(full, depth + 1);
+        continue;
+      }
+      if (!entry.isFile() || ignore.ignores(relative, false)) continue;
+      visited += 1;
+      entries.push({ path: relative, kind: 'file', modified: modifiedAt(full) });
+    }
+  };
+  walk(root, 0);
+  if (searchCaches.size >= 8) searchCaches.clear();
+  searchCaches.set(root, { at: now, entries });
+  return entries;
+}
+
+/** Whether `needle` appears in `haystack` in order, but not necessarily contiguously. */
+function isSubsequence(haystack: string, needle: string): boolean {
+  let index = 0;
+  for (const character of haystack) {
+    if (character === needle[index]) index += 1;
+    if (index === needle.length) return true;
+  }
+  return !needle.length;
+}
+
+/**
+ * Fuzzy project search for `@` mentions: a file-name prefix beats a file-name substring, which
+ * beats a path substring, which beats a subsequence. Shorter paths win ties; folders are included.
+ * An empty query lists recently modified files.
+ */
+export function searchWorkspaceFiles(root: string | undefined, query: string, limit = 50): WorkspaceSearchResult[] {
+  const base = requireWorkspace(root);
+  const max = Math.min(Math.max(1, Math.trunc(limit) || 50), 500);
+  const entries = searchEntries(base);
+  const needle = query.trim().toLowerCase();
+  if (!needle) {
+    return entries
+      .filter(entry => entry.kind === 'file')
+      .sort((a, b) => b.modified - a.modified || a.path.length - b.path.length || a.path.localeCompare(b.path))
+      .slice(0, max)
+      .map(({ path: file, kind }) => ({ path: file, kind }));
+  }
+  const ranked: { entry: SearchEntry; tier: number }[] = [];
+  for (const entry of entries) {
+    const lower = entry.path.toLowerCase();
+    const name = lower.replace(/\/$/, '').slice(lower.replace(/\/$/, '').lastIndexOf('/') + 1);
+    const tier = name.startsWith(needle) ? 0
+      : name.includes(needle) ? 1
+        : lower.includes(needle) ? 2
+          : isSubsequence(lower, needle) ? 3
+            : -1;
+    if (tier !== -1) ranked.push({ entry, tier });
+  }
+  return ranked
+    .sort((a, b) => a.tier - b.tier || a.entry.path.length - b.entry.path.length || a.entry.path.localeCompare(b.entry.path))
+    .slice(0, max)
+    .map(({ entry }) => ({ path: entry.path, kind: entry.kind }));
+}
+
+/* ---------------------------------------------------------------------------------------------------------------
  * File change notifications
  */
 

@@ -37,6 +37,7 @@ export type {
   SidebarMedia,
   SidebarPage,
   SidebarQuestion,
+  SidebarScheduledPrompt,
   SidebarSubagent,
   SidebarSubagentTool,
   SidebarTimelineItem,

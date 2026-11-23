@@ -13,10 +13,13 @@
  *
  * Feature toggles: Files hides with editor.enabled, Hub with toolpacks.hub (hubEnabled), the rail usage meter
  * with usage.railMeter. When the route on screen turns unavailable, the Shell goes back to chats.
+ * Pop-outs: chats shown in their own window (bridge onPopoutsChanged) close their pane here and never open as
+ * panes; opening one focuses its window instead (shell/layout.ts). A pop-out closing changes nothing here.
+ *
  * While setup shows, the rail, panel and content fade out on the Modal spring (the title bar stays).
  */
-import { createEffect, createSignal, on, Show, type JSX } from 'solid-js';
-import { post } from '../bridge';
+import { createEffect, createSignal, on, onCleanup, Show, type JSX } from 'solid-js';
+import { bridge, post } from '../bridge';
 import { TitleBar } from '../components';
 import { EngineNotice } from '../components/Notice';
 import { ShutdownOverlay } from '../components/ShutdownOverlay';
@@ -31,7 +34,7 @@ import { SetupWizard, shouldShowSetup } from '../screens/setup/SetupWizard';
 import { routeHasScreen, screenFor } from '../screens';
 import { setChatVisibilityCheck, viewState } from '../store';
 import { feature } from '../store/features';
-import { isChatOnScreen, layout, openChats } from './layout';
+import { isChatOnScreen, layout, openChats, setPoppedOutChats } from './layout';
 import { NavRail, type NavRailItem } from './NavRail';
 import { PaneGrid } from './PaneGrid';
 import './shell.css';
@@ -77,6 +80,10 @@ export function Shell(): JSX.Element {
       if (chatId && chatId !== viewState.activeSessionId) post({ type: 'selectSession', sessionId: chatId });
     },
   ));
+
+  // Chats in pop-out windows leave the grid; opening one again focuses its window (layout.openChat).
+  const stopPopouts = bridge().onPopoutsChanged?.(chatIds => setPoppedOutChats(chatIds));
+  if (stopPopouts) onCleanup(stopPopouts);
 
   // A toggle that hides the route on screen (or a persisted route that is off) sends the window back to chats.
   createEffect(() => {

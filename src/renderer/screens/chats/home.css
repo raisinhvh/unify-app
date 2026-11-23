@@ -82,3 +82,9 @@
 .project-picker-open .tree-trailing {
   font-family: var(--font-mono);
 }
+
+/* Scheduled prompts sit just under the Home composer. */
+.home-column .schedule-bar-frame {
+  padding-top: 8px;
+}
+

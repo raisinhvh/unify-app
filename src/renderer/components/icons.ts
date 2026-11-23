@@ -69,6 +69,8 @@ export const icons = {
     path('M13.33 8C13.3295 9.2331 12.9014 10.4279 12.1188 11.3807C11.3361 12.3336 10.2473 12.9857 9.03778 13.2257C7.82828 13.4658 6.57296 13.2791 5.48568 12.6975C4.3984 12.1158 3.54645 11.1751 3.07497 10.0357C2.6035 8.89629 2.54167 7.62867 2.90002 6.44879C3.25838 5.26891 4.01474 4.24979 5.04025 3.56506C6.06576 2.88032 7.29695 2.57234 8.52407 2.69359C9.75119 2.81484 10.8983 3.35781 11.77 4.23L13.33 5.67') +
     path('M13.33 2.33V5.67H10'),
   usage: path('M2.66998 13.33H13.33') + path('M4.66998 10.67V8') + path('M8 10.67V4') + path('M11.33 10.67V6.33'),
+  /** Not in Figma yet: clock for scheduled prompts, drawn in the same stroke style. */
+  clock: '<circle cx="8" cy="8" r="6" ' + stroke + '/>' + path('M8 4.67V8L10 9.33'),
   /** Not in Figma yet: pencil for "edit message", drawn in the same stroke style. */
   edit: path('M11.33 2.67L13.33 4.67L5.33 12.67H3.33V10.67L11.33 2.67Z'),
   /** Not in Figma yet: minus for window controls. */

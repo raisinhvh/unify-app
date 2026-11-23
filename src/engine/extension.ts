@@ -32,6 +32,8 @@ import { compareVersions } from './update/version';
 import { JobHost, JobState } from './goal/types';
 import { addDecision, createJob, runJob } from './goal/runner';
 import { parseApprovalMode, parseSlash, SLASH_COMMANDS } from './slash/registry';
+import { parseScheduleArgs } from './schedule/parse';
+import { ScheduledPrompts } from './schedule/store';
 import { terminateProcessTree } from './runtime/cancellation';
 import { answersByQuestion, formatAnswers, parseQuestions } from './sidebar/questions';
 import { withExplorer, explorerPromptNote, formatExplorerRanges, parseExplorerRanges } from './runtime/explorer';
@@ -64,13 +66,14 @@ import { describePackTools, LOAD_TOOLPACK, loadToolpackTool, packCommands, RUN_T
 import { UnifySidebarProvider, SidebarHostMessage, SidebarWebviewMessage } from './sidebar/provider';
 import { Dictation, normalizeVoiceCommands, VoiceCommand } from './voice/dictation';
 import { installedWhisper, installWhisper, WHISPER_DOWNLOAD_BYTES, WhisperEngine } from './voice/whisperInstall';
-import { ApprovalMode, CursorAccountState, SidebarAccessibility, SidebarExplorerRange, SidebarFeatureKey, SidebarFeatures, SidebarImage, SidebarJob, SidebarMedia, SidebarNameModel, SidebarProject, SidebarQuestion, SidebarSmartAutoRank, SidebarTimelineItem, SidebarSubagent, SidebarSubagentTool, SidebarToolEvent, defaultFeatures, normalizeAccessibility, normalizeCompactTokens, normalizeProcessPriority } from './sidebar/view';
+import { ApprovalMode, CursorAccountState, SidebarAccessibility, SidebarExplorerRange, SidebarFeatureKey, SidebarFeatures, SidebarImage, SidebarJob, SidebarMedia, SidebarNameModel, SidebarProject, SidebarQuestion, SidebarScheduledPrompt, SidebarSmartAutoRank, SidebarTimelineItem, SidebarSubagent, SidebarSubagentTool, SidebarToolEvent, defaultFeatures, normalizeAccessibility, normalizeCompactTokens, normalizeProcessPriority } from './sidebar/view';
 import { allUnifyFeatures, getUnifyFeature, onUnifyFeatureChange, setUnifyFeature, unifyHome } from './unify/settings';
 import { agentBus } from './unify/agentBusImpl';
 import type { AgentBusEvent, AgentInfo, AgentMessage } from './unify/agentBus';
 import { handleUnifyRequest } from './unify/requests';
 import { recordKnowledgeVersion } from './unify/requests/knowledge';
 import { requestPaths } from './unify/requests/state';
+import { searchWorkspaceFiles } from './unify/requests/workspace';
 import { getGithubAuth, clearGithubToken, onGithubAuthChange, refreshGithubAuth, setGithubToken } from './unify/github';
 import type { GithubAuth } from './unify/github';
 import { createShutdownController, ShutdownActivity, ShutdownController } from './unify/power';
@@ -333,6 +336,8 @@ class ExtensionHost implements vscode.Disposable {
   private readonly media = new DiskMediaStore(join(unifyHome(), 'media'));
   /** Images already shown per chat, whatever chats.showYourWork says (TODO 2e). */
   private readonly shownMedia = createShownMediaTracker();
+  /** `/schedule` prompts, global so they survive project switches and restarts. */
+  private readonly scheduled: ScheduledPrompts;
   /** Images a background subagent sent its parent; they ride the parent's next tool result. */
   private readonly pendingParentMedia = new Map<string, { item: MediaItem; shownBy: string; run?: ChildRun }[]>();
   private readonly disposables: vscode.Disposable[] = [];
@@ -386,6 +391,12 @@ class ExtensionHost implements vscode.Disposable {
       post: message => { this.sidebar.postMessage(message as SidebarHostMessage); this.sidebar.setShutdown(this.shutdown.getStatus()); },
     });
     this.disposables.push({ dispose: () => this.shutdown.dispose() });
+    this.scheduled = new ScheduledPrompts(context, {
+      project: () => this.currentProject()?.path,
+      fire: (prompt, images) => { void this.guarded(() => this.deliverScheduledPrompt(prompt, images)); },
+      changed: () => this.postScheduledPrompts(),
+    });
+    this.disposables.push({ dispose: () => this.scheduled.dispose() });
     this.sidebar.setShutdown(this.shutdown.getStatus());
     this.disposables.push({ dispose: onGithubAuthChange(auth => this.setGithub(auth)) });
     void this.refreshGithub();
@@ -2078,6 +2089,24 @@ class ExtensionHost implements vscode.Disposable {
 
   private postQueue(chat: Chat): void {
     this.sidebar.postMessage({ type: 'queueState', sessionId: chat.record.id, items: chat.queue.map(item => item.prompt || '(attachment)') });
+  }
+
+  /** Pushes the current project's pending `/schedule` prompts to the composer. */
+  private postScheduledPrompts(): void {
+    this.sidebar.postMessage({ type: 'scheduledPromptsState', prompts: this.scheduled.list() });
+  }
+
+  /**
+   * Sends a prompt that came due. A chat that still exists gets it with `queue` mode, so a running
+   * turn finishes first; a deleted or missing chat means a new chat, as the New button would make.
+   */
+  private async deliverScheduledPrompt(prompt: SidebarScheduledPrompt, images: SidebarImage[]): Promise<void> {
+    const chatId = prompt.chatId && this.sessions().some(item => item.id === prompt.chatId) && !this.deletedSessions.has(prompt.chatId)
+      ? prompt.chatId
+      : undefined;
+    if (!chatId) await this.newChat();
+    await this.sendPrompt(prompt.prompt, images.length ? images : undefined, undefined, undefined, 'queue', { chatId: chatId || this.active?.id });
+    this.notifyDesktop('Scheduled prompt sent', prompt.prompt.slice(0, 300));
   }
 
   private async sendPrompt(prompt: string, images?: SidebarImage[], queued?: { path: string; mimeType: string; data: string; name: string }[], queuedChatId?: string, mode: 'interrupt' | 'queue' = 'interrupt', options: TurnOptions = {}): Promise<void> {
@@ -4312,11 +4341,15 @@ class ExtensionHost implements vscode.Disposable {
         case 'checkDependencies': await this.refreshDependencies(); break;
         case 'installProvider': await this.installProvider(message.provider); break;
         case 'pageChanged': this.sidebar.setPage(message.page); if (message.page === 'accounts') this.refreshUsage(); if (message.page === 'instructions') await this.refreshInstructions(); break;
-        case 'ready': this.sidebar.setShutdown(this.shutdown.getStatus()); this.sidebar.postMessage({ type: 'usageState', usage: this.usage.snapshot() }); this.refreshUsage(); if (this.active) { this.restoreJob(this.active); this.postJob(this.active); } await this.refreshInstructions(); this.postToolpacks(); this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode }); this.sidebar.postMessage({ type: 'slashCommandsState', commands: SLASH_COMMANDS }); this.refreshCustomize(); this.postUnifyFeatures(); if (this.agentRoster.size) this.sidebar.postMessage({ type: 'agentRoster', agents: [...this.agentRoster.values()] }); this.refreshMemory(); this.sync.post(); this.refreshSubagents(); this.refreshModels(); this.refreshSessions(); await this.refreshAccount(); await this.refreshAccounts(); break;
+        case 'ready': this.sidebar.setShutdown(this.shutdown.getStatus()); this.sidebar.postMessage({ type: 'usageState', usage: this.usage.snapshot() }); this.refreshUsage(); if (this.active) { this.restoreJob(this.active); this.postJob(this.active); } await this.refreshInstructions(); this.postToolpacks(); this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode }); this.sidebar.postMessage({ type: 'slashCommandsState', commands: SLASH_COMMANDS }); this.scheduled.refresh(); this.postScheduledPrompts(); this.refreshCustomize(); this.postUnifyFeatures(); if (this.agentRoster.size) this.sidebar.postMessage({ type: 'agentRoster', agents: [...this.agentRoster.values()] }); this.refreshMemory(); this.sync.post(); this.refreshSubagents(); this.refreshModels(); this.refreshSessions(); await this.refreshAccount(); await this.refreshAccounts(); break;
         case 'sendPrompt': {
           const slash = parseSlash(message.prompt);
           if (slash?.name === 'job') await this.startJob(slash.args, message.images, message.chatId);
-          else if (slash?.name === 'permissions') {
+          else if (slash?.name === 'schedule') {
+            const parsed = parseScheduleArgs(slash.args, new Date());
+            if ('error' in parsed) this.sidebar.postMessage({ type: 'error', message: parsed.error });
+            else this.scheduled.add({ prompt: parsed.prompt, dueAt: parsed.dueAt, chatId: message.chatId, images: message.images });
+          } else if (slash?.name === 'permissions') {
             const mode = slash.args ? parseApprovalMode(slash.args) : undefined;
             if (mode) {
               this.approvalMode = mode;
@@ -4330,6 +4363,32 @@ class ExtensionHost implements vscode.Disposable {
           break;
         }
         case 'unqueue': { const target = this.chats.get(message.sessionId); if (target && Number.isInteger(message.index)) { target.queue.splice(message.index, 1); this.postQueue(target); } break; }
+        case 'cancelProgress': (vscode.window as unknown as { __unifyCancelProgress?: (id: string) => boolean }).__unifyCancelProgress?.(message.id); break;
+        case 'cancelScheduledPrompt': this.scheduled.cancel(message.id); break;
+        case 'loadChat': {
+          // A pop-out window asks for its chat's history; the active chat stays as it is.
+          if (!this.sidebar.resendChat(message.sessionId)) {
+            this.replayTranscript(message.sessionId);
+            const record = this.sessions().find(item => item.id === message.sessionId);
+            if (record?.job) this.postJob(record);
+          }
+          break;
+        }
+        case 'sendScheduledPromptNow': {
+          const item = this.scheduled.take(message.id);
+          if (item) await this.deliverScheduledPrompt(item.prompt, item.images);
+          break;
+        }
+        case 'searchWorkspaceFiles': {
+          const folder = vscode.workspace.workspaceFolders?.[0];
+          let results: ReturnType<typeof searchWorkspaceFiles> = [];
+          if (folder?.uri.scheme === 'file') {
+            try { results = searchWorkspaceFiles(folder.uri.fsPath, message.query, message.limit); }
+            catch (error) { this.output.appendLine(`Workspace file search failed: ${String(error)}`); }
+          }
+          this.sidebar.postMessage({ type: 'workspaceFileResults', requestId: message.requestId, query: message.query, results });
+          break;
+        }
         case 'editMessage': await this.editMessage(message.sessionId, message.entryId, message.text); break;
         case 'readInstruction': this.sidebar.postMessage({ type: 'instructionContent', id: message.id, content: await readInstruction(this.instructionRoots(), message.id) }); break;
         case 'openInstruction': await vscode.window.showTextDocument(vscode.Uri.file(await locateInstruction(this.instructionRoots(), message.id))); break;

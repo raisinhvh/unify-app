@@ -1,0 +1,24 @@
+{
+  "extends": "base",
+  "persisted": {
+    "panelOpen": false,
+    "devComposer": { "target": "home", "text": "/schedule " }
+  },
+  "messages": [
+    {
+      "type": "slashCommandsState",
+      "commands": [
+        { "name": "job", "description": "Plan a checklist from your spec, then work and review until it passes", "usage": "/job <spec>" },
+        { "name": "permissions", "description": "Show or change the approval mode for this workspace", "usage": "/permissions [ask | auto | full]" },
+        { "name": "schedule", "description": "Send a prompt later, after a delay or at a time", "usage": "/schedule <when> <prompt>" }
+      ]
+    },
+    {
+      "type": "scheduledPromptsState",
+      "prompts": [
+        { "id": "sp-1", "prompt": "Run the full test suite and summarise any failures with the file and line", "dueAt": 1795481087656, "createdAt": 1795476167656 },
+        { "id": "sp-2", "prompt": "Check the overnight build logs and open an issue for anything red", "dueAt": 1795536000000, "createdAt": 1795476167656 }
+      ]
+    }
+  ]
+}

@@ -14,7 +14,24 @@ type Listener = (message: HostMessage) => void;
 const messageListeners = new Set<Listener>();
 const uiListeners = new Set<(request: unknown) => void>();
 const maximizedListeners = new Set<(maximized: boolean) => void>();
+const popoutListeners = new Set<(chatIds: string[]) => void>();
 let lastMessage: HostMessage | undefined;
+
+/** Absolute path of the open project folder, read once from the main process. */
+function readProjectPath(): string | undefined {
+  try {
+    const value = ipcRenderer.sendSync('unify:project-path') as unknown;
+    return typeof value === 'string' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const projectPath = readProjectPath();
+
+function popoutChatIds(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+}
 
 ipcRenderer.on('unify:message', (_event, message: HostMessage) => {
   lastMessage = message;
@@ -44,6 +61,11 @@ ipcRenderer.on('unify:maximized', (_event, maximized: boolean) => {
   for (const listener of [...maximizedListeners]) listener(maximized);
 });
 
+ipcRenderer.on('unify:popouts', (_event, chatIds: unknown) => {
+  const ids = popoutChatIds(chatIds);
+  for (const listener of [...popoutListeners]) listener(ids);
+});
+
 const api = {
   post(message: unknown): void {
     ipcRenderer.send('unify:post', message);
@@ -69,6 +91,26 @@ const api = {
 
   platform: process.platform as 'win32' | 'darwin' | 'linux',
 
+  /** Absolute path of the open project folder (main process `projectPath`). */
+  projectPath,
+
+  /** Opens the chat in its own window, or focuses the one already showing it. */
+  popOut(chatId: string): void {
+    if (typeof chatId !== 'string' || !chatId) return;
+    ipcRenderer.send('unify:popout', chatId);
+  },
+
+  /** Chats shown in pop-out windows; the current list arrives right after subscribing. */
+  onPopoutsChanged(listener: (chatIds: string[]) => void): () => void {
+    popoutListeners.add(listener);
+    void ipcRenderer.invoke('unify:popouts-get')
+      .then((ids: unknown) => {
+        if (popoutListeners.has(listener)) listener(popoutChatIds(ids));
+      })
+      .catch((error: unknown) => console.error('[unify] pop-out list failed', error));
+    return () => popoutListeners.delete(listener);
+  },
+
   window: {
     minimize(): void { ipcRenderer.send('unify:window', 'minimize'); },
     maximize(): void { ipcRenderer.send('unify:window', 'maximize'); },
@@ -82,6 +124,18 @@ const api = {
 
   pickFolder(): Promise<string | undefined> {
     return ipcRenderer.invoke('unify:pick-folder') as Promise<string | undefined>;
+  },
+
+  /** Folder picker for "Folder as context"; defaults to the project. */
+  pickContextFolder(): Promise<string | undefined> {
+    return ipcRenderer.invoke('unify:pick-context-folder') as Promise<string | undefined>;
+  },
+
+  /** Screenshot of the primary display, with Unify's windows hidden for the capture. */
+  captureScreen(): Promise<{ dataUrl: string; width: number; height: number } | undefined> {
+    return ipcRenderer.invoke('unify:capture-screen') as Promise<
+      { dataUrl: string; width: number; height: number } | undefined
+    >;
   },
 
   openExternal(url: string): void {
