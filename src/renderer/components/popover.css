@@ -1,0 +1,18 @@
+.popover {
+  position: fixed;
+  z-index: 50;
+  min-width: 160px;
+  max-width: 360px;
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  padding: 4px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-menu);
+  box-shadow: var(--shadow-pop);
+  will-change: transform, opacity;
+}
+
+.popover:focus {
+  outline: none;
+}

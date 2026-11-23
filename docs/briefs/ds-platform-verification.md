@@ -1,0 +1,20 @@
+YOUR FILE LOCKS: ["unify/src/shim/","unify/src/main/","unify/src/preload/","unify/package.json","unify/package-lock.json","unify/run.cmd","unify/run.sh","unify/electron-builder.yml","unify/build/","unify/media/","unify/README.md","unify/.gitignore","unify/scripts/build.mjs","unify/scripts/dev.mjs","unify/scripts/make-package.mjs","unify/scripts/after-pack.js"]
+
+Path note: `unify/` in this working copy is a junction to ../Unify — the same files. Edit through `unify/...` paths (your locks are on those).
+
+You ARE the implementation subagent: Unify PLATFORM + VERIFICATION owner.
+
+Working copy: DSH (C:/Users/User/Documents/Projects/AI Stuff/Programs/DSH). Unify repo: `unify/` (= C:/Users/User/Documents/Projects/AI Stuff/Programs/Unify): an Electron app whose engine (`src/engine/`) is DSH's `src/` copied, running on a vscode API shim (`src/shim/vscode`), Electron main (`src/main`), preload (`src/preload`). Read `unify/ARCHITECTURE.md`, `.dsh/mockups/UNIFY_SPEC.md`, and the original brief `.dsh/briefs-tmp/b2.md` — you take its PHASE 1 (verify). An earlier Deepseek agent built this and was cancelled mid-work; quality unknown. It may have left a staging copy somewhere in DSH or Unify — find it, report it, delete it if it's just a leftover copy (never delete `unify/` or `unify-renderer/` themselves: they are junctions to the real repo).
+
+YOU own (may edit): src/shim/, src/main/, src/preload/, package.json + lock, run.cmd, run.sh, electron-builder.yml, build/, media/, README.md, .gitignore, scripts/build.mjs, scripts/dev.mjs, scripts/make-package.mjs, scripts/after-pack.js. Four other agents are editing src/engine/ (extension.ts, sidebar/, mcp/, runtime/, unify/, hub/) and new test files right now — do NOT edit src/engine/, src/renderer/ or test/; report engine issues instead.
+
+1. Diff `unify/src/engine/` against DSH `src/` (ignore DSH's untracked `*.before-vision-*` files and the new src/engine/unify/ + src/engine/hub/ folders, and ignore in-progress edits by the other agents in extension.ts, sidebar/, mcp/, runtime/oauthCli.ts, runtime/acp.ts, runtime/delegation.ts, summaries/). List every difference with a verdict (justified / suspicious / wrong).
+2. Shim: grep every vscode API the engine uses and check the shim covers it faithfully; no silent no-ops for things that matter (secrets + globalState persistence, webview messaging, commands, workspace folders, file watchers, terminals/processes, OAuth/URI handlers, output channels, configuration incl. onDidChangeConfiguration). Fix gaps.
+3. Electron main/preload: contextIsolation on, nodeIntegration off in renderer, sandbox where possible, single instance lock, window controls, folder picker (`window.unify.pickFolder()`), dev vs dist loading, legacy fallback, desktop Notification IPC (needed for the notifications.desktop feature; expose `window.unify.notify(title, body)` and an engine-side hook the shim can call, document both in your report).
+4. `run.cmd` launches from source; `npm run build` works; electron-builder config: NSIS + portable (win), dmg (mac), AppImage (linux), unsigned with a commented slot for a certificate.
+5. Run the DSH test suite under unify/test (as package.json defines) and report pass/fail; fix failures caused by the shim/platform, report the rest.
+6. Near the END, actually launch the app (run.cmd / electron) and confirm the engine activates and the window loads with no errors in the logs (other agents may still be editing; if a failure is in their files, report it). Kill every electron/vite/node process you started.
+
+Style: match surrounding files, descriptive names, no compressed one-liners in new code. No git commits. Don't write memory.
+
+Report: Phase 1 findings with file:line (what was wrong and what you fixed), the engine-diff verdict list, test + build + launch results, anything needing the user's decision.

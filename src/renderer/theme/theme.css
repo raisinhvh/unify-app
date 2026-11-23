@@ -1,0 +1,164 @@
+/*
+ * Base styles and the type scale (Figma text styles unify/*).
+ * Colours come from variables written by theme/index.ts; these defaults are Walnut Dark so first paint matches.
+ */
+:root {
+  --bg: #0D0B09;
+  --surface: #13100E;
+  --raised: #1B1714;
+  --hover: #241F1B;
+  --border: #2E2722;
+  --text: #EFEAE4;
+  --text2: #A89E94;
+  --text3: #6C625A;
+  --accent: #EFE6DA;
+  --accent-light: #EFE6DA;
+  --on-accent: #0D0B09;
+  --add: #4CB862;
+  --del: #E5534B;
+  --warn: #D9A441;
+  --add-tint: rgba(76, 184, 98, 0.13);
+  --del-tint: rgba(229, 83, 75, 0.13);
+  --accent-tint: rgba(201, 164, 101, 0.10);
+  --wood-light: #C9A465;
+  --wood-dark: #8B6A35;
+  --loader-dim: #4A3A28;
+
+  /* fonts.ts sets --font-ui and --font-code at runtime. Weights are the intended ones (spec); a UI font without
+     them falls back to its nearest real weight. */
+  --font-ui: ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-code, ui-monospace, monospace);
+  --weight-display: 900;
+  --weight-title: 800;
+  --weight-heading: 700;
+  --weight-label: 500;
+
+  --radius-control: 6px;
+  --radius-menu: 8px;
+  --radius-row: 6px;
+  --radius-pane: 12px;
+  --rail-width: 56px;
+  --panel-width: 280px;
+  --titlebar-height: 32px;
+
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.36), 0 2px 6px rgba(0, 0, 0, 0.24);
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 1px solid var(--text3);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: var(--accent-tint);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border: 3px solid transparent;
+  border-radius: 6px;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Type scale */
+.type-display {
+  font-weight: var(--weight-display);
+  font-size: 56px;
+  line-height: 56px;
+  letter-spacing: -0.03em;
+}
+
+.type-title {
+  font-weight: var(--weight-title);
+  font-size: 20px;
+  line-height: 28px;
+  letter-spacing: -0.015em;
+}
+
+.type-heading {
+  font-weight: var(--weight-heading);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.type-body {
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.type-label {
+  font-weight: var(--weight-label);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.type-caption {
+  font-weight: 400;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.type-mono {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* Theme crossfade (View Transitions). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 240ms;
+  animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}

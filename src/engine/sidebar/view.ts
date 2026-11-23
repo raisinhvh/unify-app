@@ -1,0 +1,680 @@
+import { randomBytes } from 'node:crypto';
+import type { CriterionStatus, JobPhase } from '../goal/types';
+import { SLASH_COMMANDS } from '../slash/registry';
+import { RAIL_FALLBACK_ICONS } from '../runtime/naming';
+import { defaultVoiceCommands, VoiceCommand, VoicePart } from '../voice/dictation';
+import type { AgentInfo, AgentMessage } from '../unify/agentBus';
+
+export interface SidebarImage { name: string; mimeType: string; data: string }
+
+/** Workspace folder a chat belongs to, used to group chats in the activity rail. */
+export interface SidebarProject {
+  /** Folder name, e.g. "Unify". */
+  name: string;
+  /** Absolute folder path. */
+  path: string;
+}
+
+/** Subscription plan shown with the account usage numbers. */
+export interface SidebarPlan {
+  /** Plan name, e.g. "Pro". */
+  name: string;
+  /** Monthly price in US dollars; 0 for free plans. */
+  monthlyUsd: number;
+}
+export type ApprovalMode = 'ask' | 'auto' | 'full';
+export type SidebarPage = 'chat' | 'accounts' | 'models' | 'subagents' | 'instructions' | 'toolcalls' | 'customize' | 'accessibility' | 'experimental' | 'sync';
+
+/** GitHub config sync status for the Sync page. */
+export interface SidebarSync {
+  connected: boolean;
+  account?: string;
+  /** The private dsh-sync repository: owner/name and its GitHub page. */
+  repo?: string;
+  repoUrl?: string;
+  auto: boolean;
+  lastSync?: number;
+  busy?: 'connecting' | 'uploading' | 'downloading' | 'checking';
+  error?: string;
+  /** Items changed on both this PC and GitHub, waiting for a choice. Empty means the whole config. */
+  conflict?: string[];
+}
+
+/** Display preferences from the Accessibility page. Reduce motion stays a feature switch (`dsh.features.reduceMotion`). */
+export interface SidebarAccessibility {
+  textScale: number;
+  lineSpacing: 'normal' | 'relaxed' | 'loose';
+  spacing: 'compact' | 'default' | 'roomy';
+  letterSpacing: 'normal' | 'wide';
+  highContrast: boolean;
+  largeTargets: boolean;
+  underlineLinks: boolean;
+}
+export const TEXT_SCALE_MIN = 0.85;
+export const TEXT_SCALE_MAX = 1.6;
+export const defaultAccessibility = (): SidebarAccessibility => ({
+  textScale: 1, lineSpacing: 'normal', spacing: 'default', letterSpacing: 'normal', highContrast: false, largeTargets: false, underlineLinks: false,
+});
+const LINE_SCALES = { normal: 1, relaxed: 1.2, loose: 1.4 } as const;
+const SPACE_SCALES = { compact: 0.75, default: 1, roomy: 1.35 } as const;
+const LETTER_SPACINGS = { normal: 'normal', wide: '0.04em' } as const;
+
+/** Accepts any stored value and returns a complete, in-range preference set. */
+export function normalizeAccessibility(value: unknown): SidebarAccessibility {
+  const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const result = defaultAccessibility();
+  const scale = Number(input.textScale);
+  if (Number.isFinite(scale)) result.textScale = Math.round(Math.min(TEXT_SCALE_MAX, Math.max(TEXT_SCALE_MIN, scale)) * 100) / 100;
+  const pick = <T extends string>(item: unknown, options: Record<T, unknown>, fallback: T): T => typeof item === 'string' && Object.hasOwn(options, item) ? item as T : fallback;
+  result.lineSpacing = pick(input.lineSpacing, LINE_SCALES, result.lineSpacing);
+  result.spacing = pick(input.spacing, SPACE_SCALES, result.spacing);
+  result.letterSpacing = pick(input.letterSpacing, LETTER_SPACINGS, result.letterSpacing);
+  for (const key of ['highContrast', 'largeTargets', 'underlineLinks'] as const) result[key] = input[key] === true;
+  return result;
+}
+
+/** CSS custom properties and body classes for a preference set; sidebar.js applies the same mapping live. */
+export function accessibilityStyle(value: SidebarAccessibility): { vars: Record<string, string>; classes: string[] } {
+  return {
+    vars: {
+      '--text-scale': String(value.textScale),
+      '--line-scale': String(LINE_SCALES[value.lineSpacing]),
+      '--space-scale': String(SPACE_SCALES[value.spacing]),
+      '--letter-spacing': LETTER_SPACINGS[value.letterSpacing],
+    },
+    classes: [value.highContrast ? 'a11y-contrast' : '', value.largeTargets ? 'a11y-targets' : '', value.underlineLinks ? 'a11y-underline' : ''].filter(Boolean),
+  };
+}
+export type SidebarFeatureKey = 'activityRail' | 'autoName' | 'shareRules' | 'editorContext' | 'reduceMotion' | 'updateChecks' | 'mirror' | 'reviewAgent' | 'fileSummaries' | 'smartAuto'
+  | 'autoCompact' | 'batching' | 'trimTools' | 'voice' | 'rustTools' | 'powershellSpeedups';
+export type SidebarFeatures = Record<SidebarFeatureKey, boolean>;
+/** CPU priority for agent harnesses and the commands they run (dsh.runtime.processPriority). */
+export type SidebarProcessPriority = 'normal' | 'aboveNormal' | 'high';
+export const PROCESS_PRIORITIES: readonly SidebarProcessPriority[] = ['normal', 'aboveNormal', 'high'];
+export const normalizeProcessPriority = (value: unknown): SidebarProcessPriority =>
+  PROCESS_PRIORITIES.includes(value as SidebarProcessPriority) ? value as SidebarProcessPriority : 'normal';
+/** Model that writes chat titles; an empty model keeps the first-message title. */
+export interface SidebarNameModel { model?: string; effort?: string; speed?: string }
+/** One entry of the Smart Auto ranking; the list runs from smartest to least smart. */
+export interface SidebarSmartAutoRank { model: string; effort?: string; note?: string }
+/** A slash command offered in the composer menu. */
+export interface SidebarSlashCommand { name: string; description: string; usage: string }
+/** A /job run as shown in the job bar at the top of the chat. */
+export interface SidebarJob {
+  phase: JobPhase;
+  round: number;
+  maxRounds: number;
+  stopReason?: string;
+  criteria: { id: string; text: string; source: string; check?: string; status: CriterionStatus; evidence?: string }[];
+}
+
+type SidebarWebviewPayload =
+  | { type: 'ready' }
+  | { type: 'pageChanged'; page: SidebarPage }
+  | { type: 'sendPrompt'; prompt: string; images?: SidebarImage[]; mode?: 'interrupt' | 'queue' }
+  | { type: 'unqueue'; sessionId: string; index: number }
+  | { type: 'editMessage'; sessionId: string; entryId: string; text: string }
+  | { type: 'readInstruction'; id: string }
+  | { type: 'openInstruction'; id: string }
+  | { type: 'saveInstruction'; id?: string; kind: 'rule' | 'skill'; scope: 'workspace' | 'global'; file?: string; name?: string; description?: string; content: string }
+  | { type: 'removeInstruction'; id: string }
+  | { type: 'setApproval'; mode: ApprovalMode }
+  | { type: 'approvalResponse'; id: string; allow: boolean; /** Also persist an allow rule for this project and command prefix. */ always?: boolean }
+  | { type: 'questionResponse'; id: string; answers: string[] | null }
+  | { type: 'pickToolpack' }
+  | { type: 'toolpackAction'; id: string; action: 'enable' | 'disable' | 'reload' | 'remove' }
+  | { type: 'cancel' }
+  | { type: 'newSession'; project?: SidebarProject }
+  | { type: 'selectSession'; sessionId: string }
+  | { type: 'renameSession'; sessionId: string; name: string }
+  | { type: 'deleteSession'; sessionId: string }
+  | { type: 'selectModel'; modelId: string }
+  | { type: 'selectSpeed'; value: string }
+  | { type: 'selectEffort'; value: string }
+  | { type: 'saveModel'; originalName?: string; name: string; provider: string; backend: string; account: string; speedOptions: { label: string; backend: string }[]; effortOptions: string[] }
+  | { type: 'removeModel'; name: string }
+  | { type: 'saveSubagent'; originalName?: string; profile: SidebarSubagentProfile }
+  | { type: 'removeSubagent'; name: string }
+  | { type: 'setFeature'; key: SidebarFeatureKey; enabled: boolean }
+  /** Unify feature values (see engine/unify/settings.ts); distinct from DSH's own `setFeature`. */
+  | { type: 'setUnifyFeature'; id: string; value: boolean | number | string }
+  | { type: 'saveNameModel'; nameModel: SidebarNameModel }
+  | { type: 'saveReviewModel'; reviewModel: SidebarNameModel }
+  | { type: 'saveSummaryModel'; summaryModel: SidebarNameModel }
+  | { type: 'saveDeciderModel'; deciderModel: SidebarNameModel }
+  | { type: 'saveExplorerModel'; explorerModel: SidebarNameModel }
+  | { type: 'saveSmartAutoRanks'; ranks: SidebarSmartAutoRank[] }
+  | { type: 'saveAutoCompactTokens'; tokens: number }
+  | { type: 'saveProcessPriority'; priority: SidebarProcessPriority }
+  | { type: 'setMemory'; enabled: boolean }
+  | { type: 'openMemoryFolder' }
+  | { type: 'saveAccessibility'; accessibility: SidebarAccessibility }
+  | { type: 'deleteAllSessions' }
+  | { type: 'syncAction'; action: 'connect' | 'upload' | 'download' | 'disconnect' | 'openRepo' | 'keepRemote' | 'keepLocal' }
+  | { type: 'setSyncAuto'; enabled: boolean }
+  | { type: 'manageAccounts' }
+  | { type: 'refreshAccounts' }
+  | { type: 'refreshUsage'; accountId?: string }
+  | { type: 'reauthAccount'; accountId: string }
+  | { type: 'replaceAccountKey'; accountId: string; secret: string }
+  | { type: 'openCliSetting'; provider: 'claude-cli' }
+  | { type: 'checkDependencies' }
+  | { type: 'installProvider'; provider: string }
+  | { type: 'viewProviderUsage'; provider: string }
+  | { type: 'addAccount'; provider: string; label: string; email?: string; secret: string; /** Required for `self-hosted`: the OpenAI-compatible base URL. */ baseURL?: string }
+  | { type: 'listProviderModels'; accountId: string }
+  | { type: 'addOAuthAccount'; provider: 'codex-cli' | 'claude-cli'; label: string; email?: string }
+  | { type: 'setDefaultAccount'; provider: string; accountId: string }
+  | { type: 'removeAccount'; accountId: string }
+  | { type: 'cursorLogin' }
+  | { type: 'cursorLogout' }
+  | { type: 'openAuthUrl'; url: string }
+  | { type: 'openFile'; path: string; line?: number; column?: number }
+  | { type: 'openMedia'; file: string }
+  /** Unify power: cancel the "shut down when done" countdown. */
+  | { type: 'cancelShutdown' }
+  /** Unify GitHub sign-in: re-check `gh auth token`, save a pasted personal access token, or forget the pasted token. */
+  | { type: 'githubRefresh' }
+  | { type: 'githubSetToken'; token: string }
+  | { type: 'githubSignOut' }
+  /**
+   * Unify editor bridge: the Files editor reports what is open so the shim's `activeTextEditor` / `tabGroups`
+   * (and the agent's editor context) mirror it. `active` null = nothing open. Paths are absolute.
+   */
+  | { type: 'editorState'; active: { path: string; line?: number; column?: number; selection?: { startLine: number; startColumn: number; endLine: number; endColumn: number } } | null; open: string[]; dirty?: string[] }
+  | { type: 'openDiff'; diffId: string }
+  | { type: 'applyDiff'; diffId: string }
+  | { type: 'rejectDiff'; diffId: string }
+  | { type: 'applyAll' }
+  | { type: 'rejectAll' }
+  | { type: 'reviewAll' }
+  | { type: 'openTerminal' }
+  | { type: 'voiceStart' }
+  | { type: 'voiceStop' }
+  | { type: 'saveVoiceCommands'; commands: VoiceCommand[] };
+
+/**
+ * UI → engine messages. `chatId` names the chat a message concerns; omitted means the active chat.
+ * Model, speed and effort choices are global engine settings, so their chatId is ignored.
+ */
+export type SidebarWebviewMessage = SidebarWebviewPayload & { chatId?: string };
+
+export interface SidebarSubagentProfile {
+  name: string;
+  description?: string;
+  model: string;
+  effort?: string;
+  speed?: string;
+  mode: 'read-only' | 'edit';
+  /** Whether the subagent gets custom toolpack tools. Missing means yes. */
+  tools?: boolean;
+}
+
+export interface SidebarInstruction {
+  id: string;
+  kind: 'rule' | 'skill';
+  scope: 'workspace' | 'global';
+  name: string;
+  path: string;
+  description?: string;
+}
+
+export interface SidebarToolpack {
+  id: string;
+  description: string;
+  enabled: boolean;
+  state: 'starting' | 'running' | 'stopped' | 'error';
+  status: string;
+  error?: string;
+  tools: { name: string; description: string }[];
+  logs: string[];
+}
+
+export interface SidebarQuestion {
+  question: string;
+  header?: string;
+  options: { label: string; description?: string }[];
+  /** The user may pick several options; their labels are joined with ", ". */
+  multiSelect?: boolean;
+}
+
+export interface SidebarSession {
+  id: string;
+  name: string;
+  /** Workspace folder the chat belongs to; chats are grouped by it in the rail. */
+  project?: SidebarProject;
+  /** Material Symbols icon name the activity rail shows for this chat. */
+  icon?: string;
+  updatedAt?: number;
+  messageCount?: number;
+  contextTokens?: number;
+  explorerTokens?: number;
+}
+
+/** A file an agent sent into the chat; `file` is relative to the sidebar's media base. */
+export interface SidebarMedia { name: string; mimeType: string; file: string }
+export type SidebarMediaStatus = 'pending' | 'failed';
+
+export interface SidebarModel {
+  id: string;
+  name: string;
+  provider: string;
+  backend: string;
+  account?: string;
+  enabled?: boolean;
+  speedOptions?: { label: string; backend: string }[];
+  effortOptions?: string[];
+}
+
+export interface SidebarUsageMetric { label: string; value: string; usedPercent?: number; resetsAt?: number }
+export interface SidebarAccountUsage { status: 'ready' | 'unavailable' | 'error'; metrics: SidebarUsageMetric[]; detail?: string; fix?: 'retry' | 'signin' | 'key' | 'cli' | 'browser'; fetchedAt: number; loading?: boolean; /** Subscription plan, when the provider reports one. */ plan?: SidebarPlan }
+
+export interface SidebarAccount {
+  id: string;
+  provider: string;
+  label: string;
+  email?: string;
+  isDefault: boolean;
+  authType?: 'oauth' | 'api-key';
+  /** Self-hosted accounts: the OpenAI-compatible base URL the account points at. */
+  baseURL?: string;
+}
+
+export interface SidebarDependency {
+  provider: string;
+  installed: boolean;
+  installing: boolean;
+  error?: string;
+}
+
+export interface CursorAccountState {
+  connected: boolean;
+  label: string;
+  busy?: boolean;
+  authUrl?: string;
+  error?: string;
+}
+
+/** Whether memory is on, where global memory lives on this PC, how many files it holds, and whether Sync backs it up. */
+export interface SidebarMemory { enabled: boolean; folder: string; notes: number; synced: boolean }
+
+/**
+ * Unify: a generic file tool (Read, Grep, Write, Edit, batch read_file/search/list_dir) used on the app's own data.
+ * The engine sets it (never the renderer); the row shows `label` (+ muted `detail`) and still expands to the raw call.
+ * Not set for the user's project files, for dedicated tools, or when `chat.friendlyInternalRows` is off.
+ *   history.refresh: reading saved transcript parts ("Refreshing earlier conversation")
+ *   memory.read:     reading memory notes or the memory index ("Checking memory")
+ *   memory.write:    writing or editing them ("Saving to memory")
+ */
+export type SidebarInternalToolKind = 'history.refresh' | 'memory.read' | 'memory.write';
+export interface SidebarInternalTool { kind: SidebarInternalToolKind; label: string; detail?: string }
+
+export interface SidebarToolEvent {
+  id: string;
+  kind: 'read' | 'search' | 'shell' | 'edit' | 'subagent' | 'other';
+  title: string;
+  detail?: string;
+  /** The whole call, shown on hover. */
+  full?: string;
+  state: 'running' | 'complete' | 'error' | 'cancelled';
+  /** Calls inside one batch tool call, shown nested under it. */
+  children?: { title: string; detail?: string; full?: string; kind?: SidebarToolEvent['kind']; state: 'running' | 'complete' | 'error'; internal?: SidebarInternalTool }[];
+  /** Unify: see SidebarInternalTool. */
+  internal?: SidebarInternalTool;
+  /** Unify (docs/contracts/media.md): images this call gave the agent. */
+  media?: SidebarMedia[];
+}
+
+/** A subagent's tool call, shown like the main agent's tool rows. */
+export interface SidebarSubagentTool { title: string; detail?: string; full?: string; kind: SidebarToolEvent['kind']; internal?: SidebarInternalTool; media?: SidebarMedia[] }
+
+/** Unify: one code range the explorer returned (1-based, inclusive). Overlaps are merged, about 12 at most. */
+export interface SidebarExplorerRange { path: string; startLine: number; endLine: number; why?: string }
+
+export interface SidebarSubagent {
+  id: string;
+  title: string;
+  model?: string;
+  prompt?: string;
+  files?: string[];
+  state: 'running' | 'complete' | 'error' | 'cancelled';
+  /** Started with delegate_task: DSH reports its final state, and it can outlive its parent's turn, so cancelling that turn does not mark it cancelled. */
+  delegated?: boolean;
+  messages: { id: string; role: 'assistant' | 'tool'; text: string; tool?: SidebarSubagentTool; media?: SidebarMedia[] }[];
+  /** Unify: the delegate profile name. 'explorer' renders as an inline "Explored" row (no tab, strip, roster badge or subagent count). */
+  profile?: string;
+  /** Unify, explorer only: the ranges parsed from its answer, set when it completes. */
+  ranges?: SidebarExplorerRange[];
+  /** Unify, explorer only: tokens it used, shown under the parent agent's usage line. */
+  tokens?: number;
+  /** Unify (docs/contracts/media.md): images the subagent sent to its parent, in order. */
+  sentToParent?: SidebarMedia[];
+}
+
+export interface SidebarDiff {
+  id: string;
+  path: string;
+  summary: string;
+  additions?: number;
+  deletions?: number;
+  state?: 'pending' | 'applied' | 'rejected';
+}
+
+export type SidebarTimelineItem =
+  | { id: string; kind: 'message'; role: 'user' | 'assistant'; text: string }
+  | { id: string; kind: 'tool'; event: SidebarToolEvent }
+  | { id: string; kind: 'subagent'; agentId: string }
+  | { id: string; kind: 'diff'; diff: SidebarDiff }
+  | { id: string; kind: 'approval'; title: string; detail: string; status: 'pending' | 'allowed' | 'rejected' }
+  | { id: string; kind: 'question'; questions: SidebarQuestion[]; status: 'pending' | 'answered' | 'skipped'; answers?: string[] }
+  /**
+   * Generated media shows as a small thumbnail that expands into a full view, instead of inline at full width.
+   * Its box appears with status pending while the image is made, and the same entry is updated when it is ready or failed.
+   */
+  | { id: string; kind: 'media'; caption?: string; items: SidebarMedia[]; generated?: boolean; status?: SidebarMediaStatus }
+  /** A short line from DSH itself, such as the model Smart Auto picked. */
+  | { id: string; kind: 'note'; icon?: string; text: string }
+  /** Unify: an agent-to-agent message that involves this chat's agents ("who → who"). Shown behind agents.messaging.showInChat. */
+  | { id: string; kind: 'agentMessage'; message: AgentMessage };
+
+type SidebarHostPayload =
+  | { type: 'timelineState'; sessionId: string; timeline: SidebarTimelineItem[]; subagents: Record<string, SidebarSubagent> }
+  | { type: 'sessionState'; sessions: SidebarSession[]; activeSessionId?: string }
+  | { type: 'sessionDeleted'; sessionId: string }
+  | { type: 'queueState'; sessionId: string; items: string[] }
+  | { type: 'modelState'; models: SidebarModel[]; cursorBackends?: { value: string; name: string }[]; selectedModelId?: string; selectedSpeed?: string; selectedEffort?: string }
+  | { type: 'accountState'; provider: string; label: string; connected: boolean }
+  | { type: 'accountsState'; accounts: SidebarAccount[]; cursor: CursorAccountState }
+  | { type: 'providerModels'; accountId: string; models: string[]; error?: string }
+  | { type: 'usageState'; usage: Record<string, SidebarAccountUsage> }
+  | { type: 'accountSaved' }
+  | { type: 'dependencyState'; providers: SidebarDependency[] }
+  | { type: 'approvalState'; mode: ApprovalMode }
+  /** Every Unify feature value (engine defaults included) after a change from any window. */
+  | { type: 'unifyFeaturesState'; features: Record<string, boolean | number | string> }
+  | { type: 'approvalRequest'; sessionId: string; id: string; title: string; detail: string }
+  | { type: 'approvalResolved'; sessionId: string; id: string; allowed: boolean }
+  | { type: 'questionRequest'; sessionId: string; id: string; questions: SidebarQuestion[] }
+  | { type: 'questionResolved'; sessionId: string; id: string; answers: string[] | null }
+  | { type: 'toolpacksState'; packs: SidebarToolpack[]; error?: string }
+  | { type: 'modelSaved' }
+  | { type: 'modelRemoveFailed'; name: string }
+  | { type: 'subagentProfilesState'; profiles: SidebarSubagentProfile[] }
+  | { type: 'subagentSaved' }
+  | { type: 'memoryState'; memory: SidebarMemory }
+  | { type: 'customizeState'; features: SidebarFeatures; nameModel: SidebarNameModel; reviewModel: SidebarNameModel; summaryModel: SidebarNameModel; deciderModel: SidebarNameModel; explorerModel: SidebarNameModel; smartAutoRanks: SidebarSmartAutoRank[]; accessibility: SidebarAccessibility; autoCompactTokens: number; voiceCommands: VoiceCommand[]; voiceAvailable: boolean; processPriority: SidebarProcessPriority; /** Unify feature values; omitted pushes leave them unchanged. */ unifyFeatures?: Record<string, boolean | number | string> }
+  /** Dictation started or stopped; `error` explains a stop the user did not ask for. */
+  | { type: 'voiceState'; listening: boolean; error?: string }
+  /** Words heard so far in the current phrase; replaced by the next hypothesis or result. */
+  | { type: 'voiceHypothesis'; text: string }
+  | { type: 'voiceResult'; parts: VoicePart[] }
+  | { type: 'jobState'; sessionId: string; job: SidebarJob | null }
+  | { type: 'syncState'; sync: SidebarSync }
+  | { type: 'instructionsState'; items: SidebarInstruction[] }
+  | { type: 'instructionContent'; id: string; content: string }
+  | { type: 'instructionSaved' }
+  | { type: 'showPage'; page: SidebarPage }
+  | { type: 'assistantDelta'; sessionId: string; text: string; entryId?: string }
+  | { type: 'assistantMessage'; sessionId: string; text: string; timestamp?: number }
+  | { type: 'userMessage'; sessionId: string; text: string; entryId?: string }
+  /** Adds a media entry, or replaces the items and status of the entry with this id. */
+  | { type: 'mediaMessage'; sessionId: string; entryId: string; caption?: string; items: SidebarMedia[]; generated?: boolean; status?: SidebarMediaStatus }
+  | { type: 'noteMessage'; sessionId: string; entryId: string; icon?: string; text: string }
+  | { type: 'runState'; sessionId: string; state: 'idle' | 'thinking' | 'tool' | 'cancelling'; label?: string }
+  | { type: 'toolEvent'; event: SidebarToolEvent; sessionId?: string; entryId?: string }
+  | { type: 'toolState'; tools: SidebarToolEvent[] }
+  | { type: 'subagentEvent'; sessionId: string; agentId: string; title?: string; model?: string; prompt?: string; files?: string[]; state?: SidebarSubagent['state']; delegated?: boolean; text?: string; messageId?: string; role?: 'assistant' | 'tool'; tool?: SidebarSubagentTool; media?: SidebarMedia[]; sentToParent?: SidebarMedia[]; profile?: string; ranges?: SidebarExplorerRange[]; tokens?: number }
+  | { type: 'diff'; diff: SidebarDiff }
+  | { type: 'diffState'; diffs: SidebarDiff[] }
+  /** A message another agent sent to the agent of the chat named by chatId. */
+  | { type: 'agentMessage'; chatId: string; message: AgentMessage }
+  /** The roster of running agents changed; every chat pane sees the same list. */
+  | { type: 'agentRoster'; agents: AgentInfo[] }
+  /** Unify power (src/engine/unify/power.ts): "shut down when all tasks finish". */
+  | { type: 'shutdownArmed'; armed: boolean }
+  | { type: 'shutdownCountdown'; secondsLeft: number }
+  | { type: 'shutdownCancelled' }
+  /** Work resumed during the countdown; it waits for idle again. */
+  | { type: 'shutdownWaiting' }
+  | { type: 'shutdownFailed'; error: string }
+  /**
+   * Unify editor bridge: the engine asks the Files editor to open a file (optionally at a range) or a diff.
+   * Backs `vscode.window.showTextDocument` and `vscode.diff` in the shim.
+   */
+  | { type: 'editorOpen'; path: string; startLine?: number; endLine?: number }
+  | { type: 'editorDiff'; title: string; leftPath: string; rightPath: string; leftLabel?: string; rightLabel?: string }
+  | { type: 'error'; message: string };
+
+/** Engine → UI messages. Chat-specific ones carry sessionId, or chatId when they concern an agent. */
+export type SidebarHostMessage = SidebarHostPayload & { chatId?: string };
+
+export interface SidebarViewState {
+  page: SidebarPage;
+  sessions: SidebarSession[];
+  activeSessionId?: string;
+  models: SidebarModel[];
+  selectedModelId?: string;
+  selectedSpeed?: string;
+  selectedEffort?: string;
+  providerLabel: string;
+  accountLabel: string;
+  accountConnected: boolean;
+  accounts: SidebarAccount[];
+  usage: Record<string, SidebarAccountUsage>;
+  dependencies: SidebarDependency[];
+  cursor: CursorAccountState;
+  messages: Record<string, { role: 'user' | 'assistant'; text: string }[]>;
+  timeline: Record<string, SidebarTimelineItem[]>;
+  tools: SidebarToolEvent[];
+  subagents: Record<string, Record<string, SidebarSubagent>>;
+  diffs: SidebarDiff[];
+  runStates: Record<string, { state: 'idle' | 'thinking' | 'tool' | 'cancelling'; label?: string }>;
+  queues: Record<string, string[]>;
+  approvalMode: ApprovalMode;
+  subagentProfiles: SidebarSubagentProfile[];
+  instructions: SidebarInstruction[];
+  toolpacks: SidebarToolpack[];
+  toolpackError?: string;
+  features: SidebarFeatures;
+  /** Unify feature values by id (engine/unify/settings.ts), separate from DSH's `features`. */
+  unifyFeatures: Record<string, boolean | number | string>;
+  /** Unify power status for the title-bar indicator after a reload (shutdownController.getStatus()). */
+  shutdown?: { armed: boolean; phase: string; secondsLeft?: number };
+  /** Unify GitHub sign-in (gh CLI token, else a pasted token). Used by Sync and Hub publishing. */
+  github?: { signedIn: boolean; login?: string; source?: 'gh' | 'token'; error?: string };
+  nameModel: SidebarNameModel;
+  reviewModel: SidebarNameModel;
+  summaryModel: SidebarNameModel;
+  deciderModel: SidebarNameModel;
+  explorerModel: SidebarNameModel;
+  smartAutoRanks: SidebarSmartAutoRank[];
+  autoCompactTokens: number;
+  voiceCommands: VoiceCommand[];
+  /** Voice input needs Windows speech recognition. */
+  voiceAvailable: boolean;
+  processPriority: SidebarProcessPriority;
+  slashCommands: SidebarSlashCommand[];
+  jobs: Record<string, SidebarJob>;
+  accessibility: SidebarAccessibility;
+  sync: SidebarSync;
+  /** Icons the activity rail can switch a chat to when another chat on the rail already shows its icon. */
+  railIcons: string[];
+  /** Webview URL of the folder agent-sent media is copied to, without a trailing slash. */
+  mediaBase?: string;
+  error?: string;
+}
+
+export const defaultFeatures = (): SidebarFeatures => ({ activityRail: true, autoName: true, shareRules: true, editorContext: true, reduceMotion: false, updateChecks: true, mirror: true, reviewAgent: false, fileSummaries: true, smartAuto: false, autoCompact: false, batching: false, trimTools: true, voice: true, rustTools: true, powershellSpeedups: true });
+
+/** Auto compaction threshold: tokens of conversation, not counting the session's system prompt and tools. */
+export const DEFAULT_COMPACT_TOKENS = 70_000;
+export const MIN_COMPACT_TOKENS = 20_000;
+export const MAX_COMPACT_TOKENS = 500_000;
+export function normalizeCompactTokens(value: unknown): number {
+  const number = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  if (!Number.isFinite(number)) return DEFAULT_COMPACT_TOKENS;
+  return Math.min(MAX_COMPACT_TOKENS, Math.max(MIN_COMPACT_TOKENS, Math.round(number / 1000) * 1000));
+}
+
+export const initialSidebarState = (): SidebarViewState => ({
+  page: 'chat', approvalMode: 'ask', subagentProfiles: [], instructions: [], toolpacks: [], features: defaultFeatures(), unifyFeatures: {}, nameModel: {}, reviewModel: {}, summaryModel: {}, deciderModel: {}, explorerModel: {}, smartAutoRanks: [], autoCompactTokens: DEFAULT_COMPACT_TOKENS, voiceCommands: defaultVoiceCommands(), voiceAvailable: process.platform === 'win32', processPriority: 'normal', slashCommands: SLASH_COMMANDS.map(command => ({ ...command })), jobs: {}, accessibility: defaultAccessibility(), sync: { connected: false, auto: true }, railIcons: [...RAIL_FALLBACK_ICONS], sessions: [], models: [], providerLabel: 'No provider', accountLabel: 'No account connected',
+  accountConnected: false, accounts: [], usage: {}, dependencies: [], cursor: { connected: false, label: 'Not connected' },
+  messages: {}, timeline: {}, tools: [], subagents: {}, diffs: [], runStates: {}, queues: {},
+});
+
+export function escapeHtml(value: unknown): string {
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+export interface SidebarAssets { stylesheet: string; script: string; font: string; markdown?: string }
+
+export function getSidebarHtml(
+  webview: { cspSource: string },
+  state: SidebarViewState = initialSidebarState(),
+  assets: SidebarAssets = { stylesheet: 'vscode-resource:/media/sidebar.css', script: 'vscode-resource:/media/sidebar.js', font: 'vscode-resource:/media/MaterialSymbolsRounded.woff2' },
+): string {
+  const nonce = randomBytes(24).toString('base64');
+  const boot = JSON.stringify(state).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
+  const a11y = accessibilityStyle(normalizeAccessibility(state.accessibility));
+  const rootVars = Object.entries(a11y.vars).map(([name, value]) => `${name}:${value}`).join(';');
+  const bodyClasses = [...a11y.classes, state.features?.reduceMotion ? 'reduce-motion' : ''].filter(Boolean).join(' ');
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data: ${webview.cspSource}; media-src ${webview.cspSource}; font-src ${webview.cspSource};">
+<style nonce="${nonce}">@font-face{font-family:'Material Symbols Rounded';font-style:normal;font-weight:100 700;src:url('${escapeHtml(assets.font)}') format('woff2')}:root{${rootVars}}</style>
+<link rel="stylesheet" href="${escapeHtml(assets.stylesheet)}">
+<title>DeepSeek Harness</title></head><body${bodyClasses ? ` class="${bodyClasses}"` : ''}>
+<header class="topbar">
+  <div class="brand" id="view-title">Chats</div>
+  <div class="top-actions">
+    <div class="usage-wrap"><button id="usage-toggle" class="icon-button usage-toggle" type="button" title="AI usage" aria-label="AI usage" aria-haspopup="dialog" aria-controls="usage-menu" aria-expanded="false" hidden><span class="symbol">data_usage</span></button><div id="usage-menu" class="usage-menu" role="dialog" aria-label="AI usage" hidden></div></div>
+    <div class="settings-wrap">
+      <button class="icon-button" id="settings-toggle" type="button" title="Settings" aria-label="Settings" aria-haspopup="menu" aria-controls="settings-menu" aria-expanded="false"><span class="symbol">settings</span></button>
+      <div id="settings-menu" class="settings-menu" role="menu" aria-label="Settings" hidden>
+        <button class="settings-item" id="instructions" type="button" role="menuitem"><span class="symbol">menu_book</span><span class="settings-item-copy"><span class="settings-item-title">Behavior</span><span class="settings-item-desc">Rules and skills</span></span></button>
+        <button class="settings-item" id="models" type="button" role="menuitem"><span class="symbol">tune</span><span class="settings-item-copy"><span class="settings-item-title">Models</span><span class="settings-item-desc">Routes, speed and effort</span></span></button>
+        <button class="settings-item" id="subagents" type="button" role="menuitem"><span class="symbol">groups</span><span class="settings-item-copy"><span class="settings-item-title">Subagents</span><span class="settings-item-desc">Profiles chats can delegate to</span></span></button>
+        <button class="settings-item" id="toolcalls" type="button" role="menuitem"><span class="symbol">extension</span><span class="settings-item-copy"><span class="settings-item-title">Toolpacks</span><span class="settings-item-desc">Custom tools for agents</span></span></button>
+        <div class="settings-separator" role="separator"></div>
+        <button class="settings-item" id="customize" type="button" role="menuitem"><span class="symbol">toggle_on</span><span class="settings-item-copy"><span class="settings-item-title">Customize</span><span class="settings-item-desc">Turn features on or off</span></span></button>
+        <button class="settings-item" id="accessibility" type="button" role="menuitem"><span class="symbol">accessibility_new</span><span class="settings-item-copy"><span class="settings-item-title">Accessibility</span><span class="settings-item-desc">Text size, spacing, contrast, motion</span></span></button>
+        <button class="settings-item" id="experimental" type="button" role="menuitem"><span class="symbol">science</span><span class="settings-item-copy"><span class="settings-item-title">Experimental</span><span class="settings-item-desc">Compaction, batching, tool trimming</span></span></button>
+        <div class="settings-separator" role="separator"></div>
+        <button class="settings-item" id="sync" type="button" role="menuitem"><span class="symbol">cloud_sync</span><span class="settings-item-copy"><span class="settings-item-title">Sync</span><span class="settings-item-desc">Back up your config to GitHub</span></span></button>
+      </div>
+    </div>
+    <button class="icon-button" id="new" type="button" title="Start a new chat" aria-label="Start a new chat"><span class="symbol">add_comment</span></button>
+    <button class="icon-button" id="accounts" type="button" title="Manage signed-in accounts" aria-label="Manage signed-in accounts"><span class="symbol">account_circle</span></button>
+  </div>
+</header>
+<div id="notice" class="notice" role="status" hidden></div>
+<section id="chat-page" class="page chat-page">
+  <nav id="rail" class="rail" aria-label="Active chats" hidden></nav>
+  <div class="chat-column">
+  <div class="chat-tabs"><div id="sessions" class="session-list" aria-label="Open chats"></div><div class="recent-wrap"><button id="recent-toggle" class="recent-toggle" type="button" title="Browse all recent chats" aria-label="Browse all recent chats" aria-expanded="false">Recent <span class="symbol small">expand_more</span></button><div id="recent-menu" class="recent-menu" hidden></div></div></div>
+  <main id="feed" class="feed" aria-live="polite"></main>
+  <div id="status" class="run-status"></div>
+  <div id="queue" class="queue-list" aria-label="Queued messages" hidden></div>
+  <section id="changes" class="changes" aria-label="File changes" hidden><div class="changes-head"><button id="changes-toggle" class="changes-toggle" type="button" aria-expanded="false"><span class="symbol small" id="changes-icon">expand_less</span><span id="changes-label">Changes</span><span id="changes-total" class="change-counts"></span></button><div id="changes-bulk" class="changes-bulk" hidden><button id="reject-all" class="change-action" type="button" title="Reject all pending changes">Reject all</button><button id="apply-all" class="change-action change-apply" type="button" title="Apply all pending changes">Apply all</button></div></div><div id="changes-body" class="changes-body"><div id="changes-list" class="changes-list"></div></div></section>
+  <form id="composer" class="composer"><div id="attachments" class="attachments" hidden></div><div id="composer-input" class="composer-input"><div id="composer-side" class="composer-side"><button class="icon-button" id="attach" type="button" title="Upload files for context" aria-label="Upload files for context"><span class="symbol">add</span></button><div class="option-wrap approval-wrap"><button class="tool-button" id="approval" type="button" aria-haspopup="menu" aria-controls="approval-menu" aria-expanded="false" title="Ask before running tools" aria-label="Ask before running tools"><span class="symbol small" id="approval-icon">shield</span><span id="approval-label">Ask approval</span><span class="symbol small approval-chevron">expand_more</span></button><div id="approval-menu" class="option-menu approval-menu" role="menu" aria-label="Approval mode" hidden></div></div></div><textarea id="prompt" aria-label="Message" placeholder="Ask about your workspace or request an edit"></textarea></div><div id="compose-actions" class="compose-actions"><div id="compose-tools" class="compose-tools"><div class="composer-options"><div id="agents-control" class="option-wrap agents-wrap" hidden><button id="agents-picker" class="composer-choice agents-choice" type="button" aria-haspopup="menu" aria-controls="agents-menu" aria-expanded="false"><span id="agents-label">Agents</span><span class="symbol small">expand_less</span></button><div id="agents-menu" class="option-menu agents-menu" role="menu" aria-label="Running subagents" hidden></div></div><div class="model-picker-wrap"><button id="model-picker" class="composer-choice" type="button" aria-label="Choose model" aria-haspopup="listbox" aria-controls="model-menu" aria-expanded="false"><span id="model-picker-label">Choose model</span><span class="symbol small">expand_more</span></button><div id="model-menu" class="model-menu" role="listbox" hidden></div></div><div id="speed-control" class="option-wrap" hidden><button id="speed-picker" class="composer-choice" type="button" title="Choose response speed" aria-expanded="false"><span id="speed-label">Speed</span><span class="symbol small">expand_more</span></button><div id="speed-options" class="option-menu" hidden></div></div><div id="effort-control" class="option-wrap" hidden><button id="effort-picker" class="composer-choice" type="button" title="Choose reasoning effort" aria-expanded="false"><span id="effort-label">Effort</span><span class="symbol small">expand_more</span></button><div id="effort-options" class="option-menu" hidden></div></div></div></div><div id="compose-send" class="compose-send"><button class="tool-button cancel-run" type="button" id="cancel" title="Cancel task" aria-label="Cancel task" hidden><span class="symbol small filled">stop</span></button><button class="icon-button voice-button" type="button" id="voice" title="Voice input" aria-label="Start voice input" aria-pressed="false" hidden><span class="symbol" id="voice-icon">mic</span></button><div class="send-wrap"><button class="primary-button" type="submit" id="send" aria-haspopup="menu" aria-expanded="false"><span class="symbol small" id="send-icon">arrow_upward</span><span id="send-label">Send</span><span class="symbol small send-chevron" id="send-chevron" hidden>expand_less</span></button><div id="send-menu" class="send-menu" role="menu" aria-label="Send while a task is running" hidden><button type="button" class="send-option" role="menuitem" data-mode="interrupt"><span class="symbol send-option-icon">bolt</span><span class="send-option-copy"><span class="send-option-title">Interrupt</span><span class="send-option-desc">Stop the current task and send now</span></span></button><button type="button" class="send-option" role="menuitem" data-mode="queue"><span class="symbol send-option-icon">schedule_send</span><span class="send-option-copy"><span class="send-option-title">Queue message</span><span class="send-option-desc">Send automatically when the task finishes</span></span></button></div></div></div></div><input id="image-input" type="file" multiple hidden></form>
+  </div>
+</section>
+<section id="accounts-page" class="page settings-page" hidden>
+  <div class="page-heading"><button class="icon-button back" data-page="chat" title="Back to chat" aria-label="Back to chat"><span class="symbol">arrow_back</span></button><div><h1>Accounts</h1></div></div>
+  <div id="account-groups" class="scroll-content"></div>
+  <form id="account-form" class="inline-form" hidden>
+    <h2 id="account-form-title">Add account</h2><p id="account-form-help" class="helper"></p>
+    <label>Account name<input id="account-name" maxlength="80" autocomplete="off" required placeholder="Personal or work"></label>
+    <label>Email <span class="optional">optional</span><input id="account-email" type="email" autocomplete="off" placeholder="name@example.com"></label>
+    <label id="account-key-field">API key<input id="account-key" type="password" autocomplete="off" required placeholder="Paste an API key"></label>
+    <label id="account-base-url-field" hidden>Base URL<input id="account-base-url" type="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:8787/v1"><span class="helper">OpenAI-compatible endpoint, e.g. your dsh-gpu-manager gateway. The key is stored in VS Code SecretStorage; the URL is not secret.</span></label>
+    <div class="form-actions"><button type="button" class="text-button" id="account-cancel">Cancel</button><button type="submit" class="primary-button" id="account-submit">Save account</button></div>
+  </form>
+</section>
+<section id="models-page" class="page settings-page" hidden>
+  <div class="page-heading"><button class="icon-button back" data-page="chat" title="Back to chat" aria-label="Back to chat"><span class="symbol">arrow_back</span></button><div><h1>Models</h1></div></div>
+  <div class="settings-toolbar"><button id="add-model" class="secondary-button" type="button"><span class="symbol small">add</span> Add model</button></div>
+  <div id="model-list" class="scroll-content"></div>
+  <form id="model-form" class="inline-form" hidden>
+    <h2 id="model-form-title">Add model</h2>
+    <label>Name<input id="model-name" maxlength="80" required placeholder="My model"></label>
+    <label>Provider<select id="model-provider" required><option value="">Select a provider</option><option value="codex-cli">ChatGPT (Codex)</option><option value="claude-cli">Claude Code</option><option value="cursor-acp">Cursor</option><option value="deepseek-official">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="opencode-go">OpenCode Go</option><option value="mistral">Mistral</option><option value="self-hosted">Self-hosted</option></select></label>
+    <label id="model-backend-field">Model ID<input id="model-backend" list="model-backend-options" maxlength="120" spellcheck="false" autocomplete="off" placeholder="Provider model ID"><datalist id="model-backend-options"></datalist></label>
+    <div id="model-self-hosted-row" class="self-hosted-row" hidden><button type="button" class="secondary-button" id="model-load-models">Load models</button><span id="model-models-status" class="helper"></span></div>
+    <label id="model-cursor-field" hidden>Cursor model<input id="model-cursor-backend" list="model-cursor-options" maxlength="120" spellcheck="false" autocomplete="off" placeholder="auto, or a model slug such as gpt-5"><datalist id="model-cursor-options"></datalist></label>
+    <label>Account<select id="model-account"></select></label>
+    <label>Speed options<input id="model-speed-options" placeholder="Choose a provider first"></label>
+    <p id="model-speed-help" class="helper">The base model is None. Each speed choice routes to the model ID you enter.</p>
+    <label>Effort choices<input id="model-effort-options" placeholder="low, medium, high, xhigh"></label>
+    <p id="model-form-help" class="helper"></p>
+    <div class="form-actions"><button type="button" class="text-button" id="model-cancel">Cancel</button><button type="submit" class="primary-button">Save model</button></div>
+  </form>
+</section>
+<section id="subagents-page" class="page settings-page" hidden>
+  <div class="page-heading"><button class="icon-button back" data-page="chat" title="Back to chat" aria-label="Back to chat"><span class="symbol">arrow_back</span></button><div><h1>Subagents</h1></div></div>
+  <p class="helper">Subagents let your main chat hand tasks to another model, even from a different provider.</p>
+  <div class="settings-toolbar"><button id="add-subagent" class="secondary-button" type="button"><span class="symbol small">add</span> Add subagent</button></div>
+  <div id="subagent-list" class="scroll-content"></div>
+  <form id="subagent-form" class="inline-form" hidden>
+    <h2 id="subagent-form-title">Add subagent</h2>
+    <label>Name<input id="subagent-name" maxlength="60" required placeholder="luna-low"></label>
+    <label>When to use <span class="optional">optional</span><input id="subagent-description" maxlength="200" placeholder="Cheap reviewer for quick checks"></label>
+    <label>Model<select id="subagent-model" required></select></label>
+    <label>Effort<select id="subagent-effort"></select></label>
+    <label>Speed<select id="subagent-speed"></select></label>
+    <label>Mode<select id="subagent-mode"><option value="read-only">Read-only</option><option value="edit">Can edit files (locked paths)</option></select></label>
+    <label class="check-row"><input id="subagent-tools" type="checkbox" checked> Can use toolpack tools</label>
+    <div class="form-actions"><button type="button" class="text-button" id="subagent-cancel">Cancel</button><button type="submit" class="primary-button">Save subagent</button></div>
+  </form>
+</section>
+<section id="instructions-page" class="page settings-page" hidden>
+  <div class="page-heading"><button class="icon-button back" data-page="chat" title="Back to chat" aria-label="Back to chat"><span class="symbol">arrow_back</span></button><div><h1>Behavior</h1></div></div>
+  <p class="helper">Rules are standing instructions the agent always follows. Skills are reusable playbooks it loads when they match the task. Rules and skills saved for all workspaces are also shared with Claude when that option is on in Customize.</p>
+  <div id="memory-settings" class="memory-settings"></div>
+  <div class="settings-toolbar toolbar-pair"><button id="add-rule" class="secondary-button" type="button"><span class="symbol small">add</span> Add rule</button><button id="add-skill" class="secondary-button" type="button"><span class="symbol small">add</span> Add skill</button></div>
+  <div id="instruction-list" class="scroll-content"></div>
+  <form id="instruction-form" class="inline-form" hidden>
+    <h2 id="instruction-form-title">Add rule</h2>
+    <div id="instruction-upload-field" class="instruction-upload"><button id="instruction-upload" class="secondary-button" type="button" title="Fill this form from a Markdown file"><span class="symbol small">upload_file</span> Upload .md</button><input id="instruction-upload-input" type="file" accept=".md,.markdown,text/markdown" hidden></div>
+    <label id="instruction-scope-field">Where<select id="instruction-scope"><option value="workspace">This workspace</option><option value="global">All workspaces</option></select></label>
+    <label id="instruction-file-field">File<select id="instruction-file"></select></label>
+    <label id="instruction-name-field">Name<input id="instruction-name" maxlength="64" autocomplete="off" placeholder="my-skill"></label>
+    <label id="instruction-description-field">When to use <span class="optional">optional</span><input id="instruction-description" maxlength="200" autocomplete="off" placeholder="Use when reviewing database migrations"></label>
+    <label><span id="instruction-content-label">Instructions</span><textarea id="instruction-content" class="instruction-content" spellcheck="false" placeholder="Write the instructions here"></textarea></label>
+    <div class="form-actions"><button type="button" class="text-button" id="instruction-cancel">Cancel</button><button type="submit" class="primary-button">Save</button></div>
+  </form>
+</section>
+<section id="toolcalls-page" class="page settings-page" hidden>
+  <div class="page-heading"><button class="icon-button back" data-page="chat" title="Back to chat" aria-label="Back to chat"><span class="symbol">arrow_back</span></button><div><h1>Toolpacks</h1></div></div>
+  <p class="helper">Toolpacks are TypeScript scripts that give the agent extra tools. Upload a .ts file to add one.</p>
+  <div class="settings-toolbar"><button id="add-toolpack" class="secondary-button" type="button"><span class="symbol small">upload_file</span> Upload toolpack</button></div>
+  <div id="toolpack-error" class="notice toolpack-error" role="status" hidden></div>
+  <div id="toolpack-list" class="scroll-content"></div>
+</section>
+<section id="customize-page" class="page settings-page" hidden>
+  <div class="page-heading"><button class="icon-button back" data-page="chat" title="Back to chat" aria-label="Back to chat"><span class="symbol">arrow_back</span></button><div><h1>Customize</h1></div></div>
+  <p class="helper">Turn DSH features on or off. Changes are saved to your user settings and apply right away.</p>
+  <div id="feature-list" class="scroll-content feature-list"></div>
+</section>
+<section id="accessibility-page" class="page settings-page" hidden>
+  <div class="page-heading"><button class="icon-button back" data-page="chat" title="Back to chat" aria-label="Back to chat"><span class="symbol">arrow_back</span></button><div><h1>Accessibility</h1></div></div>
+  <p class="helper">Adjust how the sidebar reads and feels. Changes show immediately and are saved to your user settings.</p>
+  <div id="a11y-list" class="scroll-content feature-list"></div>
+</section>
+<section id="experimental-page" class="page settings-page" hidden>
+  <div class="page-heading"><button class="icon-button back" data-page="chat" title="Back to chat" aria-label="Back to chat"><span class="symbol">arrow_back</span></button><div><h1>Experimental</h1></div></div>
+  <p class="helper">Features that are still being tried out. They may change or go away. Changes are saved to your user settings and apply from the next message.</p>
+  <div id="experimental-list" class="scroll-content feature-list"></div>
+</section>
+<section id="sync-page" class="page settings-page" hidden>
+  <div class="page-heading"><button class="icon-button back" data-page="chat" title="Back to chat" aria-label="Back to chat"><span class="symbol">arrow_back</span></button><div><h1>Sync</h1></div></div>
+  <p class="helper">Keep your global rules, skills, toolpacks, models, subagents, MCP servers and Customize and Accessibility choices and your global memory in a private GitHub repository (dsh-sync), so your other PCs share them. Every sync is a commit, so the history shows what changed. Git is needed; DSH offers to install it. API keys, account sign-ins and MCP env and header values stay on this PC.</p>
+  <div id="sync-list" class="scroll-content feature-list"></div>
+</section>
+<script nonce="${nonce}" type="application/json" id="boot-state">${boot}</script>
+<script nonce="${nonce}" src="${escapeHtml(assets.markdown || assets.script.replace(/sidebar\.js$/, 'markdown-it.min.js'))}"></script>
+<script nonce="${nonce}" src="${escapeHtml(assets.script)}"></script>
+</body></html>`;
+}

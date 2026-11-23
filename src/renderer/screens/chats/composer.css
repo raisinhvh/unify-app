@@ -1,0 +1,150 @@
+/* Composer (Figma 12 / 13). A raised box: input on top, a bar of pickers and the send square below. */
+.composer-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 12px 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: border-color 140ms ease;
+}
+
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--text3) 60%, var(--border));
+}
+
+.composer.drag-over {
+  border-color: var(--text2);
+  background: color-mix(in srgb, var(--surface) 90%, var(--accent));
+}
+
+.composer-input {
+  display: block;
+  width: 100%;
+  min-height: 20px;
+  max-height: 240px;
+  padding: 0;
+  resize: none;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-size: 13px;
+  line-height: 20px;
+  user-select: text;
+}
+
+.composer-input::placeholder {
+  color: var(--text3);
+}
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -6px;
+}
+
+.composer-spacer {
+  flex: 1;
+}
+
+.composer-choice {
+  color: var(--text2);
+}
+
+.composer-send.button-primary {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.composer-attachment {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 44px;
+  max-width: 180px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.composer-attachment img {
+  height: 100%;
+  width: auto;
+  max-width: 100px;
+  object-fit: cover;
+}
+
+.composer-attachment-file {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0 28px 0 8px;
+}
+
+.composer-attachment-file .type-caption {
+  color: var(--text3);
+}
+
+.composer-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.composer-attachment-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+
+.composer-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.composer-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 2px 0 10px;
+  color: var(--text2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.composer-queue-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The composer frame shows focus (:focus-within above); the textarea itself draws no ring. */
+.composer-input:focus-visible {
+  outline: none;
+}

@@ -1,0 +1,121 @@
+/* Toolpacks side panel (left of Figma 22 / 23). Shared tree rows come from components/tree.css. */
+.toolpacks-panel {
+  padding: 0 8px;
+}
+
+.tp-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 0 0 8px;
+  flex: none;
+}
+
+.tp-panel-header h2 {
+  margin: 0;
+}
+
+.tp-panel-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 0 12px;
+  scrollbar-width: thin;
+}
+
+.tp-glyph-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tp-folder-glyph {
+  flex: none;
+  color: var(--text2);
+}
+
+.tp-glyph-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tp-category {
+  padding-left: 4px;
+}
+
+.tp-category .tree-leading {
+  display: none;
+}
+
+.tp-category .tree-trailing,
+.tp-pack .tree-trailing {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A pack row holds three controls (chevron, name, switch), so it is a div styled as a tree row. */
+.tp-pack-row {
+  gap: 0;
+  padding: 0 4px 0 0;
+}
+
+.tp-pack-chevron {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 28px;
+  flex: none;
+}
+
+.tp-pack-main {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  gap: 6px;
+  padding-right: 8px;
+  color: inherit;
+  text-align: left;
+}
+
+.tp-pack-glyph {
+  flex: none;
+  color: var(--text2);
+}
+
+.tp-pack.off .tp-pack-main {
+  color: var(--text3);
+}
+
+.tp-pack.off .tp-pack-glyph {
+  color: var(--text3);
+}
+
+.tp-pack .toggle {
+  flex: none;
+}
+
+.tp-pack-tools > div {
+  padding-left: 12px;
+}
+
+.tp-tool .tree-leading {
+  display: none;
+}
+
+.tp-tool .tree-label {
+  color: var(--text);
+}
+
+.tp-tool.off .tree-label {
+  color: var(--text3);
+}
+
+.tp-panel-empty {
+  padding: 6px 8px;
+  color: var(--text3);
+}

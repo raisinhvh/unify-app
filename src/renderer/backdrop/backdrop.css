@@ -1,0 +1,16 @@
+.backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.backdrop-logo {
+  position: absolute;
+  left: calc(var(--rail-width) + 80px);
+  top: 50%;
+  width: 520px;
+  height: 520px;
+  translate: 0 -50%;
+  opacity: 0.07;
+}

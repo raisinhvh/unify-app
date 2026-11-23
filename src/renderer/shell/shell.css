@@ -1,0 +1,234 @@
+/* App frame: Home underneath, then rail | side panel | content on top. */
+.app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-layers {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  pointer-events: none;
+}
+
+.app-layers > * {
+  pointer-events: auto;
+}
+
+.side-panel-slot {
+  position: relative;
+  height: 100%;
+  flex: none;
+  overflow: hidden;
+}
+
+.side-panel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--panel-width);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.content {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding-top: var(--titlebar-height);
+  /* Transparent: Home shows through wherever no pane or screen covers it. */
+  pointer-events: none;
+}
+
+.content > * {
+  pointer-events: auto;
+}
+
+/* Holds the PaneGrid; stays mounted (hidden) while another route's screen is up. */
+.content-chats {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.content-chats.hidden {
+  visibility: hidden;
+}
+
+.content-chats.hidden * {
+  pointer-events: none;
+}
+
+.content-screen {
+  position: absolute;
+  inset: var(--titlebar-height) 8px 8px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pane);
+  overflow: hidden;
+}
+
+/* Panes */
+.pane-grid {
+  position: absolute;
+  inset: var(--titlebar-height) 0 0 0;
+  pointer-events: none;
+}
+
+.pane-grid > * {
+  pointer-events: auto;
+}
+
+.pane {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pane);
+  overflow: hidden;
+  transform-origin: top left;
+  will-change: transform;
+}
+
+.pane.focused {
+  border-color: color-mix(in srgb, var(--text3) 70%, var(--border));
+}
+
+.pane.lifted {
+  z-index: 20;
+  box-shadow: var(--shadow-pop);
+  pointer-events: none;
+}
+
+.pane-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--text3);
+}
+
+.gutter {
+  position: absolute;
+  z-index: 5;
+}
+
+.gutter-vertical {
+  cursor: col-resize;
+}
+
+.gutter-horizontal {
+  cursor: row-resize;
+}
+
+.gutter::after {
+  content: '';
+  position: absolute;
+  background: var(--text3);
+  border-radius: 1px;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.gutter-vertical::after {
+  left: 3px;
+  top: 50%;
+  width: 2px;
+  height: 32px;
+  translate: 0 -50%;
+}
+
+.gutter-horizontal::after {
+  top: 3px;
+  left: 50%;
+  height: 2px;
+  width: 32px;
+  translate: -50% 0;
+}
+
+.gutter:hover::after {
+  opacity: 1;
+}
+
+body.resizing-x,
+body.resizing-x * {
+  cursor: col-resize !important;
+}
+
+body.resizing-y,
+body.resizing-y * {
+  cursor: row-resize !important;
+}
+
+body.dragging-pane,
+body.dragging-pane * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+.drop-zone {
+  position: absolute;
+  z-index: 10;
+  border: 1px solid var(--text2);
+  border-radius: var(--radius-pane);
+  background: var(--accent-tint);
+  pointer-events: none;
+}
+
+/* Layout picker (Figma 11b) */
+.layout-picker {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 30;
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px 8px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-menu);
+  box-shadow: var(--shadow-pop);
+  pointer-events: none;
+}
+
+.layout-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.layout-tile-cells {
+  position: relative;
+}
+
+.layout-tile-cell {
+  position: absolute;
+  border-radius: 3px;
+  background: var(--hover);
+  transition: background-color 120ms ease;
+}
+
+.layout-tile.hovered .layout-tile-cell {
+  background: color-mix(in srgb, var(--hover) 70%, var(--text3));
+}
+
+.layout-tile-cell.hovered,
+.layout-tile.hovered .layout-tile-cell.hovered {
+  background: var(--accent);
+}
+
+.layout-tile-name {
+  color: var(--text2);
+}
+
+.layout-tile.hovered .layout-tile-name {
+  color: var(--text);
+}

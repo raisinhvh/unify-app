@@ -1,0 +1,4068 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { appendFile, copyFile, mkdir, readdir, writeFile, readFile, rm, stat } from 'node:fs/promises';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path';
+import { homedir } from 'node:os';
+import * as vscode from 'vscode';
+import { AccountRegistry, ModelEntry, ModelRegistry, ResolvedModel } from './accounts';
+import { AccountUsageService, UsageTarget } from './accounts/usageService';
+import { OAuthCliAccount, OAuthCliAccounts, OAuthCliProvider, setDetectedCliCommand } from './accounts/oauthCli';
+import { freshCodexTokens } from './accounts/codexAuth';
+import { WindowsDependencies } from './runtime/dependencies';
+import { ReviewController, ReviewProposal } from './review/controller';
+import { DelegateAgentInfo, DelegateHost, DelegateResult, DelegateToolInfo } from './delegate/host';
+import { InstructionItem, InstructionRoots, listInstructions, locateInstruction, readInstruction, removeInstruction, saveInstruction } from './instructions/store';
+import { shareInstructions } from './instructions/share';
+import { chatTitlePrompt, firstMessageTitle, parseChatName, uniqueChatIcon } from './runtime/naming';
+import { isUsageLimit } from './runtime/limits';
+import { SELF_HOSTED, SELF_HOSTED_ENV, normalizeBaseURL, parseModelIds } from './runtime/selfHosted';
+import { MAX_MEDIA_BYTES, MAX_MEDIA_FILES, MEDIA_INSTRUCTIONS, mediaType, SEND_MEDIA, SEND_MEDIA_TOOL } from './runtime/media';
+import { GENERATE_IMAGE, GENERATE_IMAGE_TOOL, generateImage, IMAGE_INSTRUCTIONS, imageFileName, inputImageProblem, MAX_INPUT_BYTES, parseImageRequest, pngSize } from './runtime/imageGen';
+import { ToolpackRegistry } from './toolpacks/registry';
+import { ConfigSync } from './sync/controller';
+import { SYNCED_SETTINGS, accountForModel } from './sync/configSync';
+import { currentVersion, installVersion, latestVersion, updatedRoot } from './update/dshUpdate';
+import { installExtensionRelease, latestExtensionRelease } from './update/extensionUpdate';
+import { planUpdates, UpdateOffer, UpdatePlan } from './update/plan';
+import { compareVersions } from './update/version';
+import { JobHost, JobState } from './goal/types';
+import { addDecision, createJob, runJob } from './goal/runner';
+import { parseSlash } from './slash/registry';
+import { terminateProcessTree } from './runtime/cancellation';
+import { answersByQuestion, formatAnswers, parseQuestions } from './sidebar/questions';
+import { withExplorer } from './runtime/explorer';
+import { promptPrefix, skipToolListChanged } from './runtime/promptPrefix';
+import { AfterTurn, CANCEL_SUBAGENT, delegationInstructions, isDelegationTool, isNativeSubagentTool, TOOLPACK_SCOPE, WAIT_SUBAGENTS } from './runtime/delegation';
+import { editorContextDiff } from './runtime/editorContext';
+import { AcpRuntime, RuntimeEvent } from './runtime/acp';
+import { CliTurn, OAuthCliRuntime, TurnUsage } from './runtime/oauthCli';
+import { codexBackend } from './runtime/models';
+import { MirrorChange, mirrorPathExcluded, WorkspaceMirror } from './runtime/shadow';
+import { FileSummaries, readToolPath, SUMMARY_INSTRUCTIONS, SUMMARY_TOOL } from './summaries/store';
+import { setAgentPriority } from './runtime/priority';
+import { BACKGROUND_CLEANUP, setPowershellSpeedups, shellInstructions } from './runtime/agentShell';
+import { activateRustTools, deactivateRustTools, ensureRustTools } from './runtime/rustTools';
+import { shouldKeepAlive } from './runtime/keepAlive';
+import { Checkpoint, checkpointHandoff, parseCheckpoint } from './runtime/checkpoint';
+import { displayTool } from './runtime/toolDisplay';
+import { chatCompactRequest, compactStep, CompactWatch, CONTINUE_AFTER_CHECKPOINT, MAX_SUBAGENT_SEGMENTS, sendCompactRequest, subagentCheckpoint, subagentCompactRequest, subagentResumeTask, takeFollowUp, TurnChannel } from './runtime/midTurnCompact';
+import { trimSessionImages } from './runtime/imageTrim';
+import { buildHandoff, CHAT_HISTORY_TOOL, chatHistoryReply, ChatMessage, handoffSummaryPrompt, KEEP_WITH_TOOL, MAX_TURN_TOOLS, toolLine } from './runtime/handoff';
+import { buildPartsHandoff, parsePartsReply, partsDir, partsPrompt, partWindows, TranscriptPart, unsummarizedPart, writeTranscriptParts } from './runtime/transcriptParts';
+import { findGit, GIT_DOWNLOAD_PAGE, installGit } from './runtime/git';
+import { globalMemoryFolder, isMemoryPath, memoryInstructions, memorySyncNeeded, syncGlobalMemory } from './runtime/memory';
+import { BATCH_INSTRUCTIONS, BatchCall, BatchOutcome, callLabel, executeBatch, formatBatchResult, isBatchFileTool, isBatchTool, outsideWorkingCopy, parseBatchCalls, runBatchFileTool, uniqueBatchCalls } from './runtime/batch';
+import { describePackTools, LOAD_TOOLPACK, loadToolpackTool, packCommands, RUN_TOOLPACK_TOOL, runToolpackTool } from './toolpacks/access';
+import { DshSidebarProvider, SidebarHostMessage, SidebarWebviewMessage } from './sidebar/provider';
+import { Dictation, normalizeVoiceCommands, VoiceCommand } from './voice/dictation';
+import { installedWhisper, installWhisper, WHISPER_DOWNLOAD_BYTES, WhisperEngine } from './voice/whisperInstall';
+import { ApprovalMode, CursorAccountState, SidebarAccessibility, SidebarFeatureKey, SidebarFeatures, SidebarImage, SidebarJob, SidebarNameModel, SidebarProject, SidebarQuestion, SidebarSmartAutoRank, SidebarTimelineItem, SidebarSubagent, SidebarSubagentTool, defaultFeatures, normalizeAccessibility, normalizeCompactTokens, normalizeProcessPriority } from './sidebar/view';
+import { allUnifyFeatures, getUnifyFeature, onUnifyFeatureChange, setUnifyFeature } from './unify/settings';
+import { agentBus } from './unify/agentBusImpl';
+import type { AgentBusEvent, AgentInfo, AgentMessage } from './unify/agentBus';
+import { handleUnifyRequest } from './unify/requests';
+import { addAllowRule, commandPrefix, isAlwaysAllowed } from './sidebar/allowRules';
+import { deciderPrompt, MAX_NOTE, MAX_RANKS, normalizeRanks, parseDecision, rankLabel, SMART_AUTO, SmartAutoRank } from './runtime/smartAuto';
+
+interface SessionRecord {
+  id: string;
+  mirrorId: string;
+  name: string;
+  /** The user renamed this chat, so automatic titles must not replace the name. */
+  renamed?: boolean;
+  /** Material Symbols icon the activity rail shows, picked by the name model. */
+  icon?: string;
+  /** Workspace folder the chat was created in; chats are grouped by it in the rail. */
+  project?: SidebarProject;
+  modelName: string;
+  provider: string;
+  backend: string;
+  accountId: string;
+  job?: JobState;
+  cliSessionId?: string;
+  previousCliSessionId?: string;
+  checkpoint?: Checkpoint;
+  contextTokens?: number;
+  /** Context of a fresh session before any conversation: system prompt, tools and the first message. Auto compaction counts from here. */
+  baseTokens?: number;
+  /** With auto compaction: earlier messages archived as parts under .dsh/transcripts, in order. */
+  parts?: TranscriptPart[];
+  explorerTokens?: number;
+  sessionInstructions?: string;
+  lastInstructions?: string;
+  initTools?: string[];
+  prefixHash?: string;
+  lastTurnAt?: number;
+  lastPingAt?: number;
+  pingsSent?: number;
+  resumeNotice?: 'checkpoint' | 'idle' | 'compact';
+  idleHandoff?: boolean;
+  shortCache?: boolean;
+  nudgedAt?: number;
+  runtimeId?: string;
+  pendingMirror?: boolean;
+  /** The agent edits the real workspace instead of a private copy (dsh.runtime.mirror off when the chat was created). */
+  direct?: boolean;
+  effort?: string;
+  /** Smart Auto picks this chat's model for each message the user sends. */
+  smartAuto?: boolean;
+  /** Toolpacks turned on in this chat, by a /pack command or an agent's load_toolpack call. */
+  toolpacks?: string[];
+  updatedAt: number;
+}
+
+const SESSIONS_KEY = 'dsh.ide.sessions.v1';
+const SELECTED_MODEL_KEY = 'dsh.ide.selectedModel.v1';
+const ACTIVE_SESSION_KEY = 'dsh.ide.activeSession.v1';
+const CURSOR_MODELS_KEY = 'dsh.ide.cursorModels.v1';
+const MODEL_CHOICES_KEY = 'dsh.ide.modelChoices.v1';
+const APPROVAL_KEY = 'dsh.ide.approvalMode.v1';
+const TRANSCRIPTS_KEY = 'dsh.ide.transcripts.v1';
+const TIMELINES_KEY = 'dsh.ide.timelines.v1';
+const SYNC_OFFER_KEY = 'dsh.ide.syncOffer.v1';
+type SavedTimeline = { timeline: SidebarTimelineItem[]; subagents: Record<string, SidebarSubagent> };
+/** Feed notes for the turn that starts a chat's new agent session. */
+const RESUME_NOTES = {
+  checkpoint: { icon: 'history', text: 'Resumed from checkpoint' },
+  compact: { icon: 'compress', text: 'Context compacted into a summary' },
+  idle: { icon: 'schedule', text: 'Started a fresh session after idle' },
+} as const;
+const PROVIDER_USAGE_URLS = new Map([
+  ['codex-cli', 'https://chatgpt.com/settings/usage?tab=overview'],
+  ['claude-cli', 'https://claude.ai/settings/usage'],
+  ['cursor-acp', 'https://cursor.com/dashboard?tab=usage'],
+  ['deepseek-official', 'https://platform.deepseek.com/usage'],
+  ['openrouter', 'https://openrouter.ai/activity'],
+  ['opencode-go', 'https://opencode.ai/console'],
+  ['mistral', 'https://console.mistral.ai/usage'],
+]);
+const RISKY_ACTION = /\brm\s+-[a-z]*[rf]|\bsudo\b|\bchmod\b|\bchown\b|\bmkfs\b|\bdd\s+if=|\bformat\s+[a-z]:|\bdel\s+\/|Remove-Item|git\s+(push|reset\s+--hard|clean|checkout\s+--)|\b(curl|wget|iwr|Invoke-WebRequest)\b|\|\s*(sh|bash|iex)\b|\b(npm|pip|pnpm|yarn)\s+(publish|install\s+-g)|\bkill(all)?\b|\bshutdown\b|\.env\b|\.ssh|credentials|\.\.[\\/]|(^|\s)(\/|~|[A-Za-z]:[\\/])/i;
+const isRiskyAction = (description: string): boolean => RISKY_ACTION.test(description);
+const IMAGE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+const MAX_IMAGES = 8;
+const MAX_IMAGE_BASE64 = 14_000_000;
+type ModelChoice = { speed?: string; effort?: string };
+/** Customize page switches and the `dsh` settings that store them. */
+const FEATURE_SETTINGS: Record<SidebarFeatureKey, string> = {
+  activityRail: 'features.activityRail', autoName: 'features.autoName', shareRules: 'features.shareRules', editorContext: 'features.editorContext',
+  reduceMotion: 'features.reduceMotion', updateChecks: 'updates.check', mirror: 'runtime.mirror', reviewAgent: 'features.reviewAgent',
+  fileSummaries: 'features.fileSummaries', smartAuto: 'features.smartAuto',
+  autoCompact: 'experimental.autoCompact', batching: 'experimental.batching', trimTools: 'experimental.trimTools', voice: 'features.voice',
+  rustTools: 'runtime.rustTools', powershellSpeedups: 'runtime.powershellSpeedups',
+};
+type ModelSettingKey = 'nameModel' | 'reviewModel' | 'summaryModel' | 'deciderModel' | 'explorerModel';
+type ResolvedRoute = ResolvedModel | { model: ModelEntry } | { model: ModelEntry; oauthAccount: OAuthCliAccount };
+
+/** Providers whose accounts are subscription sign-ins kept in OAuthCliAccounts: ChatGPT (Codex) and Claude. */
+function isOAuthProvider(value: string): value is OAuthCliProvider { return value === 'codex-cli' || value === 'claude-cli'; }
+/** Providers that run on a CLI harness instead of the DSH runtime. Only Claude: ChatGPT (Codex) runs natively in DSH. */
+function isCliProvider(value: string): value is 'claude-cli' { return value === 'claude-cli'; }
+function runtimeLabel(provider: string): string { return provider === 'cursor-acp' ? 'Cursor' : provider === 'codex-cli' ? 'ChatGPT' : provider === 'claude-cli' ? 'Claude' : 'DSH'; }
+
+interface SubagentProfile { name: string; description?: string; model: string; effort?: string; speed?: string; mode: 'read-only' | 'edit'; tools?: boolean; enabled?: boolean }
+interface Actor { owner: string; label: string; readOnly: boolean }
+interface ToolInfo { tool: string; input: Record<string, unknown>; autoAllowEdits?: boolean }
+interface ChildRun {
+  parent: Chat;
+  owner: string;
+  label: string;
+  readOnly: boolean;
+  changed: Set<string>;
+  outOfScope: Set<string>;
+  files: string[];
+  /** Started with background: true, so it outlives an interrupted parent turn. */
+  background?: boolean;
+  runtimeKey?: string;
+  sessionId?: string;
+  onUpdate?(update: Record<string, unknown>): void;
+  cancel(): void;
+}
+/** A subagent started with background: true, kept until the parent agent collects its result. */
+interface BackgroundTask { id: string; label: string; afterTurn: AfterTurn; done: boolean; result?: DelegateResult; finished: Promise<void>; run?: ChildRun }
+const PARENT: Actor = { owner: 'parent', label: '', readOnly: false };
+const EDIT_TOOLS = /^(Edit|Write|MultiEdit|NotebookEdit)$/;
+const DELEGATE_SERVER = 'dsh-delegate';
+/** How long an account that reported a usage limit is tried after the others. */
+const LIMIT_COOLDOWN_MS = 30 * 60 * 1000;
+/** A chat approval or question left unanswered this long resolves as rejected/skipped, so a lost reply cannot hang a turn. */
+const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
+/** A ChatGPT (Codex) runtime launches with at least this much token validity left, so long turns do not outlive it. */
+const CODEX_TOKEN_MARGIN_MS = 45 * 60 * 1000;
+/** Errors from a ChatGPT (Codex) turn that mean its access token was rejected. */
+const CODEX_AUTH_ERROR = /\b401\b|unauthori[sz]ed|invalid[^.\n]*token|token[^.\n]*expired/i;
+
+interface TurnOptions {
+  shown?: string;
+  job?: boolean;
+  /** Sent by DSH, not typed by the user (job steps, background subagent results): no user message is shown for it. */
+  internal?: boolean;
+  /** Chat this prompt belongs to in a multi-pane UI; omitted means the active chat. */
+  chatId?: string;
+  onFinish?(reply: string, cancelled: boolean): void;
+}
+/** A transcript entry; `internal` marks prompts DSH sent on its own, which are never shown as the user's messages. */
+type TranscriptItem = ChatMessage & { internal?: boolean };
+
+function toSidebarJob(job: JobState): SidebarJob {
+  const { phase, round, maxRounds, stopReason, criteria } = job;
+  return { phase, round, maxRounds, stopReason, criteria };
+}
+
+interface Chat {
+  record: SessionRecord;
+  mirror: WorkspaceMirror;
+  review: ReviewController;
+  cli: OAuthCliRuntime;
+  running: boolean;
+  cancelRequested: boolean;
+  jobActive: boolean;
+  jobCancelled: boolean;
+  /** Messages sent while a job runs, waiting for the job to log them as decisions. */
+  jobNotes: { prompt: string; images: { path: string; mimeType: string; data: string; name: string }[] }[];
+  /** Set when a sent message ended the job's current turn or review early. */
+  jobInterrupted: boolean;
+  queue: { prompt: string; images: { path: string; mimeType: string; data: string; name: string }[] }[];
+  turnEntryId: string;
+  segment: number;
+  startedTools: Set<string>;
+  subagentIds: Set<string>;
+  delegationToolIds: Set<string>;
+  subagentText: Map<string, string>;
+  turnReply: string;
+  /** Tool lines of the running turn, saved with its reply so read_chat_history can return and search them. */
+  turnTools: string[];
+  /** Set while the first context report of a fresh session is awaited: the estimated size of the prompt that started it. */
+  measureBase?: number;
+  handoffPending: boolean;
+  pendingCheckpoint?: Checkpoint;
+  /** Mid-turn compaction of the running turn: set when it may ask the agent to checkpoint. */
+  compactWatch?: CompactWatch;
+  ping?: Promise<void>;
+  /** Instructions and editor context last sent into this agent session, so unchanged text is not repeated. */
+  sent?: { session: string; instructions: string; context: string };
+  ownerId: string;
+  runtime?: AcpRuntime;
+  runtimeKey?: string;
+  locks: Map<string, { owner: string; label: string }>;
+  children: Set<ChildRun>;
+  background: Map<string, BackgroundTask>;
+  /** Stops the Smart Auto decider while it is choosing this turn's model. */
+  stopDecider?: () => void;
+}
+
+class ExtensionHost implements vscode.Disposable {
+  private readonly dependencies: WindowsDependencies;
+  private nodeReady?: Promise<string>;
+  private updateCheck?: Promise<UpdateOffer & { failures: string[] }>;
+  private updateInstall?: Promise<unknown>;
+  private updateRequired?: string;
+  private reloadPending = false;
+  private readonly providerInstalls = new Set<string>();
+  private readonly providerErrors = new Map<string, string>();
+  private readonly output = vscode.window.createOutputChannel('DeepSeek Harness');
+  private readonly accounts: AccountRegistry;
+  private readonly oauthAccounts: OAuthCliAccounts;
+  private readonly usage = new AccountUsageService(usage => this.sidebar.postMessage({ type: 'usageState', usage }));
+  private readonly models: ModelRegistry;
+  private readonly sidebar: DshSidebarProvider;
+  private readonly status: vscode.StatusBarItem;
+  private readonly runtimes = new Map<string, AcpRuntime>();
+  private dictation?: Dictation;
+  private whisperInstall?: Promise<WhisperEngine>;
+  /** Bumped by every voice start and stop, so a start that finishes downloading late knows it was cancelled. */
+  private voiceSession = 0;
+  private readonly chats = new Map<string, Chat>();
+  private readonly chatLoads = new Map<string, Promise<Chat>>();
+  private readonly promptStarts = new Map<string, Promise<void>>();
+  private readonly deletedSessions = new Set<string>();
+  private readonly childRuns = new Set<ChildRun>();
+  /** Text listeners for tool-less ACP runs such as chat naming, keyed by `${runtimeKey}\n${sessionId}`. */
+  private readonly oneShots = new Map<string, (update: Record<string, unknown>) => void>();
+  private readonly delegateHost = new DelegateHost();
+  private readonly toolpacks: ToolpackRegistry;
+  private readonly sync: ConfigSync;
+  private active?: SessionRecord;
+  private selectedModel: string;
+  private modelChoices: Record<string, ModelChoice>;
+  private approvalMode: ApprovalMode;
+  private readonly transcripts = new Map<string, TranscriptItem[]>();
+  /** ACP sessions created in this window that have not had a prompt yet, so their first context report measures the baseline. */
+  private readonly freshSessions = new Set<string>();
+  private readonly timelines: Record<string, SavedTimeline>;
+  private timelineTimer?: NodeJS.Timeout;
+  private cursorModels: ModelEntry[];
+  private cursorAccount: CursorAccountState = { connected: false, label: 'Not connected' };
+  private fileSummaries?: FileSummaries;
+  /** Roster of agents taking part in messaging, keyed by agent id; refreshed from agentBus roster events. */
+  private readonly agentRoster = new Map<string, AgentInfo>();
+  /** Whether the VS Code window has focus; desktop notifications are shown only while it does not. */
+  private windowFocused = true;
+  private readonly disposables: vscode.Disposable[] = [];
+
+  public constructor(private readonly context: vscode.ExtensionContext) {
+    this.dependencies = new WindowsDependencies(context.globalStorageUri.fsPath,
+      () => vscode.workspace.getConfiguration('dsh').get<string>('runtime.nodePath'),
+      provider => vscode.workspace.getConfiguration('dsh').get<string>(provider === 'claude-cli' ? 'runtime.claudePath' : 'runtime.cursorAgentPath'));
+    this.accounts = new AccountRegistry(context);
+    this.oauthAccounts = new OAuthCliAccounts(context);
+    this.models = new ModelRegistry(context, this.accounts);
+    this.cursorModels = context.workspaceState.get<ModelEntry[]>(CURSOR_MODELS_KEY, []);
+    for (const [id, items] of Object.entries(context.workspaceState.get<Record<string, TranscriptItem[]>>(TRANSCRIPTS_KEY, {}))) this.transcripts.set(id, items);
+    this.selectedModel = context.workspaceState.get<string>(SELECTED_MODEL_KEY) || this.models.list(true)[0]?.name || '';
+    this.modelChoices = context.workspaceState.get<Record<string, ModelChoice>>(MODEL_CHOICES_KEY, {});
+    const savedApproval = context.workspaceState.get<ApprovalMode>(APPROVAL_KEY);
+    this.approvalMode = savedApproval === 'auto' || savedApproval === 'full' ? savedApproval : 'ask';
+    this.timelines = context.workspaceState.get<Record<string, SavedTimeline>>(TIMELINES_KEY, {});
+    for (const saved of Object.values(this.timelines)) for (const item of saved.timeline) if (item.kind === 'question' && item.status === 'pending') item.status = 'skipped';
+    this.toolpacks = new ToolpackRegistry({
+      dir: join(context.globalStorageUri.fsPath, 'toolpacks'),
+      workerPath: join(context.extensionPath, 'dist', 'toolpack-worker.js'),
+      nodePath: () => vscode.workspace.getConfiguration('dsh').get<string>('runtime.nodePath') || undefined,
+      compile: async source => (await (await import('esbuild')).transform(source, { loader: 'ts', format: 'cjs', target: 'node20' })).code,
+    });
+    this.sidebar = new DshSidebarProvider(context.extensionUri, message => this.onSidebarMessage(message), (id, timeline, subagents) => {
+      if (this.deletedSessions.has(id)) return;
+      this.timelines[id] = { timeline, subagents };
+      if (!this.timelineTimer) this.timelineTimer = setTimeout(() => {
+        this.timelineTimer = undefined;
+        void this.context.workspaceState.update(TIMELINES_KEY, this.timelines);
+      }, 300);
+    }, vscode.Uri.joinPath(context.globalStorageUri, 'media'));
+    this.sync = new ConfigSync(context, {
+      roots: () => ({ ...this.instructionRoots(), toolpacks: join(context.globalStorageUri.fsPath, 'toolpacks'), memory: this.memorySettings().global }),
+      git: () => this.gitPath(),
+      accounts: () => [...this.oauthAccounts.list(), ...this.accounts.list()].map(({ id, provider, label }) => ({ id, provider, label })),
+      toolpacks: this.toolpacks,
+      log: line => this.output.appendLine(line),
+      post: sync => this.sidebar.postMessage({ type: 'syncState', sync }),
+      applied: async () => { this.refreshModels(); this.refreshSubagents(); this.refreshCustomize(); await this.refreshInstructions(); },
+    });
+    this.status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
+    this.status.command = 'dsh.continue';
+    this.status.text = '$(hubot) DSH';
+    this.status.tooltip = 'DeepSeek Harness: click to continue chat';
+    this.status.show();
+    const keepAliveTimer = setInterval(() => { void this.keepAliveChats(); }, 60_000);
+    setAgentPriority(vscode.workspace.getConfiguration('dsh').get('runtime.processPriority'));
+    this.applyShellSettings();
+    this.disposables.push(
+      this.output, this.status, this.sidebar, this.sync,
+      { dispose: () => clearInterval(keepAliveTimer) },
+      { dispose: () => { for (const runtime of this.runtimes.values()) runtime.dispose(); this.runtimes.clear(); this.delegateHost.dispose(); void this.toolpacks.dispose(); this.fileSummaries?.dispose(); this.dictation?.stop(); } },
+      this.toolpacks.onChange(() => { this.postToolpacks(); this.sync.schedule(); }),
+      vscode.window.registerWebviewViewProvider(DshSidebarProvider.viewType, this.sidebar, { webviewOptions: { retainContextWhenHidden: true } }),
+      vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('dsh.models')) this.refreshModels();
+        if (event.affectsConfiguration('dsh.subagents')) this.refreshSubagents();
+        if (event.affectsConfiguration('dsh.memory')) this.refreshMemory();
+        if (event.affectsConfiguration('dsh.runtime.processPriority')) setAgentPriority(vscode.workspace.getConfiguration('dsh').get('runtime.processPriority'));
+        if (event.affectsConfiguration('dsh.runtime.powershellSpeedups') || event.affectsConfiguration('dsh.runtime.rustTools')) this.applyShellSettings();
+        if (['dsh.features', 'dsh.experimental', 'dsh.runtime','dsh.nameModel', 'dsh.reviewModel', 'dsh.summaryModel', 'dsh.deciderModel', 'dsh.explorerModel', 'dsh.smartAutoRanks', 'dsh.updates.check', 'dsh.accessibility'].some(key => event.affectsConfiguration(key))) this.refreshCustomize();
+        if (['dsh.models', 'dsh.features.smartAuto', 'dsh.deciderModel', 'dsh.smartAutoRanks'].some(key => event.affectsConfiguration(key))) void this.guarded(() => this.dropSmartAuto());
+        if (SYNCED_SETTINGS.some(key => event.affectsConfiguration(`dsh.${key}`))) this.sync.schedule();
+      }),
+      vscode.window.onDidChangeWindowState(state => { this.windowFocused = state.focused; if (state.focused) this.sync.check(true); }),
+      { dispose: agentBus.onEvent(event => this.onAgentBusEvent(event)) },
+      { dispose: onUnifyFeatureChange(() => { this.postUnifyFeatures(); this.refreshCustomize(); }) },
+      ...this.watchGlobalInstructions(),
+      // Before the write, so a watcher scan cannot see the save first; after it, for format-on-save output.
+      vscode.workspace.onWillSaveTextDocument(event => this.adoptSave(event.document)),
+      vscode.workspace.onDidSaveTextDocument(document => this.adoptSave(document)),
+    );
+    this.registerCommands();
+    this.delegateHost.start({
+      describe: () => this.subagentInfos(),
+      tools: owner => this.bridgeTools(owner),
+      call: (owner, tool, args) => this.handleDelegateCall(owner, tool, args),
+      batching: owner => this.feature('batching') && [...this.chats.values()].some(chat => chat.ownerId === owner),
+    }).catch(error => this.output.appendLine(`Subagent bridge failed to start: ${String(error)}`));
+    const updateTimer = setTimeout(() => { void this.checkUpdates(); }, 5000);
+    this.disposables.push({ dispose: () => clearTimeout(updateTimer) });
+    // Toolpacks must be loaded before a startup sync can install or remove them.
+    // Models saved before they moved to settings must be in settings to sync.
+    void this.models.migrate().catch(error => this.output.appendLine(`Could not move saved models to settings: ${String(error)}`));
+    this.ensureNode().then(async () => { await this.refreshDependencies(); await this.toolpacks.start(); this.sync.start(); void this.offerSync(); }).catch(error => {
+      this.output.appendLine(`Dependency setup failed: ${String(error)}`);
+      void vscode.window.showErrorMessage(`DSH setup failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode });
+    this.refreshCustomize();
+    this.postUnifyFeatures();
+    this.refreshModels();
+    this.refreshSessions();
+    this.resumeLastChat();
+    void this.refreshAccount();
+    void this.refreshAccounts();
+  }
+
+  private get chat(): Chat | undefined { return this.active ? this.chats.get(this.active.id) : undefined; }
+
+  /** The chat a UI message concerns: the named one, else the active chat. */
+  private chatForMessage(chatId?: string): Chat | undefined {
+    return chatId ? this.chats.get(chatId) : this.chat;
+  }
+
+  /** The first workspace folder, as the project chats are grouped under. */
+  private currentProject(): SidebarProject | undefined {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder || folder.uri.scheme !== 'file') return undefined;
+    return { name: folder.name || basename(folder.uri.fsPath), path: folder.uri.fsPath };
+  }
+
+  /** Reopens the chat that was open when VS Code closed, as selecting its tab would, so its history is shown on startup. */
+  private resumeLastChat(): void {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder || folder.uri.scheme !== 'file' || !vscode.workspace.isTrusted) return;
+    const id = this.context.workspaceState.get<string>(ACTIVE_SESSION_KEY);
+    if (id && this.sessions().some(item => item.id === id)) void this.guarded(() => this.continueChat(id));
+  }
+
+  private ensureNode(): Promise<string> {
+    if (!this.nodeReady) {
+      this.nodeReady = Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'DSH: checking Node.js and npm…' }, () => this.dependencies.ensureNode())).catch(error => { this.nodeReady = undefined; throw error; });
+    }
+    return this.nodeReady;
+  }
+
+  private async refreshDependencies(): Promise<void> {
+    const providers = await Promise.all(['claude-cli', 'cursor-acp'].map(async provider => {
+      let installed = false;
+      try {
+        const command = await this.dependencies.providerCommand(provider);
+        installed = !!command;
+        if (command && isCliProvider(provider)) setDetectedCliCommand(provider, command);
+      } catch (error) { this.providerErrors.set(provider, error instanceof Error ? error.message : String(error)); }
+      return { provider, installed, installing: this.providerInstalls.has(provider), error: this.providerErrors.get(provider) };
+    }));
+    this.sidebar.postMessage({ type: 'dependencyState', providers });
+  }
+
+  private async installProvider(provider: string): Promise<void> {
+    if (!['claude-cli', 'cursor-acp'].includes(provider)) throw new Error('Unsupported provider installation.');
+    if (this.providerInstalls.has(provider)) return;
+    this.providerInstalls.add(provider);
+    this.providerErrors.delete(provider);
+    await this.refreshDependencies();
+    try {
+      await this.ensureNode();
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `DSH: installing ${runtimeLabel(provider)}…` }, () => this.dependencies.installProvider(provider));
+    } catch (error) {
+      this.providerErrors.set(provider, error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally { this.providerInstalls.delete(provider); await this.refreshDependencies(); }
+  }
+  private get mirror(): WorkspaceMirror | undefined { return this.chat?.mirror; }
+  private get review(): ReviewController | undefined { return this.chat?.review; }
+  private get running(): boolean { return !!this.chat?.running; }
+
+  private chatForRuntime(runtimeId: string, key: string): Chat | undefined {
+    return [...this.chats.values()].find(chat => chat.runtimeKey === key && this.rid(chat.record) === runtimeId);
+  }
+
+  private runtimeFor(key: string): AcpRuntime {
+    const existing = this.runtimes.get(key);
+    if (existing) return existing;
+    const runtime = new AcpRuntime(this.output, params => this.requestPermission(params, key), (method, params) => this.handleCursorRequest(method, params));
+    this.runtimes.set(key, runtime);
+    runtime.onUpdate(event => this.onRuntimeUpdate(event, key));
+    runtime.onState(state => {
+      if (state === 'stopped' && this.runtimes.get(key) === runtime) this.runtimes.delete(key);
+      this.updateStatus();
+    });
+    return runtime;
+  }
+
+  private async releaseRuntime(key: string | undefined): Promise<void> {
+    if (!key) return;
+    if ([...this.chats.values()].some(chat => chat.runtimeKey === key) || [...this.childRuns].some(run => run.runtimeKey === key)) return;
+    const runtime = this.runtimes.get(key);
+    if (!runtime) return;
+    this.runtimes.delete(key);
+    await runtime.stop();
+    runtime.dispose();
+  }
+
+  private async unloadChat(id: string): Promise<void> {
+    const chat = this.chats.get(id);
+    if (!chat) return;
+    this.chats.delete(id);
+    if (chat.ping) { chat.cli.cancel(); await chat.ping; }
+    if (this.active?.id === id) this.active = undefined;
+    if (chat.runtime) await chat.runtime.closeSession(this.rid(chat.record)).catch(() => undefined);
+    chat.review.dispose(); chat.mirror.dispose();
+    agentBus.unregister(id);
+    await this.releaseRuntime(chat.runtimeKey);
+  }
+
+  private trimChats(): void {
+    // Bound retained runtimes/watchers while keeping recent navigation warm.
+    const idle = [...this.chats.values()].filter(chat => !chat.running && !chat.jobActive && !chat.background.size && chat.record.id !== this.active?.id && !this.chatLoads.has(chat.record.id));
+    for (const chat of idle.slice(0, Math.max(0, idle.length - 2))) void this.guarded(() => this.unloadChat(chat.record.id));
+  }
+
+  private syncActiveView(): void {
+    const chat = this.chat;
+    this.sidebar.postMessage({ type: 'toolState', tools: [] });
+    this.sidebar.postMessage({ type: 'diffState', diffs: chat ? this.diffItems(chat.review.list()) : [] });
+  }
+
+  private updateStatus(): void {
+    const running = [...this.chats.values()].filter(chat => chat.running).length;
+    const label = runtimeLabel(this.active?.provider || '');
+    const pending = this.review?.pending().length || 0;
+    this.status.text = running ? `$(sync~spin) ${running > 1 ? `${running} chats` : label} running` : pending ? `$(diff) ${label} ${pending} pending` : `$(hubot) ${label} ready`;
+  }
+
+  private postRun(chatId: string, state: 'idle' | 'thinking' | 'tool' | 'cancelling', label: string): void {
+    this.sidebar.postMessage({ type: 'runState', sessionId: chatId, state, label });
+    // Keep the agent roster's state in step with the chat's turn.
+    if (this.chats.has(chatId)) agentBus.update(chatId, { state: state === 'idle' ? 'idle' : 'running' });
+  }
+
+  /** Desktop notification for a request or a finished turn, shown only while the window is unfocused. */
+  private notifyDesktop(title: string, body: string): void {
+    if (this.windowFocused || !getUnifyFeature('notifications.desktop')) return;
+    // The engine runs in Electron's main process; tests and other hosts load it without Electron, hence String + catch.
+    const moduleName = 'electron';
+    void import(moduleName).then((electron: unknown) => {
+      const api = electron as { Notification?: { new (options: { title: string; body: string }): { show(): void }; isSupported?(): boolean } };
+      const Notification = api.Notification;
+      if (!Notification || Notification.isSupported?.() === false) return;
+      new Notification({ title, body }).show();
+    }).catch(error => this.output.appendLine(`Desktop notification failed: ${error instanceof Error ? error.message : String(error)}`));
+  }
+
+  /** Forwards agent messaging events to the UI and keeps the roster used to find a message's chat. */
+  private onAgentBusEvent(event: AgentBusEvent): void {
+    if (event.kind === 'roster') {
+      this.agentRoster.clear();
+      for (const agent of event.agents) this.agentRoster.set(agent.id, agent);
+      this.sidebar.postMessage({ type: 'agentRoster', agents: event.agents });
+      return;
+    }
+    const message: AgentMessage = event.message;
+    const chatId = this.agentRoster.get(message.toId)?.chatId ?? this.agentRoster.get(message.fromId)?.chatId ?? message.toId;
+    this.sidebar.postMessage({ type: 'agentMessage', chatId, message });
+  }
+
+  /** Undelivered messages from other agents, formatted to lead the chat's next turn. */
+  private takeAgentMessages(chatId: string): string {
+    if (!getUnifyFeature('agents.messaging')) return '';
+    return agentBus.takeInbox(chatId)
+      .map(message => `From ${message.fromName} (${message.fromId}): ${message.text}`)
+      .join('\n\n');
+  }
+  public dispose(): Thenable<void> {
+    if (this.timelineTimer) clearTimeout(this.timelineTimer);
+    const saved = this.context.workspaceState.update(TIMELINES_KEY, this.timelines);
+    for (const chat of this.chats.values()) { if (chat.ping) chat.cli.cancel(); chat.review.dispose(); chat.mirror.dispose(); agentBus.unregister(chat.record.id); }
+    for (const disposable of this.disposables) disposable.dispose();
+    return saved;
+  }
+
+  private registerCommands(): void {
+    const command = (name: string, action: () => Promise<void> | void): void => {
+      this.disposables.push(vscode.commands.registerCommand(name, () => this.guarded(action)));
+    };
+    command('dsh.newChat', () => this.newChat());
+    command('dsh.continue', () => this.continueChat());
+    command('dsh.cancel', () => this.cancel());
+    command('dsh.pickModel', () => this.pickModel());
+    command('dsh.manageModels', () => this.manageModels());
+    command('dsh.manageAccounts', () => this.manageAccounts());
+    command('dsh.applyAll', () => this.review?.applyAll());
+    command('dsh.rejectAll', () => this.review?.rejectAll());
+    command('dsh.openRuntimeLogs', () => { this.output.show(); });
+    command('dsh.restartRuntime', () => this.restartRuntime());
+    command('dsh.checkForUpdates', () => this.checkUpdates(true));
+    command('dsh.reviewNext', () => this.reviewNext());
+    command('dsh.reviewAll', () => this.review?.openAll());
+    command('dsh.openWorkingCopyTerminal', () => this.openWorkingCopyTerminal());
+    command('dsh.applyHunk', () => this.review?.chooseHunk('apply'));
+    command('dsh.rejectHunk', () => this.review?.chooseHunk('reject'));
+  }
+
+  private async guarded(action: () => Promise<void> | void): Promise<void> {
+    try { await action(); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(message);
+      this.sidebar.postMessage({ type: 'error', message });
+    }
+  }
+
+  private root(): vscode.WorkspaceFolder {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder || folder.uri.scheme !== 'file') throw new Error('Open a local workspace folder to use DSH.');
+    if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace to run DSH tools.');
+    return folder;
+  }
+
+  private sessions(): SessionRecord[] { return this.context.workspaceState.get<SessionRecord[]>(SESSIONS_KEY, []); }
+
+  private async saveSession(record: SessionRecord, setActive = true): Promise<void> {
+    if (this.deletedSessions.has(record.id)) return;
+    await this.context.workspaceState.update(SESSIONS_KEY, [record, ...this.sessions().filter(item => item.id !== record.id)].slice(0, 100));
+    if (setActive && this.active?.id === record.id) await this.context.workspaceState.update(ACTIVE_SESSION_KEY, record.id);
+    this.refreshSessions();
+  }
+
+  private checkUpdates(manual = false): Promise<void> {
+    return this.runUpdates(manual).catch(error => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`DSH update failed: ${message}`);
+      if (manual) void vscode.window.showErrorMessage(`DSH update failed: ${message}`);
+    });
+  }
+
+  private requireCurrent(): void {
+    if (!this.updateRequired) return;
+    if (this.reloadPending) void this.promptReload();
+    else void this.checkUpdates(true);
+    throw new Error(this.updateRequired);
+  }
+
+  private async promptReload(): Promise<void> {
+    const reload = await vscode.window.showInformationMessage('DSH-IDE was updated. Reload the window to use it.', { modal: true }, 'Reload Window');
+    if (reload) await vscode.commands.executeCommand('workbench.action.reloadWindow');
+  }
+
+  /** Overlapping checks share one lookup, but each caller applies its own manual flag. */
+  private findUpdates(): Promise<UpdateOffer & { failures: string[] }> {
+    return this.updateCheck ??= (async () => {
+      const repository = vscode.workspace.getConfiguration('dsh').get<string>('updates.repository', '').trim();
+      const storage = this.context.globalStorageUri.fsPath;
+      const current = this.context.extension.packageJSON.version as string;
+      const failures: string[] = [];
+      const settled = async <T>(label: string, task: Promise<T>): Promise<T | undefined> => {
+        try { return await task; }
+        catch (error) {
+          const message = `${label} update check failed: ${error instanceof Error ? error.message : String(error)}`;
+          this.output.appendLine(message);
+          failures.push(message);
+          return undefined;
+        }
+      };
+      const [extension, installed, latest] = await Promise.all([
+        repository ? settled('DSH-IDE', latestExtensionRelease(repository, current)) : undefined,
+        settled('DSH', currentVersion(storage)),
+        settled('DSH', latestVersion()),
+      ]);
+      const dsh = installed && latest && compareVersions(latest, installed) > 0 ? { current: installed, latest } : undefined;
+      return { extension, dsh, failures };
+    })().finally(() => { this.updateCheck = undefined; });
+  }
+
+  // Prompts are never awaited while holding updateCheck or updateInstall: an ignored
+  // notification would otherwise block every later check until the window reloads.
+  private async runUpdates(manual: boolean): Promise<void> {
+    if (this.updateInstall) {
+      if (manual) void vscode.window.showInformationMessage('A DSH update is already installing.');
+      return;
+    }
+    const config = vscode.workspace.getConfiguration('dsh');
+    const current = this.context.extension.packageJSON.version as string;
+    const { extension, dsh, failures } = await this.findUpdates();
+    const plan = planUpdates({ extension, dsh }, {
+      promptOptional: manual || config.get<boolean>('updates.check', true),
+      skippedDsh: this.context.globalState.get<string>('dsh.ide.skippedDshVersion'),
+    });
+    if (!plan) {
+      if (manual && failures.length) void vscode.window.showWarningMessage(`Could not finish checking for updates. ${failures.join(' ')}`);
+      else if (manual) void vscode.window.showInformationMessage('DSH-IDE and DSH are up to date.');
+      return;
+    }
+    const parts = [plan.extension && `DSH-IDE ${plan.extension.version}`, plan.dsh && `DSH ${plan.dsh.latest}`].filter(Boolean).join(' and ');
+    if (plan.required) {
+      this.updateRequired = `DSH ${plan.dsh!.latest} is available, so DSH-IDE ${plan.extension!.version} must be installed before you can keep using it. Run "DSH: Check for Updates" to continue.`;
+      const choice = await vscode.window.showWarningMessage(`${parts} must be installed to keep using DSH-IDE.`,
+        { modal: true, detail: `You have DSH-IDE ${current} and DSH ${plan.dsh!.current}. Chats are disabled until the update is installed.` }, 'Update now');
+      if (!choice) return;
+    } else {
+      const buttons = plan.dsh && !plan.extension ? ['Update', 'Later', 'Skip this version'] : ['Update', 'Later'];
+      const choice = await vscode.window.showInformationMessage(`${parts} ${plan.extension && plan.dsh ? 'are' : 'is'} available.`, ...buttons);
+      if (choice === 'Skip this version') { await this.context.globalState.update('dsh.ide.skippedDshVersion', plan.dsh!.latest); return; }
+      if (choice !== 'Update') return;
+    }
+    // Another prompt may have started the same install while this one was open.
+    if (this.updateInstall) return;
+    const install = this.installUpdates(plan, parts);
+    this.updateInstall = install.finally(() => { this.updateInstall = undefined; }).catch(() => undefined);
+    let dshError: unknown;
+    try { ({ dshError } = await install); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`DSH update failed: ${message}`);
+      void vscode.window.showErrorMessage(`DSH update failed: ${message}`);
+      return;
+    }
+    if (dshError) {
+      const message = dshError instanceof Error ? dshError.message : String(dshError);
+      this.output.appendLine(`DSH update failed: ${message}`);
+      void vscode.window.showErrorMessage(`DSH-IDE ${plan.extension!.version} installed, but DSH ${plan.dsh!.latest} failed: ${message} Reload, then run "DSH: Check for Updates" to retry.`);
+    }
+    if (plan.extension) {
+      if (plan.required) await this.promptReload();
+      else {
+        this.updateRequired = undefined;
+        const installed = dshError ? `DSH-IDE ${plan.extension.version}` : parts;
+        const reload = await vscode.window.showInformationMessage(`${installed} installed. Reload the window to use the update.`, 'Reload Window', 'Later');
+        if (reload) await vscode.commands.executeCommand('workbench.action.reloadWindow');
+      }
+    } else {
+      this.updateRequired = undefined;
+      const restart = await vscode.window.showInformationMessage(`DSH ${plan.dsh!.latest} is installed. Restart the runtime to use it.`, 'Restart runtime');
+      if (restart) await this.guarded(() => this.restartRuntime());
+    }
+  }
+
+  /** The VSIX is small and is what unblocks a required update, so it installs before the much larger npm download. */
+  private async installUpdates(plan: UpdatePlan, parts: string): Promise<{ dshError?: unknown }> {
+    const storage = this.context.globalStorageUri.fsPath;
+    return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Updating ${parts}…` }, async progress => {
+      if (plan.extension) {
+        progress.report({ message: `Downloading DSH-IDE ${plan.extension.version}` });
+        await installExtensionRelease(plan.extension, path => vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(path)));
+        if (plan.required) {
+          this.reloadPending = true;
+          this.updateRequired = 'DSH-IDE was updated. Reload the window to continue.';
+        }
+      }
+      if (!plan.dsh) return {};
+      const latest = plan.dsh.latest;
+      try {
+        progress.report({ message: `Downloading DSH ${latest}` });
+        const node = await this.ensureNode();
+        await installVersion(storage, latest, node, downloads => progress.report({ message: `Downloading DSH ${latest} (${downloads} files)` }));
+        return {};
+      } catch (error) {
+        // Keep a finished extension install usable; the caller reports the DSH failure.
+        if (plan.extension) return { dshError: error };
+        throw error;
+      }
+    });
+  }
+
+  private async deleteSession(id: string): Promise<void> {
+    const record = this.sessions().find(item => item.id === id);
+    if (!record) return;
+    if (this.chats.get(id)?.jobActive) this.cancel(true, id);
+    else if (this.chats.get(id)?.background.size && !this.chats.get(id)?.running) this.cancel(true, id);
+    else if (this.chats.get(id)?.running) throw new Error('Cancel this chat before deleting it.');
+    const wasActive = this.active?.id === id || (!this.active && this.context.workspaceState.get<string>(ACTIVE_SESSION_KEY) === id);
+    this.deletedSessions.add(id);
+    const unloaded = this.unloadChat(id);
+    const remaining = this.sessions().filter(item => item.id !== id);
+    const saved = this.context.workspaceState.update(SESSIONS_KEY, remaining);
+    const selected = wasActive ? this.context.workspaceState.update(ACTIVE_SESSION_KEY, remaining[0]?.id) : Promise.resolve();
+    if (wasActive) this.active = undefined;
+    this.transcripts.delete(id);
+    this.sidebar.postMessage({ type: 'sessionDeleted', sessionId: id });
+    this.refreshSessions();
+    if (wasActive && remaining.length) await this.continueChat(remaining[0].id);
+    else if (wasActive) { this.syncActiveView(); this.updateStatus(); }
+    await Promise.all([saved, selected, unloaded]);
+    await this.saveTranscripts();
+    // An in-flight creation must finish disposing its watcher before its files
+    // are removed; otherwise copying and recursive deletion can race.
+    await this.chatLoads.get(id)?.catch(() => undefined);
+    await rm(join(this.context.globalStorageUri.fsPath, 'media', id), { recursive: true, force: true }).catch(() => undefined);
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    // Direct chats save transcript parts in the real workspace; a mirror's go with the mirror.
+    if (folder?.uri.scheme === 'file' && record.parts) await rm(join(folder.uri.fsPath, ...partsDir(id).split('/')), { recursive: true, force: true }).catch(() => undefined);
+    if (folder?.uri.scheme === 'file') await WorkspaceMirror.remove(folder.uri, this.context.globalStorageUri.fsPath, record.mirrorId).catch(error => this.output.appendLine(`Could not remove chat files: ${String(error)}`));
+  }
+
+  private refreshSessions(): void {
+    this.sidebar.postMessage({
+      type: 'sessionState',
+      sessions: this.sessions().map(item => ({ id: item.id, name: item.name, icon: item.icon, project: item.project || this.currentProject(), updatedAt: item.updatedAt, contextTokens: item.contextTokens, explorerTokens: item.explorerTokens })),
+      activeSessionId: this.active?.id || this.context.workspaceState.get<string>(ACTIVE_SESSION_KEY),
+    });
+  }
+
+  private refreshModels(): void {
+    const current = this.availableModel(this.selectedModel);
+    const choice = this.choiceFor(current);
+    this.sidebar.postMessage({
+      type: 'modelState',
+      models: this.availableModels().map(model => ({ id: model.name, name: model.name, provider: model.provider,
+        backend: model.backend, account: model.account, enabled: model.enabled,
+        speedOptions: model.speedOptions, effortOptions: model.effortOptions })),
+      cursorBackends: this.cursorModels.map(model => ({ value: model.backend, name: model.name.replace(/^Cursor /, '') })),
+      selectedModelId: this.selectedModel, selectedSpeed: choice.speed, selectedEffort: choice.effort,
+    });
+  }
+
+  private choiceFor(model?: ModelEntry): ModelChoice {
+    if (!model) return {};
+    const stored = this.modelChoices[model.name] || {};
+    return {
+      speed: model.speedOptions?.some(item => item.label === stored.speed) ? stored.speed : model.speedOptions?.[0]?.label,
+      effort: model.effortOptions?.includes(stored.effort || '') ? stored.effort : '',
+    };
+  }
+
+  private effectiveModel(model: ModelEntry): ModelEntry {
+    const choice = this.choiceFor(model);
+    const backend = model.speedOptions?.find(item => item.label === choice.speed)?.backend || model.backend;
+    return { ...model, backend };
+  }
+
+  private usageTargets(): UsageTarget[] {
+    return [
+      ...this.oauthAccounts.list().map(account => ({ id: account.id, provider: account.provider, oauth: account })),
+      ...this.accounts.list().map(account => ({ id: account.id, provider: account.provider, secret: () => this.accounts.getSecret(account.id) })),
+      ...(this.cursorAccount.connected ? [{ id: 'cursor-login', provider: 'cursor-acp' }] : []),
+    ];
+  }
+
+  private refreshUsage(force = false, accountId?: string): void {
+    try {
+      const targets = this.usageTargets();
+      const target = accountId === undefined ? undefined : targets.find(item => item.id === accountId);
+      const refresh = accountId === undefined ? this.usage.refresh(targets, force) : target ? this.usage.refreshOne(target, force) : undefined;
+      void refresh?.catch(error => this.output.appendLine(`Usage refresh failed: ${String(error)}`));
+    } catch (error) { this.output.appendLine(`Usage refresh failed: ${String(error)}`); }
+  }
+
+  private async refreshAccounts(checkCursor = true): Promise<void> {
+    if (checkCursor && !this.cursorAccount.busy) {
+      try {
+        const output = await this.runCursorCommand('status', undefined, 15000);
+        const connected = !/not authenticated|not logged in|unauthenticated/i.test(output) && /authenticated|logged in/i.test(output);
+        const email = output.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/i)?.[0];
+        this.cursorAccount = { connected, label: connected ? email || 'Cursor account' : 'Not connected' };
+      } catch { this.cursorAccount = { connected: false, label: 'Cursor CLI unavailable' }; }
+    }
+    this.sidebar.postMessage({ type: 'accountsState', accounts: [
+      ...this.oauthAccounts.list().map(account => ({ id: account.id, provider: account.provider, label: account.label,
+        email: account.email, isDefault: this.oauthAccounts.getDefault(account.provider)?.id === account.id, authType: 'oauth' as const })),
+      ...this.accounts.list().map(account => ({ id: account.id, provider: account.provider, label: account.label, email: account.email,
+        isDefault: this.accounts.getDefault(account.provider)?.id === account.id, authType: 'api-key' as const,
+        ...(account.provider === SELF_HOSTED && typeof account.metadata?.baseURL === 'string' ? { baseURL: account.metadata.baseURL } : {}) })),
+    ], cursor: this.cursorAccount });
+    await this.refreshAccount();
+    this.refreshUsage();
+  }
+
+  private availableModels(): ModelEntry[] {
+    return this.models.list();
+  }
+
+  private availableModel(name: string): ModelEntry | undefined {
+    return this.availableModels().find(model => model.name === name);
+  }
+
+  private async refreshCursorModels(runtime: AcpRuntime, sessionId: string): Promise<void> {
+    const options = runtime.models(sessionId);
+    if (!options.length) return;
+    this.cursorModels = options.filter(option => option.value !== 'auto').map(option => ({
+      name: `Cursor ${option.name}`, provider: 'cursor-acp', backend: option.value,
+      account: 'cursor-login', enabled: true,
+    }));
+    await this.context.workspaceState.update(CURSOR_MODELS_KEY, this.cursorModels);
+    this.refreshModels();
+  }
+
+  private async refreshAccount(): Promise<void> {
+    const model = this.availableModel(this.selectedModel);
+    if (!model) return;
+    if (model.provider === 'cursor-acp') {
+      this.sidebar.postMessage({ type: 'accountState', provider: 'Cursor', label: this.cursorAccount.connected ? this.cursorAccount.label : 'Connect Cursor account', connected: this.cursorAccount.connected });
+      this.status.tooltip = `${model.name} · ${this.cursorAccount.label}`;
+      return;
+    }
+    if (isOAuthProvider(model.provider)) {
+      const account = accountForModel(this.oauthAccounts, model);
+      this.sidebar.postMessage({ type: 'accountState', provider: model.provider, label: account?.label || 'Connect an account', connected: !!account });
+      this.status.tooltip = `${model.name} · ${account?.label || 'no account'}`;
+      return;
+    }
+    const account = accountForModel(this.accounts, model);
+    this.sidebar.postMessage({ type: 'accountState', provider: model.provider, label: account?.label || 'Add an account', connected: !!account });
+    this.status.tooltip = `${model.name} · ${model.provider} · ${account?.label || 'no account'}`;
+  }
+
+  private async resolveRoute(override?: ModelEntry): Promise<ResolvedRoute> {
+    await this.ensureNode();
+    await this.refreshDependencies();
+    const selected = override ?? this.availableModel(this.selectedModel);
+    if (!selected) throw new Error('Pick a model first.');
+    const model = override ?? this.effectiveModel(selected);
+    if (model.provider === 'cursor-acp') return { model };
+    if (isOAuthProvider(model.provider)) {
+      const oauthAccount = accountForModel(this.oauthAccounts, model);
+      if (!oauthAccount) {
+        this.sidebar.postMessage({ type: 'showPage', page: 'accounts' });
+        throw new Error(`Connect a ${model.provider === 'codex-cli' ? 'ChatGPT' : 'Claude'} account in Accounts first.`);
+      }
+      return { model, oauthAccount };
+    }
+    if (!accountForModel(this.accounts, model) && (!model.account || model.account === 'default')) {
+      this.sidebar.postMessage({ type: 'showPage', page: 'accounts' });
+      throw new Error(`Add a ${model.provider} API key account in Accounts before starting a chat.`);
+    }
+    const route = await this.models.resolve(model.name);
+    await this.refreshAccount();
+    return { ...route, model };
+  }
+
+  private selfHostedBaseURL(account: { metadata?: Record<string, unknown> }): string {
+    const baseURL = account.metadata?.baseURL;
+    if (typeof baseURL !== 'string' || !baseURL) throw new Error('This self-hosted account has no base URL. Remove it and add it again.');
+    return baseURL;
+  }
+
+  /** Asks a self-hosted account's server which models it serves. Errors never include the key. */
+  private async listProviderModels(accountId: string): Promise<void> {
+    const post = (models: string[], error?: string) => this.sidebar.postMessage({ type: 'providerModels', accountId, models, ...(error ? { error } : {}) });
+    try {
+      const account = this.accounts.get(accountId);
+      if (!account || account.provider !== SELF_HOSTED) throw new Error('Choose a self-hosted account.');
+      const baseURL = this.selfHostedBaseURL(account);
+      const secret = await this.accounts.getSecret(accountId);
+      if (!secret) throw new Error('This account has no API key. Replace the key and try again.');
+      const response = await fetch(`${baseURL}/models`, { headers: { Authorization: `Bearer ${secret}`, Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
+      if (!response.ok) throw new Error(`The server answered ${response.status}${response.status === 401 || response.status === 403 ? ' (check the API key)' : ''}.`);
+      post(parseModelIds(await response.json()));
+    } catch (error) {
+      const raw = error instanceof Error ? (error.name === 'TimeoutError' ? 'The server did not answer within 20 seconds.' : error.message) : String(error);
+      let text = raw;
+      try { const key = await this.accounts.getSecret(accountId); if (key) text = text.split(key).join('[key]'); } catch { /* keep text */ }
+      post([], text || 'Could not load models.');
+    }
+  }
+
+  private envName(provider: string): string {
+    const configured: Record<string, string> = {
+      'deepseek-official': 'DEEPSEEK_API_KEY',
+      anthropic: 'ANTHROPIC_API_KEY',
+      openai: 'OPENAI_API_KEY',
+      openrouter: 'OPENROUTER_API_KEY',
+      'opencode-go': 'OPENCODE_API_KEY',
+      mistral: 'MISTRAL_API_KEY',
+      [SELF_HOSTED]: SELF_HOSTED_ENV,
+    };
+    const name = configured[provider];
+    if (!name) throw new Error(`Provider '${provider}' needs an explicit DSH adapter and credential mapping before it can run.`);
+    return name;
+  }
+
+  private cursorAgentLaunch(): { command: string; args: string[] } {
+    const configured = vscode.workspace.getConfiguration('dsh').get<string>('runtime.cursorAgentPath')?.trim() || 'agent';
+    if (process.platform === 'win32') {
+      const root = configured === 'agent' ? join(process.env.LOCALAPPDATA || '', 'cursor-agent')
+        : configured.toLowerCase().endsWith('.cmd') || configured.toLowerCase().endsWith('.ps1') ? dirname(configured) : configured;
+      const versions = join(root, 'versions');
+      if (existsSync(versions)) {
+        const latest = readdirSync(versions, { withFileTypes: true }).filter(entry => entry.isDirectory())
+          .map(entry => entry.name).sort().reverse().find(version =>
+            existsSync(join(versions, version, 'node.exe')) && existsSync(join(versions, version, 'index.js')));
+        if (latest) {
+          const versionPath = join(versions, latest);
+          return {
+            command: join(versionPath, 'node.exe'), args: [join(versionPath, 'index.js'), 'acp'],
+          };
+        }
+      }
+    }
+    return { command: configured, args: ['acp'] };
+  }
+
+  private runCursorCommand(subcommand: 'status' | 'login' | 'logout', onOutput?: (text: string) => void, timeoutMs = 30000): Promise<string> {
+    const launch = this.cursorAgentLaunch();
+    return new Promise<string>((resolve, reject) => {
+      let output = '';
+      let settled = false;
+      const child = spawn(launch.command, [...launch.args.slice(0, -1), subcommand], {
+        windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, ...(subcommand === 'login' ? { NO_OPEN_BROWSER: '1' } : {}) },
+      });
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (error) reject(error); else resolve(output);
+      };
+      const timer = setTimeout(() => { child.kill(); finish(new Error(`Cursor ${subcommand} timed out.`)); }, timeoutMs);
+      const read = (chunk: Buffer): void => {
+        const text = chunk.toString('utf8');
+        output = (output + text).slice(-65536);
+        onOutput?.(output);
+      };
+      child.stdout.on('data', read);
+      child.stderr.on('data', read);
+      child.on('error', () => finish(new Error('Cursor Agent CLI could not start. Check dsh.runtime.cursorAgentPath.')));
+      child.on('close', code => finish(code === 0 ? undefined : new Error(`Cursor ${subcommand} failed. Open Accounts and try again.`)));
+    });
+  }
+
+  private async cursorLogin(): Promise<void> {
+    if (this.cursorAccount.busy) return;
+    this.cursorAccount = { ...this.cursorAccount, busy: true, error: undefined, authUrl: undefined };
+    await this.refreshAccounts(false);
+    let opened = false;
+    try {
+      await this.runCursorCommand('login', output => {
+        if (opened) return;
+        const match = output.match(/https:\/\/[^\s\x1b]+/i);
+        if (!match) return;
+        const url = match[0].replace(/[).,;]+$/, '');
+        if (!this.safeCursorAuthUrl(url)) return;
+        opened = true;
+        this.cursorAccount = { ...this.cursorAccount, authUrl: url };
+        void this.refreshAccounts(false);
+        void vscode.env.openExternal(vscode.Uri.parse(url));
+      }, 300000);
+      this.cursorAccount = { ...this.cursorAccount, busy: false };
+      await this.refreshAccounts();
+      await this.refreshAccount();
+    } catch (error) {
+      this.cursorAccount = { ...this.cursorAccount, busy: false, error: error instanceof Error ? error.message : String(error) };
+      await this.refreshAccounts(false);
+      throw error;
+    }
+  }
+
+  private safeCursorAuthUrl(value: string): boolean {
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' && (url.hostname === 'cursor.com' || url.hostname.endsWith('.cursor.com') || url.hostname === 'cursor.sh' || url.hostname.endsWith('.cursor.sh'));
+    } catch { return false; }
+  }
+
+  private async cursorLogout(): Promise<void> {
+    const cursorChats = [...this.chats.values()].filter(chat => chat.record.provider === 'cursor-acp');
+    if (cursorChats.length) {
+      if (cursorChats.some(chat => chat.running)) throw new Error('Wait for running Cursor chats before disconnecting.');
+      if (cursorChats.some(chat => chat.review.pending().length)) throw new Error('Apply or reject pending edits before disconnecting Cursor.');
+      const wasActive = cursorChats.some(chat => chat.record.id === this.active?.id);
+      for (const chat of cursorChats) await this.unloadChat(chat.record.id);
+      if (wasActive) await this.context.workspaceState.update(ACTIVE_SESSION_KEY, undefined);
+      this.refreshSessions();
+      this.syncActiveView();
+    }
+    await this.runCursorCommand('logout');
+    this.cursorAccount = { connected: false, label: 'Not connected' };
+    await this.refreshAccounts();
+    await this.refreshAccount();
+  }
+
+  private async ensureRuntime(route: ResolvedRoute, cwd: string, ownerId: string): Promise<{ runtime: AcpRuntime; key: string } | undefined> {
+    await this.ensureNode();
+    if ('oauthAccount' in route && isCliProvider(route.model.provider)) {
+      await this.refreshDependencies();
+      return undefined;
+    }
+    if (route.model.provider === 'cursor-acp') {
+      const key = `cursor-acp:${ownerId}`;
+      const runtime = this.runtimeFor(key);
+      const { command, args } = this.cursorAgentLaunch();
+      try { await runtime.start({ kind: 'cursor', command, args, cwd }); }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Could not start Cursor Agent CLI. Install it from https://cursor.com/docs/cli/installation, run "agent login", or set dsh.runtime.cursorAgentPath. ${message}`);
+      }
+      await this.refreshAccount();
+      return { runtime, key };
+    }
+    const deepSeekAccount = this.accounts.getDefault('deepseek-official');
+    let start: { accountId: string; dshProvider: string; model: string; secret: string; envName: string; keyExtra: string; baseURL?: string };
+    if ('oauthAccount' in route) {
+      // The token is fixed when the runtime launches, so one close to expiry is refreshed first. Its expiry is part of
+      // the key: a refreshed token launches a new runtime, which resumes the chat's DSH session from the same home.
+      const tokens = await freshCodexTokens(route.oauthAccount.directory, { minValidityMs: CODEX_TOKEN_MARGIN_MS });
+      start = {
+        accountId: route.oauthAccount.id,
+        dshProvider: 'openai-codex',
+        model: codexBackend(route.model.backend),
+        secret: tokens.access,
+        envName: 'OPENAI_CODEX_ACCESS_TOKEN',
+        keyExtra: `:${tokens.expires}`,
+      };
+    } else if ('account' in route) {
+      start = {
+        accountId: route.account.id,
+        dshProvider: route.model.provider,
+        model: route.model.backend,
+        secret: route.secret,
+        envName: this.envName(route.model.provider),
+        keyExtra: '',
+        ...(route.model.provider === SELF_HOSTED ? { baseURL: this.selfHostedBaseURL(route.account) } : {}),
+      };
+    } else {
+      throw new Error('The selected API provider has no account.');
+    }
+    // A forced cancellation must not terminate another chat or subagent.
+    const key = `${route.model.provider}:${start.accountId}:${start.model}:${deepSeekAccount?.id || ''}${start.keyExtra}${start.baseURL ? `:${start.baseURL}` : ''}:${ownerId}`;
+    const runtime = this.runtimeFor(key);
+    const accountHash = createHash('sha256').update(start.accountId).digest('hex').slice(0, 16);
+    const providerHash = createHash('sha256').update(route.model.provider).digest('hex').slice(0, 16);
+    const home = join(this.context.globalStorageUri.fsPath, 'runtime', providerHash, accountHash);
+    const nodePath = await this.ensureNode();
+    const webSearchKey = deepSeekAccount ? await this.accounts.getSecret(deepSeekAccount.id) : undefined;
+    await runtime.start({ kind: 'dsh', provider: start.dshProvider, model: start.model, apiKey: start.secret,
+      webSearchKey, envName: start.envName, efforts: route.model.effortOptions, baseURL: start.baseURL, home, nodePath, dshRoot: await updatedRoot(this.context.globalStorageUri.fsPath) });
+    return { runtime, key };
+  }
+
+  /**
+   * Moves a ChatGPT (Codex) chat onto a runtime with a valid access token when its token was refreshed (or `force`
+   * refreshes it after an auth error), resuming the chat's DSH session there. Resolves false when the session could not
+   * be resumed: the chat is then on a new session and its next prompt needs a handoff.
+   */
+  private async refreshCodexRuntime(chat: Chat, force = false): Promise<boolean> {
+    const record = chat.record;
+    const account = this.oauthAccounts.get(record.accountId);
+    if (!account) throw new Error('The ChatGPT account for this chat is missing. Connect it again in Accounts.');
+    if (force) await freshCodexTokens(account.directory, { force: true });
+    const model: ModelEntry = { name: record.modelName, provider: record.provider, backend: record.backend, account: account.id, enabled: true };
+    const slot = await this.ensureRuntime({ model, oauthAccount: account }, chat.mirror.cwd, chat.ownerId);
+    if (!slot) throw new Error('ChatGPT (Codex) could not start.');
+    if (slot.key === chat.runtimeKey && slot.runtime === chat.runtime && slot.runtime.isRunning) return true;
+    const previous = chat.runtimeKey;
+    chat.runtime = slot.runtime;
+    chat.runtimeKey = slot.key;
+    await this.releaseRuntime(previous);
+    let resumed = true;
+    try {
+      await slot.runtime.resumeSession(this.rid(record), chat.mirror.cwd, this.mcpServers(chat.ownerId));
+    } catch (error) {
+      this.output.appendLine(`Resuming "${record.name}" on a refreshed ChatGPT runtime failed; continuing in a new session: ${error instanceof Error ? error.message : String(error)}`);
+      record.runtimeId = await slot.runtime.newSession(chat.mirror.cwd, this.mcpServers(chat.ownerId));
+      this.freshSessions?.add(record.runtimeId);
+      record.explorerTokens = 0;
+      resumed = false;
+    }
+    if (record.effort) await slot.runtime.setConfigOption(this.rid(record), 'reasoning_effort', record.effort);
+    return resumed;
+  }
+
+  private readonly pendingApprovals = new Map<string, { sessionId: string; background: boolean; resolve: (allow: boolean) => void; timer: NodeJS.Timeout; /** Allow rule this request would store with "Always allow". */ project?: string; prefix?: string }>();
+
+  /**
+   * `background` marks a request from a background subagent, which stays open when the parent's turn ends.
+   * `prefix` is the command prefix an "Always allow" answer would remember.
+   */
+  private askInChat(sessionId: string | undefined, title: string, detail: string, background = false, prefix?: string): Promise<boolean> {
+    if (!sessionId) return Promise.resolve(false);
+    const project = this.sessions().find(item => item.id === sessionId)?.project?.path || this.currentProject()?.path;
+    // A remembered "Always allow" answers before the user is asked.
+    if (prefix && project && isAlwaysAllowed(project, prefix)) return Promise.resolve(true);
+    const id = randomUUID();
+    void vscode.commands.executeCommand('workbench.view.extension.dsh');
+    return new Promise<boolean>(resolve => {
+      const timer = setTimeout(() => {
+        this.output.appendLine(`Approval request "${title}" went unanswered for 10 minutes; rejecting it so the turn can finish.`);
+        this.settleApproval(id, false);
+      }, APPROVAL_TIMEOUT_MS);
+      this.pendingApprovals.set(id, { sessionId, background, resolve, timer, ...(project ? { project } : {}), ...(prefix ? { prefix } : {}) });
+      this.sidebar.postMessage({ type: 'approvalRequest', sessionId, id, title, detail: detail.slice(0, 2000) });
+      this.notifyDesktop(title, detail.slice(0, 300));
+    });
+  }
+
+  /** Rejects a chat's open requests. With `keepBackground`, requests from background subagents stay open. */
+  private settleChatApprovals(chatId: string, keepBackground = false): void {
+    for (const [id, pending] of [...this.pendingApprovals]) if (pending.sessionId === chatId && !(keepBackground && pending.background)) this.settleApproval(id, false);
+    for (const [id, pending] of [...this.pendingQuestions]) if (pending.sessionId === chatId) this.settleQuestion(id, null);
+  }
+
+  private readonly pendingQuestions = new Map<string, { sessionId: string; resolve: (answers: string[] | null) => void; timer: NodeJS.Timeout }>();
+
+  private async askQuestions(chat: Chat, args: Record<string, unknown>): Promise<DelegateResult> {
+    if (chat.cancelRequested) return { text: 'Cancelled.', isError: true };
+    const parsed = parseQuestions(args);
+    if ('error' in parsed) return { text: parsed.error, isError: true };
+    const answers = await this.showQuestions(chat, parsed.questions);
+    await this.logJobDecisions(chat, parsed.questions, answers);
+    return { text: formatAnswers(parsed.questions, answers) };
+  }
+
+  /** Claude's built-in AskUserQuestion, shown with the same chat card as ask_questions. */
+  private async askNativeQuestions(chat: Chat, input: Record<string, unknown>): Promise<Record<string, string> | string> {
+    if (chat.cancelRequested) return 'Cancelled.';
+    const parsed = parseQuestions(input);
+    if ('error' in parsed) return parsed.error;
+    const answers = await this.showQuestions(chat, parsed.questions);
+    await this.logJobDecisions(chat, parsed.questions, answers);
+    return answers ? answersByQuestion(input, answers) : formatAnswers(parsed.questions, null);
+  }
+
+  private async logJobDecisions(chat: Chat, questions: SidebarQuestion[], answers: string[] | null): Promise<void> {
+    const job = chat.record.job;
+    if (!chat.jobActive || !job || !['draft', 'work', 'verify'].includes(job.phase) || !answers) return;
+    questions.forEach((question, index) => { if (typeof answers[index] === 'string') addDecision(job, question.question, answers[index]); });
+    await this.updateJob(chat, job);
+  }
+
+  private showQuestions(chat: Chat, questions: SidebarQuestion[]): Promise<string[] | null> {
+    const id = randomUUID();
+    const sessionId = chat.record.id;
+    void vscode.commands.executeCommand('workbench.view.extension.dsh');
+    return new Promise(resolve => {
+      const timer = setTimeout(() => {
+        this.output.appendLine('A question went unanswered for 10 minutes; skipping it so the turn can finish.');
+        this.settleQuestion(id, null);
+      }, APPROVAL_TIMEOUT_MS);
+      this.pendingQuestions.set(id, { sessionId, resolve, timer });
+      this.sidebar.postMessage({ type: 'questionRequest', sessionId, id, questions });
+      this.notifyDesktop(questions[0]?.question || 'Question from the agent', questions.length > 1 ? `${questions.length} questions are waiting in DSH.` : 'It is waiting in DSH.');
+    });
+  }
+
+  private settleQuestion(id: string, answers: string[] | null): void {
+    const pending = this.pendingQuestions.get(id);
+    if (!pending) return;
+    this.pendingQuestions.delete(id);
+    clearTimeout(pending.timer);
+    this.sidebar.postMessage({ type: 'questionResolved', sessionId: pending.sessionId, id, answers });
+    pending.resolve(answers);
+  }
+
+  /**
+   * Tools every agent's bridge offers, subagents included: file summaries, media, image generation when a ChatGPT (Codex) account
+   * is connected, and toolpacks listed one line per pack. Tools of packs turned on in the owner's chat are offered directly.
+   */
+  private bridgeTools(owner?: string): DelegateToolInfo[] {
+    const tools: DelegateToolInfo[] = this.summariesOn() ? [SUMMARY_TOOL, SEND_MEDIA_TOOL] : [SEND_MEDIA_TOOL];
+    if (this.oauthAccounts.list('codex-cli').length) tools.push(GENERATE_IMAGE_TOOL);
+    const packs = this.toolpacks.running();
+    if (packs.length) {
+      const chat = owner ? this.chatForOwner(owner) : undefined;
+      let descriptors = this.toolpacks.packDescriptors(new Set(chat?.record.toolpacks || []));
+      if (chat && owner === chat.ownerId && skipToolListChanged(chat.record.provider, chat.record.initTools)) {
+        descriptors = descriptors.filter(tool => chat.record.initTools?.some(name => name === tool.name || name.endsWith(`__${tool.name}`)));
+      }
+      tools.push(loadToolpackTool(packs), runToolpackTool, ...descriptors);
+    }
+    return tools;
+  }
+
+  /** The chat a bridge owner belongs to; a subagent's is its parent chat. */  private chatForOwner(owner: string): Chat | undefined {
+    return [...this.childRuns].find(item => item.owner === owner)?.parent ?? [...this.chats.values()].find(item => item.ownerId === owner);
+  }
+
+  /** Turns on packs in a chat and returns the ones that were newly turned on. */
+  private enablePacks(chat: Chat, ids: string[]): string[] {
+    const on = chat.record.toolpacks || [];
+    const added = ids.filter(id => !on.includes(id));
+    if (added.length) { chat.record.toolpacks = [...on, ...added]; void this.saveSession(chat.record); }
+    return added;
+  }
+
+  /** Packs the user named as "/pack" in a message, turned on for the rest of the chat. */
+  private turnOnPacks(chat: Chat, prompt: string): string[] {
+    return this.enablePacks(chat, packCommands(prompt, this.toolpacks.running().map(pack => pack.id)));
+  }
+
+  private loadToolpacks(chat: Chat, args: Record<string, unknown>, stable = false): DelegateResult {
+    const asked = (Array.isArray(args.packs) ? args.packs : [args.packs ?? args.pack]).filter((item): item is string => typeof item === 'string').map(item => item.trim().toLowerCase());
+    const running = new Set(this.toolpacks.running().map(pack => pack.id));
+    const found = asked.filter(id => running.has(id));
+    const missing = asked.filter(id => !running.has(id));
+    if (!found.length) return { text: `No such running toolpack: ${missing.join(', ') || '(none given)'}. Available: ${[...running].join(', ') || '(none)'}.`, isError: true };
+    this.enablePacks(chat, found);
+    const tools = describePackTools(this.toolpacks.packDescriptors(new Set(found)));
+    const skipListChanged = stable && skipToolListChanged(chat.record.provider, chat.record.initTools);
+    return { text: `${missing.length ? `Not available: ${missing.join(', ')}.\n\n` : ''}Loaded ${found.join(', ')} for this chat. ${skipListChanged ? `Call these tools through ${RUN_TOOLPACK_TOOL}. ` : ''}Tools:\n\n${tools}`, skipListChanged };
+  }
+
+  private runPackTool(chat: Chat, args: Record<string, unknown>): Promise<DelegateResult> | DelegateResult {
+    const tool = typeof args.tool === 'string' ? args.tool.trim() : '';
+    const pack = this.toolpacks.packOf(tool);
+    if (!pack) return { text: `Unknown toolpack tool "${tool}". Call ${LOAD_TOOLPACK} first to see tool names.`, isError: true };
+    if (!chat.record.toolpacks?.includes(pack)) return { text: `Toolpack "${pack}" is not loaded. Call ${LOAD_TOOLPACK} with it first.`, isError: true };
+    const toolArgs = args.arguments && typeof args.arguments === 'object' && !Array.isArray(args.arguments) ? args.arguments as Record<string, unknown> : {};
+    return this.toolpacks.call(tool, toolArgs);
+  }
+
+  /** Handles the toolpack tools shared by main agents and subagents, or returns undefined for other tools. */
+  private packCall(chat: Chat, tool: string, args: Record<string, unknown>, stable = false): Promise<DelegateResult> | DelegateResult | undefined {
+    if (tool === LOAD_TOOLPACK) return this.loadToolpacks(chat, args, stable);
+    if (tool === RUN_TOOLPACK_TOOL) return this.runPackTool(chat, args);
+    if (this.toolpacks.owns(tool)) return this.toolpacks.call(tool, args);
+    return undefined;
+  }
+
+  private summariesOn(): boolean { return this.feature('fileSummaries'); }
+
+  /** This workspace's file summaries, kept in extension storage. Undefined without a local workspace folder. */
+  private get summaries(): FileSummaries | undefined {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder || folder.uri.scheme !== 'file') return undefined;
+    return this.fileSummaries ??= new FileSummaries({
+      file: join(this.context.globalStorageUri.fsPath, 'summaries', `${createHash('sha256').update(folder.uri.fsPath).digest('hex').slice(0, 16)}.json`),
+      generate: (cwd, prompt) => {
+        const choice = this.modelSetting('summaryModel');
+        if (!choice.model) throw new Error('No summary model is set.');
+        return this.runOneShot({ ...choice, model: choice.model }, cwd, prompt, 300_000);
+      },
+      enabled: () => this.summariesOn(),
+      canGenerate: () => !!this.modelSetting('summaryModel').model,
+      log: line => this.output.appendLine(line),
+      excluded: path => mirrorPathExcluded(path),
+    });
+  }
+
+  /** Queues a file an agent just read in `cwd` for a summary. */
+  private noteRead(cwd: string, path: unknown): void {
+    if (typeof path === 'string' && path && this.summariesOn()) this.summaries?.request(cwd, path);
+  }
+
+  private async readSummaries(chat: Chat, args: Record<string, unknown>): Promise<DelegateResult> {
+    if (!this.summariesOn() || !this.summaries) return { text: 'File summaries are turned off.', isError: true };
+    const paths = (Array.isArray(args.paths) ? args.paths : []).filter((item): item is string => typeof item === 'string');
+    if (!paths.length) return { text: '"paths" must list at least one file or folder.', isError: true };
+    return { text: await this.summaries.lookup(chat.mirror.cwd, paths.slice(0, 50)) };
+  }
+
+  private postToolpacks(error?: string): void {
+    this.sidebar.postMessage({ type: 'toolpacksState', packs: this.toolpacks.list(), error });
+  }
+
+  private async addToolpack(): Promise<void> {
+    const picked = await vscode.window.showOpenDialog({ canSelectMany: false, canSelectFolders: false, filters: { TypeScript: ['ts'] }, openLabel: 'Upload toolpack' });
+    if (!picked?.[0]) return;
+    try {
+      await this.toolpacks.add(picked[0].fsPath);
+      this.postToolpacks();
+    } catch (error) {
+      this.postToolpacks(`Could not add ${basename(picked[0].fsPath)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private settleApproval(id: string, allow: boolean, always = false): void {
+    const pending = this.pendingApprovals.get(id);
+    if (!pending) return;
+    this.pendingApprovals.delete(id);
+    clearTimeout(pending.timer);
+    // "Always allow" remembers the command prefix for this project, so later matching requests skip the prompt.
+    if (allow && always && pending.project && pending.prefix) {
+      try {
+        addAllowRule(pending.project, pending.prefix);
+        this.output.appendLine(`Always allowing "${pending.prefix}" in ${pending.project}.`);
+      } catch (error) {
+        this.output.appendLine(`Could not save the allow rule: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    this.sidebar.postMessage({ type: 'approvalResolved', sessionId: pending.sessionId, id, allowed: allow });
+    pending.resolve(allow);
+  }
+
+  private rid(record: SessionRecord): string { return record.runtimeId || record.id; }
+
+  /** `effort` replaces the chat's effort; without it an override keeps the chat's effort and a picker switch uses the picker's. */
+  private async switchModel(chat: Chat, override?: ModelEntry, effort?: string): Promise<void> {
+    const record = chat.record;
+    const route = await this.resolveRoute(override);
+    const model = route.model;
+    effort = effort ?? (override ? record.effort : this.choiceFor(this.availableModel(model.name)).effort);
+    const accountId = 'oauthAccount' in route ? route.oauthAccount.id : 'account' in route ? route.account.id : 'cursor-login';
+    const cwd = chat.mirror.cwd;
+    const oauth = isCliProvider(model.provider);
+    const sameBackendSession = record.provider === model.provider && (oauth || model.provider === 'cursor-acp') && record.accountId === accountId;
+    const slot = await this.ensureRuntime(route, cwd, chat.ownerId);
+    const previous = { runtime: chat.runtime, key: chat.runtimeKey };
+    if (oauth || !slot) {
+      if (!sameBackendSession) { record.cliSessionId = undefined; record.explorerTokens = 0; chat.handoffPending = true; }
+      chat.runtime = undefined; chat.runtimeKey = undefined;
+    } else {
+      const reuse = previous.runtime === slot.runtime && previous.key === slot.key && record.provider === model.provider && model.provider === 'cursor-acp';
+      if (!reuse) {
+        if (previous.runtime) await previous.runtime.closeSession(this.rid(record)).catch(() => undefined);
+        record.runtimeId = await slot.runtime.newSession(cwd, this.mcpServers(chat.ownerId));
+        this.freshSessions?.add(record.runtimeId);
+        record.explorerTokens = 0;
+        chat.handoffPending = true;
+      }
+      chat.runtime = slot.runtime; chat.runtimeKey = slot.key;
+      const id = this.rid(record);
+      if (model.provider === 'cursor-acp') {
+        await this.refreshCursorModels(slot.runtime, id);
+        if (model.backend !== 'auto' || slot.runtime.models(id).some(option => option.value === 'auto')) await slot.runtime.setModel(id, model.backend);
+      }
+      if (effort) await slot.runtime.setConfigOption(id, 'reasoning_effort', effort);
+    }
+    if (previous.key !== chat.runtimeKey) await this.releaseRuntime(previous.key);
+    Object.assign(record, { modelName: model.name, provider: model.provider, backend: model.backend, effort, accountId });
+    record.updatedAt = Date.now();
+    await this.saveSession(record);
+    this.refreshSessions();
+  }
+
+  private async newChat(project?: SidebarProject): Promise<void> {
+    this.root();
+    // A Smart Auto chat starts on its smartest model; the decider replaces it when the first message is sent.
+    const auto = this.selectedModel === SMART_AUTO;
+    const first = auto ? this.smartAutoCandidates()[0] : undefined;
+    const selected = auto ? first?.entry : this.availableModel(this.selectedModel);
+    if (!selected) throw new Error(auto ? 'Smart Auto has no available ranked models. Set them in Customize.' : 'Pick a model first.');
+    const model = auto ? selected : this.effectiveModel(selected);
+    const account = isOAuthProvider(model.provider) ? accountForModel(this.oauthAccounts, model) : accountForModel(this.accounts, model);
+    if (model.provider !== 'cursor-acp' && !account) throw new Error('Connect an account in Accounts before starting a chat.');
+    // Creating a chat is a local navigation operation. Copy files and start the
+    // provider only when the chat is used, rather than blocking the New button.
+    const record: SessionRecord = {
+      id: randomUUID(), mirrorId: randomUUID(), pendingMirror: true, name: 'New chat',
+      project: project || this.currentProject(),
+      // Fixed per chat: the provider session is tied to its working directory.
+      direct: vscode.workspace.getConfiguration('dsh').get<boolean>('runtime.mirror', true) ? undefined : true,
+      modelName: model.name, provider: model.provider, backend: model.backend,
+      effort: auto ? first?.effort : this.choiceFor(selected).effort, accountId: account?.id || 'cursor-login', updatedAt: Date.now(),
+      ...(auto ? { smartAuto: true } : {}),
+    };
+    this.active = record;
+    this.postJob(record);
+    const saved = this.saveSession(record);
+    this.refreshSessions(); this.syncActiveView();
+    this.postRun(record.id, 'idle', 'Ready'); this.updateStatus();
+    this.trimChats();
+    await saved;
+  }
+
+  private addChat(record: SessionRecord, mirror: WorkspaceMirror, review: ReviewController, ownerId: string, slot?: { runtime: AcpRuntime; key: string }): Chat {
+    const chat: Chat = {
+      record, mirror, review, cli: new OAuthCliRuntime(), running: false, cancelRequested: false, jobActive: false, jobCancelled: false, jobNotes: [], jobInterrupted: false, queue: [], turnEntryId: '',
+      segment: 0, startedTools: new Set(), subagentIds: new Set(), delegationToolIds: new Set(), subagentText: new Map(), turnReply: '', turnTools: [], handoffPending: !!record.checkpoint,
+      ownerId, runtime: slot?.runtime, runtimeKey: slot?.key, locks: new Map(), children: new Set(), background: new Map(),
+    };
+    this.chats.set(record.id, chat);
+    agentBus.register({ id: record.id, name: 'Main', task: record.name, chatId: record.id, state: 'idle' });
+    return chat;
+  }
+
+  /** Direct-mode chats treat files the user saves during a turn as the user's edits. */
+  private adoptSave(document: vscode.TextDocument): void {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (document.uri.scheme !== 'file' || !folder) return;
+    const path = relative(folder.uri.fsPath, document.uri.fsPath);
+    if (!path || path.startsWith('..') || isAbsolute(path)) return;
+    for (const chat of this.chats.values()) void chat.mirror.adopt(path, document.getText()).catch(() => undefined);
+  }
+
+  private createReview(root: vscode.Uri, mirror: WorkspaceMirror, chatId: string): ReviewController {
+    const review = new ReviewController(root, (path, text) => mirror.acknowledge(path, text), 'dsh-review', (path, text) => mirror.restore(path, text), mirror.direct);
+    this.disposables.push(review.onProposalsChanged(items => this.onProposalsChanged(chatId, items)));
+    return review;
+  }
+
+  private async continueChat(id?: string): Promise<void> {
+    this.root();
+    const record = this.sessions().find(item => item.id === (id || this.context.workspaceState.get<string>(ACTIVE_SESSION_KEY))) || this.sessions()[0];
+    if (!record) { await this.newChat(); return; }
+    if (this.active?.id === record.id) { this.restoreJob(this.active); this.postJob(this.active); return; }
+    this.active = this.chats.get(record.id)?.record || record;
+    this.restoreJob(this.active);
+    const warm = this.chat;
+    if (warm) { this.chats.delete(record.id); this.chats.set(record.id, warm); }
+    await this.afterActivate(this.active, !this.chat?.running);
+    this.trimChats();
+    // Restore pending review edits after painting the saved conversation. Warm
+    // chats keep their mirror and backend, so repeated switches are immediate.
+    if (!record.pendingMirror && !this.chats.has(record.id)) {
+      try { await this.loadChat(record); }
+      catch (error) { if (this.deletedSessions.has(record.id)) return; throw error; }
+      if (this.active?.id === record.id) { this.syncActiveView(); this.updateStatus(); }
+    }
+  }
+
+  private loadChat(record: SessionRecord): Promise<Chat> {
+    if (this.deletedSessions.has(record.id)) return Promise.reject(new Error('This chat was deleted.'));
+    const existing = this.chats.get(record.id);
+    if (existing) return Promise.resolve(existing);
+    const pending = this.chatLoads.get(record.id);
+    if (pending) return pending;
+    const load = this.prepareChat(record).finally(() => this.chatLoads.delete(record.id));
+    this.chatLoads.set(record.id, load);
+    return load;
+  }
+
+  private async prepareChat(record: SessionRecord): Promise<Chat> {
+    this.restoreJob(record);
+    const root = this.root();
+    let route: ResolvedRoute;
+    if (record.provider === 'cursor-acp') {
+      route = { model: { name: record.modelName, provider: record.provider, backend: record.backend, account: 'cursor-login', enabled: true } };
+    } else if (isOAuthProvider(record.provider)) {
+      const oauthAccount = this.oauthAccounts.get(record.accountId);
+      if (!oauthAccount) throw new Error(`Account for '${record.name}' is missing. Connect it again to continue.`);
+      route = { model: { name: record.modelName, provider: record.provider, backend: record.backend, account: oauthAccount.id, enabled: true }, oauthAccount };
+    } else {
+      const account = this.accounts.get(record.accountId);
+      const secret = account && await this.accounts.getSecret(account.id);
+      if (!account || !secret) throw new Error(`Account for '${record.name}' is missing. Add it again to continue.`);
+      const model: ModelEntry = { name: record.modelName, provider: record.provider, backend: record.backend, account: account.id, enabled: true };
+      route = { model, account, secret };
+    }
+    if (this.deletedSessions.has(record.id)) throw new Error('This chat was deleted.');
+    const holder: { review?: ReviewController; changes?: MirrorChange[] } = {};
+    const onChanges = (changes: MirrorChange[]): void => {
+      if (!holder.review) { holder.changes = changes; return; }
+      holder.review.update(changes);
+    };
+    const fresh = !!record.pendingMirror;
+    const mirror = fresh
+      ? await WorkspaceMirror.create(root.uri, this.context.globalStorageUri.fsPath, onChanges, record.mirrorId, !!record.direct)
+      : await WorkspaceMirror.reopen(root.uri, this.context.globalStorageUri.fsPath, record.mirrorId, onChanges, !!record.direct);
+    holder.review = this.createReview(root.uri, mirror, record.id);
+    if (holder.changes) holder.review.update(holder.changes);
+    const ownerId = randomUUID();
+    let slot: { runtime: AcpRuntime; key: string } | undefined;
+    let needsHandoff = false;
+    try {
+      if (this.deletedSessions.has(record.id)) throw new Error('This chat was deleted.');
+      slot = await this.ensureRuntime(route, mirror.cwd, ownerId);
+      let runtimeId = fresh && slot ? await slot.runtime.newSession(mirror.cwd, this.mcpServers(ownerId)) : this.rid(record);
+      if (slot && !fresh) {
+        try {
+          await slot.runtime.resumeSession(runtimeId, mirror.cwd, this.mcpServers(ownerId));
+        } catch (error) {
+          // A ChatGPT (Codex) chat from the old Codex CLI route has no DSH session yet; it continues in a new one from a handoff.
+          if (record.provider !== 'codex-cli') throw error;
+          runtimeId = await slot.runtime.newSession(mirror.cwd, this.mcpServers(ownerId));
+          record.runtimeId = runtimeId;
+          record.cliSessionId = undefined;
+          record.explorerTokens = 0;
+          this.freshSessions?.add(runtimeId);
+          needsHandoff = true;
+        }
+      }
+      if (fresh) record.runtimeId = slot ? runtimeId : undefined;
+      if (fresh && slot) this.freshSessions?.add(runtimeId);
+      if (slot && record.provider === 'cursor-acp') {
+        await this.refreshCursorModels(slot.runtime, runtimeId);
+        if (record.backend !== 'auto' || slot.runtime.models(runtimeId).some(option => option.value === 'auto')) {
+          await slot.runtime.setModel(runtimeId, record.backend);
+        }
+      }
+      if (slot && record.effort) await slot.runtime.setConfigOption(runtimeId, 'reasoning_effort', record.effort);
+    } catch (error) {
+      holder.review.dispose(); mirror.dispose();
+      if (slot) await this.releaseRuntime(slot.key);
+      if (fresh) await WorkspaceMirror.remove(root.uri, this.context.globalStorageUri.fsPath, mirror.id).catch(() => undefined);
+      throw error;
+    }
+    if (this.deletedSessions.has(record.id)) {
+      holder.review.dispose(); mirror.dispose();
+      if (slot) { await slot.runtime.closeSession(this.rid(record)).catch(() => undefined); await this.releaseRuntime(slot.key); }
+      await WorkspaceMirror.remove(root.uri, this.context.globalStorageUri.fsPath, mirror.id);
+      throw new Error('This chat was deleted.');
+    }
+    if (fresh) { record.mirrorId = mirror.id; record.pendingMirror = undefined; }
+    const chat = this.addChat(record, mirror, holder.review, ownerId, slot);
+    if (needsHandoff) chat.handoffPending = true;
+    await this.saveSession(record, false);
+    this.trimChats();
+    return chat;
+  }
+
+  private async saveTranscripts(): Promise<void> {
+    const keep = new Set(this.sessions().map(item => item.id));
+    const data: Record<string, TranscriptItem[]> = {};
+    for (const [id, items] of this.transcripts) if (keep.has(id)) data[id] = items;
+    await this.context.workspaceState.update(TRANSCRIPTS_KEY, data);
+    for (const id of Object.keys(this.timelines)) if (!keep.has(id)) delete this.timelines[id];
+    await this.context.workspaceState.update(TIMELINES_KEY, this.timelines);
+  }
+
+  private replayTranscript(id: string): void {
+    if (this.sidebar.hasTimeline(id)) return;
+    const saved = this.timelines[id];
+    // Earlier versions could save an empty timeline over a chat's history on reload; its transcript still has the messages.
+    if (saved?.timeline.length || (saved && !this.transcripts.get(id)?.length)) {
+      for (const entry of saved.timeline) {
+        if (entry.kind === 'tool' && entry.event.state === 'running') entry.event.state = 'cancelled';
+        if (entry.kind === 'approval' && entry.status === 'pending') entry.status = 'rejected';
+        if (entry.kind === 'media' && entry.status === 'pending') entry.status = 'failed';
+      }
+      for (const agent of Object.values(saved.subagents)) if (agent.state === 'running') agent.state = 'cancelled';
+      this.sidebar.postMessage({ type: 'timelineState', sessionId: id, ...saved });
+      return;
+    }
+    (this.transcripts.get(id) || []).forEach((item, index) => {
+      if (item.internal) return;
+      if (item.role === 'user') this.sidebar.postMessage({ type: 'userMessage', sessionId: id, entryId: `history:${index}`, text: item.text });
+      else this.sidebar.postMessage({ type: 'assistantDelta', sessionId: id, entryId: `history:${index}`, text: item.text });
+    });
+  }
+
+  private async editMessage(sessionId: string, entryId: string, text: string): Promise<void> {
+    const chat = this.chats.get(sessionId);
+    if (!chat || this.active?.id !== sessionId || chat.running) throw new Error('Wait for this chat to finish before editing a message.');
+    if (!text.trim()) throw new Error('A message cannot be empty.');
+    const timeline = this.sidebar.timeline(sessionId);
+    const index = timeline.findIndex(entry => entry.id === entryId && entry.kind === 'message' && entry.role === 'user');
+    if (index < 0) throw new Error('This message is no longer available.');
+    // ACP has no rewind method. A new backend session prevents discarded turns,
+    // including their tool results and compacted summaries, from leaking back in.
+    if (chat.runtime) {
+      const oldId = this.rid(chat.record);
+      const newId = await chat.runtime.newSession(chat.mirror.cwd, this.mcpServers(chat.ownerId));
+      chat.record.runtimeId = newId;
+      this.freshSessions?.add(newId);
+      await chat.runtime.closeSession(oldId).catch(() => undefined);
+      if (chat.record.provider === 'cursor-acp') {
+        await this.refreshCursorModels(chat.runtime, newId);
+        if (chat.record.backend !== 'auto' || chat.runtime.models(newId).some(option => option.value === 'auto')) await chat.runtime.setModel(newId, chat.record.backend);
+      }
+      if (chat.record.effort) await chat.runtime.setConfigOption(newId, 'reasoning_effort', chat.record.effort);
+    }
+    chat.record.cliSessionId = undefined;
+    chat.record.explorerTokens = 0;
+    chat.handoffPending = true;
+    const retained = timeline.slice(0, index);
+    const userIndex = timeline.slice(0, index).filter(entry => entry.kind === 'message' && entry.role === 'user').length;
+    const history = this.transcripts.get(sessionId) || [];
+    let users = 0;
+    const cut = history.findIndex(item => item.role === 'user' && !item.internal && users++ === userIndex);
+    this.transcripts.set(sessionId, cut >= 0 ? history.slice(0, cut) : retained.flatMap(entry => entry.kind === 'message' ? [{ role: entry.role, text: entry.text }] : []));
+    // Parts that reach past the edited message no longer match the transcript.
+    const kept = this.transcripts.get(sessionId)!.length;
+    if (chat.record.parts) chat.record.parts = chat.record.parts.filter(part => part.to <= kept);
+    const agents = this.sidebar.subagents(sessionId);
+    const retainedAgents = Object.fromEntries(retained.flatMap(entry => entry.kind === 'subagent' && agents[entry.agentId] ? [[entry.agentId, agents[entry.agentId]]] : []));
+    this.sidebar.postMessage({ type: 'timelineState', sessionId, timeline: retained, subagents: retainedAgents });
+    await this.saveSession(chat.record);
+    await this.saveTranscripts();
+    await this.sendPrompt(text);
+  }
+
+  private instructionRoots(): InstructionRoots {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    return {
+      workspace: folder?.uri.scheme === 'file' ? folder.uri.fsPath : undefined,
+      dshHome: process.env.DSH_HOME || join(homedir(), '.dsh'),
+      agentsHome: process.env.DSH_AGENTS_HOME || join(homedir(), '.agents'),
+    };
+  }
+
+  /** Global rules and skills edited outside the sidebar still trigger a sync upload. */
+  private watchGlobalInstructions(): vscode.Disposable[] {
+    const { dshHome, agentsHome } = this.instructionRoots();
+    return ([[dshHome, '{AGENTS.md,skills/**}'], [agentsHome, 'skills/**']] as const).flatMap(([base, pattern]) => {
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(base), pattern));
+      const schedule = (): void => this.sync.schedule();
+      return [watcher, watcher.onDidCreate(schedule), watcher.onDidChange(schedule), watcher.onDidDelete(schedule)];
+    });
+  }
+
+  private async syncAction(action: Extract<SidebarWebviewMessage, { type: 'syncAction' }>['action']): Promise<void> {
+    if (action === 'connect') await this.connectSync();
+    else if (action === 'upload') await this.sync.uploadNow();
+    else if (action === 'download') await this.sync.downloadNow();
+    else if (action === 'disconnect') await this.sync.disconnect();
+    else if (action === 'keepRemote' || action === 'keepLocal') await this.sync.resolve(action === 'keepLocal' ? 'local' : 'remote');
+    else if (action === 'openRepo' && this.sync.repoUrl?.startsWith('https://github.com/')) await vscode.env.openExternal(vscode.Uri.parse(this.sync.repoUrl));
+  }
+
+  private async refreshInstructions(): Promise<void> {
+    this.sidebar.postMessage({ type: 'instructionsState', items: await listInstructions(this.instructionRoots()) });
+  }
+
+  /** Keeps the active chat's private copy in step so the agent sees the change without it showing up as an edit to review. */
+  private async syncInstructionMirror(item: InstructionItem, file: string, text?: string): Promise<void> {
+    const workspace = this.instructionRoots().workspace;
+    if (item.scope === 'workspace' && workspace && this.chat) await this.chat.mirror.restore(relative(workspace, file), text);
+  }
+
+  private async saveInstructionRequest(message: Extract<SidebarWebviewMessage, { type: 'saveInstruction' }>): Promise<void> {
+    const saved = await saveInstruction(this.instructionRoots(), {
+      id: message.id, kind: message.kind, scope: message.scope, file: message.file, name: message.name, description: message.description, content: message.content,
+    });
+    await this.syncInstructionMirror(saved.item, saved.file, await readFile(saved.file, 'utf8'));
+    if (saved.item.scope === 'global') this.sync.schedule();
+    await this.refreshInstructions();
+    this.sidebar.postMessage({ type: 'instructionSaved' });
+  }
+
+  private async removeInstructionRequest(id: string): Promise<void> {
+    const removed = await removeInstruction(this.instructionRoots(), id);
+    await this.syncInstructionMirror(removed.item, removed.file, undefined);
+    if (removed.item.scope === 'global') this.sync.schedule();
+    await this.refreshInstructions();
+  }
+
+  private async afterActivate(record: SessionRecord, idle: boolean): Promise<void> {
+    this.postJob(record);
+    this.replayTranscript(record.id);
+    const auto = !!record.smartAuto && this.smartAutoReady();
+    this.selectedModel = auto ? SMART_AUTO : record.modelName;
+    // Smart Auto's picks are not the user's own speed and effort choices for that model.
+    const selected = auto ? undefined : this.availableModel(record.modelName);
+    if (selected) {
+      this.modelChoices[selected.name] = {
+        speed: selected.speedOptions?.find(item => item.backend === record.backend)?.label,
+        effort: record.effort || '',
+      };
+      void this.guarded(async () => { await this.context.workspaceState.update(MODEL_CHOICES_KEY, this.modelChoices); });
+    }
+    const saved = Promise.all([
+      this.context.workspaceState.update(SELECTED_MODEL_KEY, this.selectedModel),
+      this.context.workspaceState.update(ACTIVE_SESSION_KEY, record.id),
+    ]);
+    this.refreshSessions(); this.refreshModels();
+    this.syncActiveView();
+    if (idle) this.postRun(record.id, 'idle', 'Ready');
+    this.updateStatus();
+    void this.guarded(() => this.refreshAccount());
+    await saved;
+  }
+
+  private async saveImages(images: SidebarImage[] | undefined): Promise<{ name: string; mimeType: string; data: string; path: string }[]> {
+    if (!images?.length) return [];
+    if (!Array.isArray(images) || images.length > MAX_IMAGES) throw new Error(`Attach up to ${MAX_IMAGES} files.`);
+    const dir = join(this.context.globalStorageUri.fsPath, 'attachments');
+    await mkdir(dir, { recursive: true });
+    const saved: { name: string; mimeType: string; data: string; path: string }[] = [];
+    let totalBytes = 0;
+    for (const image of images) {
+      const extension = IMAGE_TYPES[image?.mimeType] || String(image?.name || '').match(/\.([a-zA-Z0-9]{1,12})$/)?.[1] || 'bin';
+      if (typeof image?.data !== 'string' || image.data.length > MAX_IMAGE_BASE64 || image.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(image.data)) {
+        throw new Error('Invalid attachment data. Files must be under 10 MB.');
+      }
+      const bytes = Buffer.from(image.data, 'base64');
+      if (bytes.toString('base64') !== image.data) throw new Error('Invalid attachment data.');
+      totalBytes += bytes.length;
+      if (bytes.length > 10 * 1024 * 1024 || totalBytes > 20 * 1024 * 1024) throw new Error('Files must be under 10 MB each and 20 MB in total.');
+      const path = join(dir, `${randomUUID()}.${extension}`);
+      await writeFile(path, bytes);
+      saved.push({ name: String(image.name || 'file').slice(0, 200), mimeType: image.mimeType || 'application/octet-stream', data: image.data, path });
+    }
+    return saved;
+  }
+
+  private jobReadOnly(chat: Chat): boolean { return chat.record.job?.phase === 'draft' || chat.record.job?.phase === 'verify'; }
+
+  private postJob(record: SessionRecord): void {
+    this.sidebar.postMessage({ type: 'jobState', sessionId: record.id, job: record.job ? toSidebarJob(record.job) : null });
+  }
+
+  /** Synchronous so chat switches and loads keep their ordering; the save runs in the background. */
+  private restoreJob(record: SessionRecord): void {
+    if (!record.job || !['draft', 'work', 'verify'].includes(record.job.phase) || this.chats.get(record.id)?.jobActive) return;
+    record.job.phase = 'stopped'; record.job.stopReason = 'Interrupted (VS Code reloaded)';
+    void this.saveSession(record, false).catch(error => this.output.appendLine(`Saving a stopped job failed: ${String(error)}`));
+  }
+
+  private async updateJob(chat: Chat, job: JobState): Promise<void> {
+    chat.record.job = job;
+    await this.saveSession(chat.record, false);
+    if (!this.deletedSessions.has(chat.record.id)) this.postJob(chat.record);
+  }
+
+  private async startJob(spec: string, images?: SidebarImage[]): Promise<void> {
+    if (!spec.trim()) { this.sidebar.postMessage({ type: 'error', message: 'Usage: /job <spec>' }); return; }
+    this.requireCurrent();
+    if (!this.active) await this.newChat();
+    const record = this.active!;
+    const busy = (): boolean => !!this.promptStarts.has(record.id) || !!this.chats.get(record.id)?.running || !!this.chats.get(record.id)?.jobActive || !!record.job && ['draft', 'work', 'verify'].includes(record.job.phase);
+    if (busy()) { this.sidebar.postMessage({ type: 'error', message: 'Finish or cancel the current task before starting a job.' }); return; }
+    let attachments = await this.saveImages(images);
+    const chat = await this.loadChat(record);
+    if (busy()) { this.sidebar.postMessage({ type: 'error', message: 'Finish or cancel the current task before starting a job.' }); return; }
+    const job = createJob(spec);
+    chat.jobActive = true; chat.jobCancelled = false; chat.cancelRequested = false; chat.jobNotes = []; chat.jobInterrupted = false;
+    record.job = job;
+    const fileList = (files: { name: string }[]): string => files.length ? `[Files: ${files.map(file => file.name).join(', ')}]` : '';
+    // The first turn shows the /job message as typed; later turns show their step label.
+    let original: string | undefined = [`/job ${spec.trim()}`, fileList(attachments)].filter(Boolean).join('\n\n');
+    const cancelled = (): boolean => chat.jobCancelled || this.deletedSessions.has(record.id);
+    const runTurn = async (prompt: string, label: string): Promise<string | undefined> => {
+      while (chat.running || this.promptStarts.has(record.id)) {
+        if (cancelled()) return undefined;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      if (cancelled()) return undefined;
+      let reply: string | undefined;
+      const files = attachments; attachments = [];
+      // Only the first turn carries the user's own /job message; later steps are DSH's and show no user message.
+      const shown = original; const internal = original === undefined; original = undefined;
+      chat.jobInterrupted = false;
+      try {
+        await this.sendPrompt(prompt, undefined, files.length ? files : undefined, record.id, 'interrupt', { job: true, shown, internal,
+          onFinish: (text, wasCancelled) => { if (!wasCancelled && !cancelled()) reply = text; } });
+      } catch (error) { reply = undefined; this.output.appendLine(`Job turn failed: ${String(error)}`); }
+      return reply;
+    };
+    const host: JobHost = {
+      runTurn,
+      review: async (prompt, label) => {
+        if (!this.feature('reviewAgent')) return runTurn(prompt, label);
+        if (cancelled()) return undefined;
+        const choice = this.modelSetting('reviewModel');
+        const model = choice.model && this.availableModel(choice.model);
+        if (!model || !model.enabled) throw new Error('Separate review agent is on, but no review model is chosen in Customize.');
+        chat.turnEntryId = randomUUID();
+        chat.jobInterrupted = false;
+        this.postRun(record.id, 'thinking', label);
+        try {
+          const result = await this.runSubagentCore(chat, { name: 'Reviewer', model: model.name, effort: choice.effort, speed: choice.speed, mode: 'read-only' }, prompt, []);
+          if (cancelled() || chat.jobInterrupted) return undefined;
+          if (result.isError) throw new Error(result.text);
+          return result.text;
+        } finally { this.postRun(record.id, 'idle', 'Ready'); }
+      },
+      ask: questions => cancelled() ? Promise.resolve(null) : this.showQuestions(chat, questions),
+      runCheck: command => this.runJobCheck(chat, command),
+      update: state => this.updateJob(chat, state),
+      cancelled,
+      // Files sent with a message go out with the job's next turn.
+      takeNotes: () => chat.jobNotes.splice(0).map(note => {
+        attachments.push(...note.images);
+        return [note.prompt, fileList(note.images)].filter(Boolean).join('\n\n');
+      }),
+    };
+    try { await this.updateJob(chat, job); }
+    catch (error) { chat.jobActive = false; throw error; }
+    void this.guarded(async () => {
+      try { await runJob(job, host); }
+      finally {
+        chat.jobActive = false; chat.jobCancelled = false; chat.jobInterrupted = false;
+        // Messages the job ended before logging are sent as ordinary messages.
+        chat.queue.unshift(...chat.jobNotes.splice(0));
+        if (!this.deletedSessions.has(record.id)) {
+          this.postJob(record);
+          const next = chat.queue.shift();
+          if (next) {
+            this.postQueue(chat);
+            void this.guarded(() => this.sendPrompt(next.prompt, undefined, next.images, record.id));
+          }
+        }
+      }
+    });
+  }
+
+  private runJobCheck(chat: Chat, command: string): Promise<{ code: number | null; output: string }> {
+    const id = randomUUID();
+    const post = (state: 'running' | 'complete' | 'error', detail?: string): void => {
+      this.sidebar.postMessage({ type: 'toolEvent', sessionId: chat.record.id, entryId: `tool:check:${id}`, event: { id, kind: 'shell', title: `Check: ${command}`, detail, state } });
+    };
+    post('running');
+    this.postRun(chat.record.id, 'tool', `Check: ${command}`);
+    return new Promise(resolve => {
+      let output = '';
+      let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      let polling: ReturnType<typeof setInterval> | undefined;
+      const append = (text: string): void => { output = (output + text).slice(-4000); };
+      const finish = (code: number | null): void => {
+        if (settled) return;
+        settled = true; clearTimeout(timeout); clearInterval(polling);
+        post(code === 0 ? 'complete' : 'error', output);
+        if (!chat.running) this.postRun(chat.record.id, 'idle', 'Ready');
+        resolve({ code, output });
+      };
+      if (chat.jobCancelled || this.deletedSessions.has(chat.record.id)) { append('Cancelled.'); finish(null); return; }
+      try {
+        const child = spawn(command, { cwd: chat.mirror.cwd, shell: true, windowsHide: true, detached: process.platform !== 'win32', stdio: 'pipe' });
+        child.stdout.on('data', data => append(String(data)));
+        child.stderr.on('data', data => append(String(data)));
+        child.on('error', error => { append(String(error)); finish(null); });
+        child.on('close', code => finish(code));
+        const stop = (reason: string): void => { append(reason); terminateProcessTree(child); finish(null); };
+        timeout = setTimeout(() => stop('\nCheck timed out after 10 minutes.'), 10 * 60 * 1000);
+        polling = setInterval(() => { if (chat.jobCancelled || this.deletedSessions.has(chat.record.id)) stop('\nCancelled.'); }, 100);
+      } catch (error) { append(String(error)); finish(null); }
+    });
+  }
+
+  private postQueue(chat: Chat): void {
+    this.sidebar.postMessage({ type: 'queueState', sessionId: chat.record.id, items: chat.queue.map(item => item.prompt || '(attachment)') });
+  }
+
+  private async sendPrompt(prompt: string, images?: SidebarImage[], queued?: { path: string; mimeType: string; data: string; name: string }[], queuedChatId?: string, mode: 'interrupt' | 'queue' = 'interrupt', options: TurnOptions = {}): Promise<void> {
+    if (!prompt.trim() && !images?.length && !queued?.length) return;
+    this.requireCurrent();
+    let created: Promise<void> | undefined;
+    if (!queuedChatId && !this.active) {
+      created = this.newChat();
+      // newChat publishes its local record synchronously, before persistence.
+      if (!this.active) await created;
+    }
+    const recordToLoad = options.chatId ? this.sessions().find(item => item.id === options.chatId) : queuedChatId ? this.sessions().find(item => item.id === queuedChatId) : this.active;
+    if (!recordToLoad || this.deletedSessions.has(recordToLoad.id)) return;
+    // Reserve startup so rapid sends cannot race model/attachment setup. Release
+    // as soon as the turn starts; later sends retain queue/interrupt semantics.
+    while (this.promptStarts.has(recordToLoad.id)) await this.promptStarts.get(recordToLoad.id);
+    if (this.deletedSessions.has(recordToLoad.id)) return;
+    let release!: () => void;
+    const starting = new Promise<void>(resolve => { release = resolve; });
+    this.promptStarts.set(recordToLoad.id, starting);
+    const started = (): void => {
+      if (this.promptStarts.get(recordToLoad.id) === starting) this.promptStarts.delete(recordToLoad.id);
+      release();
+    };
+    try {
+      await this.startPrompt(recordToLoad, prompt, images, queued, !!queuedChatId, mode, started, created, options);
+    } finally { started(); }
+  }
+
+  private async startPrompt(recordToLoad: SessionRecord, prompt: string, images: SidebarImage[] | undefined,
+    queued: { path: string; mimeType: string; data: string; name: string }[] | undefined,
+    fromQueue: boolean, mode: 'interrupt' | 'queue', started: () => void, created?: Promise<void>, options: TurnOptions = {}): Promise<void> {
+    const files = queued || images;
+    const historyPrompt = [prompt.trim(), files?.length ? `[Files: ${files.map(file => String(file?.name || 'file').slice(0, 200)).join(', ')}]` : ''].filter(Boolean).join('\n\n');
+    const shown = options.shown ?? historyPrompt;
+    const turnEntryId = randomUUID();
+    let displayed = false;
+    const display = (): void => {
+      this.replayTranscript(recordToLoad.id);
+      if (!options.internal) this.sidebar.postMessage({ type: 'userMessage', sessionId: recordToLoad.id, entryId: `user:${turnEntryId}`, text: shown });
+      displayed = true;
+    };
+    // Show accepted idle-chat messages before any file I/O or cold backend load.
+    // Running-chat submissions remain in the queue until their turn begins.
+    if (!this.chats.get(recordToLoad.id)?.running && (!this.chats.get(recordToLoad.id)?.jobActive || options.job)) display();
+    if (created) await created;
+    const attachments = queued ?? await this.saveImages(images);
+    let target: Chat;
+    try { target = await this.loadChat(recordToLoad); }
+    catch (error) { if (this.deletedSessions.has(recordToLoad.id)) return; throw error; }
+    if (this.deletedSessions.has(recordToLoad.id)) return;
+    if (target.ping) { target.cli.cancel(); await target.ping; }
+    if (target.jobActive && !options.job) {
+      // A message sent during a job joins the job's decisions log. Sending (not queueing) ends the current step so it reruns with the message.
+      if (!displayed) display();
+      target.jobNotes.push({ prompt: prompt.trim(), images: attachments });
+      if (mode === 'interrupt') { target.jobInterrupted = true; this.cancel(false, target.record.id); }
+      return;
+    }
+    if (target.running) {
+      const message = { prompt: prompt.trim(), images: attachments };
+      if (mode === 'queue') { target.queue.push(message); this.postQueue(target); return; }
+      target.queue.unshift(message);
+      this.postQueue(target);
+      if (target.jobActive) target.jobCancelled = true;
+      this.cancel(false, target.record.id);
+      return;
+    }
+    if (fromQueue && !target) return;
+    if (!displayed) display();
+    const active = this.active;
+    const picking = !fromQueue && (active?.id === target.record.id || options.chatId === target.record.id);
+    // Smart Auto picks the model for messages the user sent, not for job steps or DSH's own prompts.
+    const autoChat = picking ? this.selectedModel === SMART_AUTO : !!target.record.smartAuto;
+    const auto = autoChat && !options.job && !options.internal;
+    if (active && picking && !autoChat) {
+      target.record.smartAuto = undefined;
+      const selected = this.availableModel(this.selectedModel);
+      const effective = selected && this.effectiveModel(selected);
+      const effort = this.choiceFor(selected).effort;
+      const account = selected && (isOAuthProvider(selected.provider) ? accountForModel(this.oauthAccounts, selected) : accountForModel(this.accounts, selected));
+      // Claude and Codex accounts form one pool per provider, so a chat that failed over to another account stays on it.
+      const pooled = !!effective && isOAuthProvider(effective.provider) && this.oauthAccounts.get(active.accountId)?.provider === effective.provider;
+      if (effective && (active.provider !== effective.provider || active.backend !== effective.backend || active.effort !== effort ||
+        (effective.provider !== 'cursor-acp' && account && active.accountId !== account.id && !pooled))) await this.switchModel(target);
+    }
+    const chat = target;
+    const record = chat.record;
+    const imageAttachments = attachments.filter(file => !!IMAGE_TYPES[file.mimeType]);
+    const fileContext: string[] = [];
+    for (const file of attachments) {
+      const contextPath = join(chat.mirror.cwd, '.dsh', 'context', file.path.split(/[\\/]/).pop()!);
+      await mkdir(dirname(contextPath), { recursive: true });
+      await writeFile(contextPath, await readFile(file.path));
+      fileContext.push(`${JSON.stringify(file.name)}: ${JSON.stringify(relative(chat.mirror.cwd, contextPath))} (${file.mimeType})`);
+    }
+    if (this.deletedSessions.has(record.id)) return;
+    chat.cancelRequested = false;
+    chat.turnEntryId = turnEntryId;
+    chat.segment = 0;
+    chat.startedTools.clear();
+    chat.subagentIds.clear();
+    chat.delegationToolIds.clear();
+    chat.subagentText.clear();
+    chat.turnTools = [];
+    let segment = 0;
+    let segmentHasText = false;
+    const postText = (text: string): void => { if (!text) return; chat.turnReply += text; segmentHasText = true; this.sidebar.postMessage({ type: 'assistantDelta', sessionId: record.id, entryId: `assistant:${turnEntryId}:${segment}`, text }); };
+    const breakMessage = (): void => { if (segmentHasText) { segment++; segmentHasText = false; } };
+    const loggedTools = new Set<string>();
+    const postTool = (id: string, title: string, detail: string | undefined, state: 'running' | 'complete' | 'error'): void => {
+      const batch = isBatchTool(title) || (title === 'MCP tool' && isBatchTool(detail || ''));
+      // Batch sub-calls are logged one by one by runBatch.
+      if (!batch && !loggedTools.has(id)) { loggedTools.add(id); this.logTool(chat, title, detail); }
+      if (batch || isDelegationTool(title) || (title === 'MCP tool' && isDelegationTool(detail || ''))) { if (!chat.delegationToolIds.has(id)) breakMessage(); chat.delegationToolIds.add(id); }
+      if (chat.delegationToolIds.has(id)) return;
+      if (state === 'running') this.noteRead(chat.mirror.cwd, readToolPath(title, detail));
+      const shown = displayTool(title, detail);
+      this.sidebar.postMessage({ type: 'toolEvent', sessionId: record.id, entryId: `tool:${turnEntryId}:${id}`, event: {
+        id, kind: shown.kind, title: shown.title, detail: shown.detail, full: shown.full, state,
+      } });
+      if (state === 'running') { segment++; segmentHasText = false; }
+    };
+    const postSubagent = (event: { id: string; title?: string; model?: string; prompt?: string; state?: 'running' | 'complete' | 'error'; text?: string; messageId?: string; role?: 'assistant' | 'tool' }): void => {
+      // Harnesses report a subagent's tool call as "Title: detail" text.
+      const split = event.role === 'tool' && event.text ? event.text.match(/^([^:\n]+?)(?::\s*([\s\S]*))?$/) : null;
+      const tool = split ? displayTool(split[1], split[2]) : undefined;
+      this.sidebar.postMessage({ type: 'subagentEvent', sessionId: record.id, agentId: `${turnEntryId}:${event.id}`, ...event, ...(tool ? { tool } : {}), model: event.model === 'default' ? record.modelName : event.model || record.modelName });
+    };
+    chat.running = true;
+    started();
+    this.postRun(record.id, 'thinking', 'Thinking…');
+    this.updateStatus();
+    const firstTurn = record.name === 'New chat' && !record.renamed;
+    if (firstTurn) record.name = firstMessageTitle(prompt);
+    if (firstTurn) agentBus.update(record.id, { task: record.name });
+    record.updatedAt = Date.now();
+    if (firstTurn && prompt.trim()) void this.autoName(record.id, prompt, chat.mirror.cwd);
+    let completed = false;
+    try {
+      await this.saveSession(record);
+      await chat.mirror.beginTurn();
+      if (memorySyncNeeded(this.memorySettings().global, chat.mirror.cwd)) await this.syncMemory(chat);
+      if (chat.cancelRequested) return;
+      if (auto) {
+        await this.smartAutoPick(chat, prompt, turnEntryId);
+        if (chat.cancelRequested) return;
+      }
+      if (!isCliProvider(record.provider) && !chat.runtime?.isRunning) {
+        const configured = this.availableModel(record.modelName);
+        if (!configured) throw new Error('The model for this chat is no longer configured.');
+        await this.switchModel(chat, { ...configured, provider: record.provider, backend: record.backend, account: record.accountId });
+      } else if (record.provider === 'codex-cli' && !(await this.refreshCodexRuntime(chat))) {
+        chat.handoffPending = true;
+      }
+      if (chat.cancelRequested) return;
+      const hint = vscode.workspace.getConfiguration('dsh').get<number>('checkpointHint', 80000);
+      const lastActivity = Math.max(record.lastTurnAt || 0, record.lastPingAt || 0);
+      if (!options.internal && record.resumeNotice) {
+        // The notice only covers the turn that started the new session.
+        record.resumeNotice = undefined;
+        // A checkpoint taken during that turn already moved the session it ended into previousCliSessionId.
+        if (!record.checkpoint) record.previousCliSessionId = undefined;
+        this.refreshSessions();
+      }
+      if (!options.internal && record.provider === 'claude-cli') {
+        record.pingsSent = 0;
+        if (!chat.handoffPending && record.cliSessionId && lastActivity && Date.now() - lastActivity > 60 * 60_000 && (record.contextTokens || 0) >= hint) {
+          record.previousCliSessionId = record.cliSessionId;
+          record.cliSessionId = undefined;
+          record.explorerTokens = 0;
+          record.idleHandoff = true;
+          chat.handoffPending = true;
+          record.resumeNotice = record.checkpoint ? 'checkpoint' : 'idle';
+        }
+      }
+      // Auto compaction: past the threshold, this message starts a fresh session from a summary. Nothing is dropped
+      // from the transcript, which the agent can still read and search.
+      const compactAt = this.autoCompactAt();
+      const conversation = (record.contextTokens || 0) - (record.baseTokens || 0);
+      const live = isCliProvider(record.provider) ? !!record.cliSessionId : !!chat.sent;
+      if (!options.internal && compactAt && !chat.handoffPending && live && conversation >= compactAt) {
+        this.output.appendLine(`Auto compaction: "${record.name}" reached about ${Math.round(conversation / 1000)}k tokens of conversation; continuing in a fresh session from a summary.`);
+        await this.freshBackendSession(chat, 'auto compaction');
+        record.contextTokens = undefined;
+        record.resumeNotice = 'compact';
+        chat.handoffPending = true;
+        this.postRun(record.id, 'tool', 'Compacting context…');
+      }
+      const history = this.transcripts.get(record.id) || [];
+      this.transcripts.set(record.id, history);
+      const bridged = !!this.delegateConfig(chat.ownerId);
+      const handoff = chat.handoffPending
+        ? record.checkpoint ? checkpointHandoff(history, record.checkpoint, bridged) : record.idleHandoff ? buildHandoff(history, undefined, bridged)
+          : await this.handoffText(record, history, bridged, chat.mirror.cwd, record.resumeNotice === 'compact' ? record.modelName : undefined)
+        : '';
+      if (chat.cancelRequested) return;
+      // The summary is written; the label must not read "Compacting context…" for the rest of the turn.
+      if (chat.handoffPending) this.postRun(record.id, 'thinking', 'Thinking…');
+      if (chat.handoffPending && record.checkpoint) record.resumeNotice = 'checkpoint';
+      // The feed marks where the new session starts; the note scrolls away with the conversation.
+      if (chat.handoffPending && record.resumeNotice) {
+        const notice = RESUME_NOTES[record.resumeNotice];
+        this.sidebar.postMessage({ type: 'noteMessage', sessionId: record.id, entryId: `resume:${turnEntryId}`, icon: notice.icon, text: notice.text });
+      }
+      chat.handoffPending = false;
+      record.idleHandoff = undefined;
+      this.refreshSessions();
+      if (record.checkpoint) {
+        record.checkpoint = undefined;
+        await this.saveSession(record);
+      }
+      history.push({ role: 'user', text: historyPrompt + (fileContext.length ? '\nContext files:\n' + fileContext.join('\n') : ''), ...(options.internal ? { internal: true } : {}) });
+      chat.turnReply = '';
+      const packsOn = this.turnOnPacks(chat, prompt);
+      // Claude takes the fixed instructions as system text on every run, so they never enter the conversation. Other
+      // runtimes get them once per session. Editor context is only resent when it changed.
+      const oauth = isCliProvider(record.provider);
+      const instructions = this.agentInstructions(chat, bridged);
+      const context = this.editorContext();
+      const session = oauth ? record.cliSessionId : this.rid(record);
+      const fresh = !session || chat.sent?.session !== session;
+      let sendInstructions = !oauth && (fresh || chat.sent?.instructions !== instructions);
+      const contextUpdate = editorContextDiff(fresh ? undefined : chat.sent?.context, context);
+      // Background subagents that finished since the last turn ("hold" ones, or "resume" ones overtaken by this message).
+      const background = this.takeBackgroundResults(chat);
+      // Messages other agents sent this chat's agent; taken once, so retries cannot repeat them.
+      const agentMessages = this.takeAgentMessages(record.id);
+      const tokens = record.contextTokens;
+      const nudge = bridged && !fresh && !options.internal && record.provider === 'claude-cli' && tokens !== undefined && tokens >= hint && (record.nudgedAt === undefined || tokens >= record.nudgedAt + 20000)
+        ? `Context is about ${Math.round(tokens / 1000)}k tokens. Do the request below in this turn first. Once it is finished, call checkpoint with a summary as your last step. Never checkpoint instead of doing the work: nothing continues it afterwards.` : '';
+      if (nudge) record.nudgedAt = tokens;
+      const buildPrompt = (opening: string, withContext: boolean, fullContext = false): string => [
+        nudge,
+        opening.trim(),
+        sendInstructions ? instructions : '',
+        withContext ? (fullContext ? context : contextUpdate) : '',
+        packsOn.length ? `The user turned on toolpacks: ${packsOn.join(', ')}. Use their tools directly if they are in your tool list; otherwise call ${LOAD_TOOLPACK} to see them.` : '',
+        fileContext.length ? 'Attached context files (read as needed):\n' + fileContext.join('\n') : '',
+        background ? `Results from background subagents you started earlier:\n\n${background}` : '',
+        agentMessages ? `Messages from other agents (answer with the send_message tool if a reply is needed):\n\n${agentMessages}` : '',
+        `User request:\n${prompt}`,
+      ].filter(Boolean).join('\n\n');
+      const prefix = record.provider === 'claude-cli' ? promptPrefix(instructions, !!record.cliSessionId, record.sessionInstructions, record.lastInstructions) : undefined;
+      if (prefix) {
+        if (!record.cliSessionId) {
+          record.sessionInstructions = prefix.system;
+          record.explorerTokens = 0;
+          record.initTools = undefined;
+          record.prefixHash = undefined;
+        }
+        record.lastInstructions = prefix.last;
+      }
+      const fullPrompt = [prefix?.note, buildPrompt(handoff, !!contextUpdate)].filter(Boolean).join('\n\n');
+      // The first context report of a fresh session, less this prompt, is the session's fixed overhead.
+      const freshBackend = oauth ? !record.cliSessionId : !!this.freshSessions?.delete(this.rid(record));
+      chat.measureBase = freshBackend ? Math.ceil(fullPrompt.length / 4) : undefined;
+      // A job step must end on its own, so jobs keep compacting between turns only.
+      chat.compactWatch = compactAt && bridged && !chat.jobActive ? { threshold: compactAt } : undefined;
+      if (oauth) {
+        const account = this.oauthAccounts.get(record.accountId);
+        if (!account) throw new Error('The selected OAuth account is missing. Connect it again.');
+        await this.shareGlobalInstructions(account);
+        if (chat.cancelRequested) return;
+        // Dropping old images re-caches the conversation from the first one, so it only happens once the cache has expired anyway.
+        const cacheLife = (record.shortCache ? 5 : 60) * 60_000;
+        if (record.provider === 'claude-cli' && record.cliSessionId && lastActivity && Date.now() - lastActivity > cacheLife) {
+          const removed = await trimSessionImages(account.directory, record.cliSessionId)
+            .catch(error => { this.output.appendLine(`Trimming old images failed: ${error instanceof Error ? error.message : String(error)}`); return 0; });
+          if (removed) this.output.appendLine(`Removed ${removed} old image${removed === 1 ? '' : 's'} from "${record.name}" while its prompt cache was cold.`);
+        }
+        record.cliSessionId = await this.promptPooled(chat.cli, { account, cwd: chat.mirror.cwd, backend: record.backend, system: prefix?.system ?? instructions,
+          prompt: fullPrompt, sessionId: record.cliSessionId, effort: record.effort, readOnly: this.jobReadOnly(chat), fullAccess: this.approvalMode === 'full' && !this.jobReadOnly(chat),
+          speed: record.smartAuto ? undefined : this.choiceFor(this.availableModel(record.modelName)).speed,
+          onInit: info => {
+            record.initTools = info.tools;
+            const hash = createHash('sha256').update(JSON.stringify([prefix?.system ?? instructions, info.tools])).digest('hex').slice(0, 16);
+            if (record.prefixHash && record.prefixHash !== hash && record.cliSessionId) {
+              this.output.appendLine(`Prompt prefix changed within Claude session ${record.cliSessionId}; the next turn re-reads the conversation uncached.`);
+            }
+            record.prefixHash = hash;
+          },
+          onContext: tokens => this.noteContext(chat, tokens),
+          onUsage: usage => {
+            this.logUsage(record.id, 'main', record.modelName, usage);
+            record.contextTokens = usage.context ?? usage.total.input + usage.total.cacheRead + usage.total.cacheWrite;
+            record.lastTurnAt = Date.now();
+            if (usage.total.cacheWrite1h > 0) record.shortCache = false;
+            else if (usage.total.cacheWrite5m > 0) record.shortCache = true;
+            this.refreshSessions();
+          },
+          onBackgroundWait: tasks => {
+            if (!tasks.length) this.postRun(record.id, 'thinking', 'Thinking…');
+            else this.postRun(record.id, 'tool', tasks.length === 1 ? `Waiting for background task: ${tasks[0]}` : `Waiting for ${tasks.length} background tasks…`);
+          },
+          onText: postText,
+          onMessageBreak: breakMessage,
+          onTool: postTool,
+          onSubagent: postSubagent,
+          images: imageAttachments,
+          delegate: this.delegateConfig(chat.ownerId),
+          onApproval: (description, info) => this.decideApproval(chat, PARENT, description, info),
+          onQuestions: input => this.askNativeQuestions(chat, input),
+        }, () => chat.cancelRequested, async (next, failed) => {
+          // The new account has none of this chat's session, so it gets the conversation so far as a handoff.
+          record.accountId = next.id; record.cliSessionId = undefined; record.explorerTokens = 0;
+          await this.saveSession(record, false);
+          breakMessage();
+          postTool(`account:${randomUUID()}`, 'Account switch', `${failed.label} hit its usage limit; continuing on ${next.label}.`, 'complete');
+          return { prompt: buildPrompt(await this.handoffText(record, history.slice(0, -1), bridged, chat.mirror.cwd), !!context, true) };
+        });
+        await this.saveSession(record);
+      } else {
+        if (!chat.runtime) throw new Error('This chat has no running agent. Use "DSH: Restart Runtime" and try again.');
+        try {
+          if (record.provider === 'codex-cli') {
+            await this.promptCodex(chat, fullPrompt, imageAttachments, async limited => {
+              // A new session has none of this chat's conversation, so it gets the conversation so far as a handoff.
+              chat.handoffPending = false;
+              sendInstructions = true;
+              if (limited) {
+                breakMessage();
+                postTool(`account:${randomUUID()}`, 'Account switch', `${limited.failed.label} hit its usage limit; continuing on ${limited.next.label}.`, 'complete');
+              }
+              return buildPrompt(await this.handoffText(record, history.slice(0, -1), bridged, chat.mirror.cwd), !!context, true);
+            });
+          } else {
+            await chat.runtime.prompt(this.rid(record), fullPrompt, imageAttachments);
+          }
+          // Mid-turn compaction stopped the prompt to ask for a checkpoint; the request is this turn's next prompt.
+          for (let ask = takeFollowUp(chat.compactWatch); ask && !chat.cancelRequested; ask = takeFollowUp(chat.compactWatch)) await chat.runtime.prompt(this.rid(record), ask);
+        }
+        finally { const accountId = record.accountId; if (accountId) setTimeout(() => this.refreshUsage(true, accountId), 1500); }
+      }
+      // A ChatGPT turn that changed accounts or refreshed its runtime may have ended on a new session.
+      const sentTo = oauth ? record.cliSessionId : this.rid(record);
+      if (sentTo) chat.sent = { session: sentTo, instructions, context };
+      completed = !chat.cancelRequested;
+    } catch (error) {
+      if (!chat.cancelRequested) throw error;
+    } finally {
+      this.settleChatApprovals(record.id, true);
+      for (const task of [...chat.background.values()]) if (!task.done && task.afterTurn === 'cancel') { chat.background.delete(task.id); task.run?.cancel(); }
+      if (chat.turnReply.trim() || chat.turnTools.length) this.transcripts.get(record.id)?.push({ role: 'assistant', text: chat.turnReply.trim(), ...(chat.turnTools.length ? { tools: chat.turnTools } : {}) });
+      chat.turnTools = [];
+      // A checkpoint DSH asked for mid-turn continues the task right away instead of waiting for the user's next message.
+      const continueTask = completed && !!chat.pendingCheckpoint && chat.compactWatch?.askedAt !== undefined;
+      chat.compactWatch = undefined;
+      if (completed) {
+        if (record.provider !== 'claude-cli') record.lastTurnAt = Date.now();
+        if (chat.pendingCheckpoint) {
+          await this.freshBackendSession(chat, 'the checkpoint');
+          record.checkpoint = chat.pendingCheckpoint;
+          chat.pendingCheckpoint = undefined;
+          chat.handoffPending = true;
+        }
+        await this.saveSession(record);
+      }
+      const reply = chat.turnReply;
+      const cancelled = chat.cancelRequested;
+      chat.turnReply = '';
+      await this.saveTranscripts();
+      // The agent is done; a slow scan of the working copy should not read as the agent still thinking.
+      const scanStarted = Date.now();
+      const scanLabel = setTimeout(() => this.postRun(record.id, 'tool', 'Checking changes…'), 500);
+      await chat.mirror.endTurn().catch(error => this.output.appendLine(`Mirror scan failed: ${String(error)}`));
+      if (memorySyncNeeded(this.memorySettings().global, chat.mirror.cwd)) await this.syncMemory(chat, true);
+      clearTimeout(scanLabel);
+      if (Date.now() - scanStarted > 5_000) this.output.appendLine(`End-of-turn change scan took ${((Date.now() - scanStarted) / 1000).toFixed(1)} s.`);
+      chat.running = false;
+      this.postRun(record.id, 'idle', 'Ready');
+      this.updateStatus();
+      options.onFinish?.(reply, cancelled);
+      if (!options.internal && !options.job) this.notifyDesktop(record.name, cancelled ? 'Turn cancelled.' : reply.trim() ? reply.trim().slice(0, 300) : 'Turn finished.');
+      const next = chat.jobActive ? undefined : chat.queue.shift();
+      if (next) this.postQueue(chat);
+      // A queued message carries the checkpoint handoff itself; background results join the continued turn.
+      if (next && this.chats.get(record.id) === chat) void this.guarded(() => this.sendPrompt(next.prompt, undefined, next.images, record.id));
+      else if (!next && continueTask && this.chats.get(record.id) === chat) void this.guarded(() => this.sendPrompt(CONTINUE_AFTER_CHECKPOINT, undefined, [], record.id, 'queue', { internal: true }));
+      else if (!next) this.backgroundSettled(chat);
+    }
+  }
+
+  /** Refresh the cache of each loaded, idle Claude chat without adding a visible turn. */
+  private async keepAliveChats(): Promise<void> {
+    for (const chat of this.chats.values()) {
+      const record = chat.record;
+      const config = vscode.workspace.getConfiguration('dsh');
+      // Usage credits are drawn only once a plan window is full; "Extra usage" alone just means credits are enabled.
+      const metrics = this.usage.snapshot()[record.accountId]?.metrics || [];
+      const extraEnabled = metrics.some(metric => metric.label === 'Extra usage');
+      const planFull = metrics.some(metric => metric.label !== 'Extra usage' && (metric.usedPercent ?? 0) >= 100);
+      const credits = extraEnabled && planFull;
+      if (record.provider !== 'claude-cli' || !record.cliSessionId || chat.handoffPending || credits || !shouldKeepAlive({
+        now: Date.now(), lastTurnAt: Math.max(record.lastTurnAt || 0, record.lastPingAt || 0) || undefined,
+        contextTokens: record.contextTokens, hint: config.get<number>('checkpointHint', 80000),
+        pingsSent: record.pingsSent || 0, max: config.get<number>('keepAliveMax', 3),
+        shortCache: record.shortCache, running: chat.running || !!chat.ping, visible: this.active?.id === record.id,
+      })) continue;
+      const account = this.oauthAccounts.get(record.accountId);
+      if (!account) continue;
+      record.pingsSent = (record.pingsSent || 0) + 1;
+      chat.ping = (async () => {
+        try {
+          // The same tool list as the chat's turns, or the ping would miss the cache it is meant to keep warm.
+          await chat.cli.prompt({ account, cwd: chat.mirror.cwd, backend: record.backend, trimTools: this.feature('trimTools'),
+            system: this.agentInstructions(chat, !!this.delegateConfig(chat.ownerId)), prompt: '(keep-alive: reply with OK only)',
+            sessionId: record.cliSessionId, effort: 'low', speed: record.smartAuto ? undefined : this.choiceFor(this.availableModel(record.modelName)).speed,
+            delegate: this.delegateConfig(chat.ownerId), onText: () => {}, onTool: () => {},
+            readOnly: this.jobReadOnly(chat), fullAccess: this.approvalMode === 'full' && !this.jobReadOnly(chat),
+            onApproval: async () => false, onUsage: usage => this.logUsage(record.id, 'keepalive', record.modelName, usage),
+          });
+          record.lastPingAt = Date.now();
+        } catch (error) {
+          this.output.appendLine(`Keep-alive failed: ${String(error)}`);
+        } finally {
+          if (this.chats.get(record.id) === chat && !this.deletedSessions.has(record.id)) {
+            await this.saveSession(record).catch(error => this.output.appendLine(`Saving keep-alive state failed: ${String(error)}`));
+          }
+        }
+      })();
+      void chat.ping.then(() => { chat.ping = undefined; });
+    }
+  }
+
+  /** Accounts of the same provider in failover order: `first`, then the rest in list order, with recently limited ones last. */
+  private accountPool(first: OAuthCliAccount): OAuthCliAccount[] {
+    const all = this.oauthAccounts.list(first.provider);
+    const index = all.findIndex(account => account.id === first.id);
+    const ordered = index < 0 ? [first, ...all] : [...all.slice(index), ...all.slice(0, index)];
+    const limited = (account: OAuthCliAccount): boolean => Date.now() - (this.limitedAt.get(account.id) || 0) < LIMIT_COOLDOWN_MS;
+    return [...ordered.filter(account => !limited(account)), ...ordered.filter(limited)];
+  }
+
+  /** When each account last reported a usage limit, so later runs try it last. */
+  private readonly limitedAt = new Map<string, number>();
+
+  /**
+   * Runs a ChatGPT (Codex) turn on the chat's DSH runtime. An auth error forces a token refresh, relaunches the runtime
+   * and retries once; a usage limit moves the chat to the next ChatGPT account (a new runtime and session) and retries
+   * there. `reopen` rebuilds the prompt as a handoff for a new session, after `limited` changed accounts when given.
+   */
+  private async promptCodex(chat: Chat, prompt: string, images: { mimeType: string; data: string }[],
+    reopen: (limited?: { failed: OAuthCliAccount; next: OAuthCliAccount }) => Promise<string>): Promise<void> {
+    const record = chat.record;
+    const first = this.oauthAccounts.get(record.accountId);
+    if (!first) throw new Error('The ChatGPT account for this chat is missing. Connect it again in Accounts.');
+    const pool = this.accountPool(first);
+    const tried = new Set<string>();
+    let text = prompt;
+    let authRetried = false;
+    for (;;) {
+      const account = this.oauthAccounts.get(record.accountId) || first;
+      const runtime = chat.runtime;
+      if (!runtime) throw new Error('This chat has no running agent. Use "DSH: Restart Runtime" and try again.');
+      try {
+        await runtime.prompt(this.rid(record), text, images);
+        return;
+      } catch (error) {
+        if (chat.cancelRequested) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        if (isUsageLimit(error)) {
+          tried.add(account.id);
+          this.limitedAt.set(account.id, Date.now());
+          setTimeout(() => this.refreshUsage(true, account.id), 1500);
+          this.output.appendLine(`ChatGPT account "${account.label}" hit its usage limit: ${message}`);
+          const next = pool.find(candidate => !tried.has(candidate.id));
+          if (!next) throw new Error(pool.length > 1 ? `All ${pool.length} ChatGPT accounts have hit their usage limits. ${message}` : message);
+          await this.switchModel(chat, { name: record.modelName, provider: record.provider, backend: record.backend, account: next.id, enabled: true });
+          if (chat.cancelRequested) throw error;
+          text = await reopen({ failed: account, next });
+          authRetried = false;
+          continue;
+        }
+        if (authRetried || !CODEX_AUTH_ERROR.test(message)) throw error;
+        authRetried = true;
+        this.output.appendLine(`ChatGPT rejected the access token of "${account.label}"; refreshing it and retrying: ${message}`);
+        if (!(await this.refreshCodexRuntime(chat, true))) text = await reopen();
+        if (chat.cancelRequested) throw error;
+      }
+    }
+  }
+
+  /**
+   * Runs a Claude turn, moving on to the next Claude account each time one reports a usage limit.
+   * `retarget` adjusts the turn for the new account; the session id is always dropped because sessions belong to one account.
+   */
+  private async promptPooled(cli: OAuthCliRuntime, turn: CliTurn, cancelled: () => boolean,
+    retarget?: (next: OAuthCliAccount, failed: OAuthCliAccount) => Promise<Partial<CliTurn>> | Partial<CliTurn>): Promise<string | undefined> {
+    const pool = this.accountPool(turn.account);
+    let current = { ...turn, trimTools: turn.trimTools ?? this.feature('trimTools'), account: pool[0] };
+    if (current.account.id !== turn.account.id) {
+      if (!current.lean) await this.shareGlobalInstructions(current.account);
+      current = { ...current, sessionId: undefined, ...(await retarget?.(current.account, turn.account)) };
+    }
+    for (let index = 0; ; index++) {
+      const attempt = current;
+      try {
+        try { return await cli.prompt({ ...attempt, onRateLimit: info => { this.usage.applyClaudeEvent(attempt.account.id, info); attempt.onRateLimit?.(info); } }); }
+        finally { setTimeout(() => this.refreshUsage(true, attempt.account.id), 1500); }
+      } catch (error) {
+        if (!isUsageLimit(error) || cancelled()) throw error;
+        this.limitedAt.set(current.account.id, Date.now());
+        const next = pool[index + 1];
+        const message = error instanceof Error ? error.message : String(error);
+        this.output.appendLine(`${runtimeLabel(current.account.provider)} account "${current.account.label}" hit its usage limit: ${message}`);
+        if (!next) throw new Error(pool.length > 1 ? `All ${pool.length} ${runtimeLabel(current.account.provider)} accounts have hit their usage limits. ${message}` : message);
+        if (!current.lean) await this.shareGlobalInstructions(next);
+        if (cancelled()) throw error;
+        current = { ...current, account: next, sessionId: undefined, ...(await retarget?.(next, current.account)) };
+      }
+    }
+  }
+
+  /**
+   * Opening context for a new agent session: earlier messages summarized by the chat-naming model, plus the
+   * latest exchange word for word. Without a summary model, or if summarizing fails, more messages are kept instead.
+   */
+  /** `fallbackModel` writes the summary when no name model is set (auto compaction always wants one). */
+  private async handoffText(record: SessionRecord, history: ChatMessage[], bridged: boolean, cwd: string, fallbackModel?: string): Promise<string> {
+    if (!history.length) return '';
+    let summary: string | undefined;
+    const older = history.slice(0, -KEEP_WITH_TOOL);
+    const named = this.modelSetting('nameModel');
+    const choice = named.model ? named : fallbackModel ? { model: fallbackModel } : named;
+    if (this.feature('autoCompact') && older.length && choice.model) {
+      try {
+        // Parts already archived stay as they are; only the messages since the last one are split and summarized.
+        const parts = (record.parts || []).filter(part => part.to <= older.length);
+        const covered = parts[parts.length - 1]?.to ?? 0;
+        const added = await Promise.all(partWindows(history, covered, older.length).map(async window => {
+          try { return parsePartsReply(await this.runOneShot({ ...choice, model: choice.model! }, cwd, partsPrompt(window)), window.from, window.to) ?? [unsummarizedPart(window.from, window.to)]; }
+          catch (error) {
+            this.output.appendLine(`Summarizing transcript parts failed: ${error instanceof Error ? error.message : String(error)}`);
+            return [unsummarizedPart(window.from, window.to)];
+          }
+        }));
+        record.parts = [...parts, ...added.flat()];
+        await writeTranscriptParts(cwd, record.id, history, record.parts);
+        return buildPartsHandoff(record.id, history, record.parts);
+      } catch (error) {
+        this.output.appendLine(`Saving transcript parts failed; using one summary instead: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (bridged && older.length && choice.model) {
+      try { summary = (await this.runOneShot({ ...choice, model: choice.model }, cwd, handoffSummaryPrompt(older))).trim() || undefined; }
+      catch (error) { this.output.appendLine(`Summarizing the chat for a new session failed: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+    return buildHandoff(history, summary, bridged);
+  }
+
+  /** Fixed instructions for a chat's agent: where it works, delegation, file summaries and batching. Kept short: they are sent with every request. */
+  /** Applies dsh.runtime.powershellSpeedups and dsh.runtime.rustTools to agents started from now on. */
+  private applyShellSettings(): void {
+    const config = vscode.workspace.getConfiguration('dsh');
+    setPowershellSpeedups(config.get('runtime.powershellSpeedups'));
+    if (config.get<boolean>('runtime.rustTools') === false || process.platform !== 'win32') {
+      deactivateRustTools();
+      return;
+    }
+    void ensureRustTools(this.context.globalStorageUri.fsPath).then(bin => {
+      // The setting may have been turned off while the download ran.
+      if (!bin || vscode.workspace.getConfiguration('dsh').get<boolean>('runtime.rustTools') === false) return;
+      try {
+        activateRustTools(bin);
+      } catch (error) {
+        this.output.appendLine(`rg/fd/sd unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    });
+  }
+
+  private agentInstructions(chat: Chat, bridged: boolean): string {
+    const scope = chat.mirror.direct
+      ? 'You edit the user\'s files directly; they and other agents may change files between turns, so re-read before editing.'
+      : 'Edits stay in this working copy until the user reviews them.';
+    return [
+      `DSH IDE, workspace ${this.root().name}. ${scope}`,
+      'End a turn only when everything the user asked for is done, or you are blocked on a question only they can answer. Answering the latest message, a checkpoint, a compaction or a resumed session is not a stopping point: carry on with any unfinished requests in the same turn.',
+      BACKGROUND_CLEANUP,
+      shellInstructions(),
+      memoryInstructions(chat.mirror.cwd, this.memorySettings().enabled),
+      delegationInstructions(bridged, { explorer: this.delegationProfiles().some(profile => profile.name === 'explorer') }),
+      bridged && this.feature('batching') ? BATCH_INSTRUCTIONS : '',
+      bridged && this.summariesOn() ? SUMMARY_INSTRUCTIONS : '',
+      bridged ? MEDIA_INSTRUCTIONS : '',
+      bridged && this.oauthAccounts.list('codex-cli').length ? IMAGE_INSTRUCTIONS : '',
+    ].filter(Boolean).join('\n');
+  }
+
+  /** A working git: dsh.runtime.gitPath, VS Code's git.path, PATH, the usual install folders, or the copy DSH installed. */
+  private async gitPath(): Promise<string | undefined> {
+    const configured = vscode.workspace.getConfiguration('git').get<unknown>('path');
+    const vscodeGit = Array.isArray(configured) ? configured.filter((item): item is string => typeof item === 'string') : typeof configured === 'string' ? [configured] : [];
+    return findGit(this.context.globalStorageUri.fsPath, [vscode.workspace.getConfiguration('dsh').get<string>('runtime.gitPath'), ...vscodeGit]);
+  }
+
+  /** Git for sync, offering to install it when it is missing. Undefined when the user declines or it cannot be installed. */
+  private async ensureGit(): Promise<string | undefined> {
+    const found = await this.gitPath();
+    if (found) return found;
+    if (process.platform !== 'win32') {
+      const choice = await vscode.window.showWarningMessage('Git is needed to sync with GitHub, and it is not installed.', {
+        modal: true, detail: 'Install Git with your package manager (or from git-scm.com), then choose Connect on the Sync page again.',
+      }, 'Open download page');
+      if (choice === 'Open download page') await vscode.env.openExternal(vscode.Uri.parse(GIT_DOWNLOAD_PAGE));
+      return undefined;
+    }
+    const choice = await vscode.window.showWarningMessage('Git is needed to sync with GitHub, and it is not installed. Install it now?', {
+      modal: true, detail: 'DSH downloads MinGit, the portable build of Git for Windows, checks its SHA-256 against the official release, and keeps it in DSH\'s own storage. Nothing else on your PC changes.',
+    }, 'Install Git');
+    if (choice !== 'Install Git') return undefined;
+    try {
+      const git = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Installing Git for DSH sync…' },
+        () => installGit(this.context.globalStorageUri.fsPath));
+      this.output.appendLine(`Installed Git for sync at ${git}.`);
+      return git;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`Installing Git failed: ${message}`);
+      const next = await vscode.window.showErrorMessage(`Could not install Git: ${message}`, 'Open download page');
+      if (next === 'Open download page') await vscode.env.openExternal(vscode.Uri.parse(GIT_DOWNLOAD_PAGE));
+      return undefined;
+    }
+  }
+
+  /** Connect from the popup or the Sync page: Git first (installing it if needed), then GitHub. */
+  private async connectSync(): Promise<void> {
+    if (!await this.ensureGit()) return;
+    await this.sync.connect();
+    if (this.sync.connected) await this.context.globalState.update(SYNC_OFFER_KEY, 'connected');
+  }
+
+  /** Asks once (and again a week after "Not now") whether to sync settings and memory through GitHub. */
+  private async offerSync(): Promise<void> {
+    const offer = this.context.globalState.get<string | number>(SYNC_OFFER_KEY);
+    if (this.sync.connected || offer === 'never' || offer === 'connected' || (typeof offer === 'number' && Date.now() < offer)) return;
+    if (!vscode.workspace.isTrusted) return;
+    const choice = await vscode.window.showInformationMessage('Sync memories and settings to GitHub for work across multiple computers?', 'Sync with GitHub', 'Not now', 'Don\'t ask again');
+    if (choice === 'Sync with GitHub') await this.connectSync();
+    else if (choice === 'Don\'t ask again') await this.context.globalState.update(SYNC_OFFER_KEY, 'never');
+    else await this.context.globalState.update(SYNC_OFFER_KEY, Date.now() + 7 * 24 * 60 * 60_000);
+  }
+
+  /** Whether memory is on for this PC, and then the global memory folder. */
+  private memorySettings(): { enabled: boolean; global?: string } {
+    const enabled = vscode.workspace.getConfiguration?.('dsh')?.get<boolean>('memory.enabled', true) !== false;
+    return { enabled, global: enabled ? globalMemoryFolder(this.instructionRoots().dshHome) : undefined };
+  }
+
+  /** Brings the global memory folder into the chat's working copy, or (after a turn) saves the agent's notes back to it. */
+  private async syncMemory(chat: Chat, after = false): Promise<void> {
+    try {
+      const result = await syncGlobalMemory(this.memorySettings().global, chat.mirror.cwd);
+      if (result.skipped) this.output.appendLine(`Global memory not synced: ${result.skipped}.`);
+      const changed = [...result.saved, ...result.conflicts];
+      // Notes agents saved reach GitHub a few seconds later, as one commit.
+      if (changed.length) this.sync.schedule();
+      if (after && changed.length) {
+        const conflicts = result.conflicts.length ? `; kept both versions of ${result.conflicts.length} edited elsewhere` : '';
+        this.sidebar.postMessage({ type: 'toolEvent', sessionId: chat.record.id, entryId: `tool:${chat.turnEntryId}:memory`, event: {
+          id: `memory-${chat.turnEntryId}`, kind: 'other', title: 'Memory saved', detail: `${changed.length} note${changed.length === 1 ? '' : 's'}: ${result.saved.slice(0, 5).join(', ')}${result.saved.length > 5 ? ', …' : ''}${conflicts}`, state: 'complete',
+        } });
+      }
+    } catch (error) {
+      this.output.appendLine(`Global memory sync failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private refreshMemory(): void {
+    const { enabled } = this.memorySettings();
+    const folder = globalMemoryFolder(this.instructionRoots().dshHome);
+    if (enabled) void mkdir(folder, { recursive: true }).catch(() => undefined);
+    void countFiles(folder).then(notes => this.sidebar.postMessage({ type: 'memoryState', memory: { enabled, folder, notes, synced: this.sync.connected } }));
+  }
+
+  /** Turns memory on, or off after a warning: turning it off deletes the global notes on this PC (GitHub keeps its copy). */
+  private async setMemory(enabled: boolean): Promise<void> {
+    const config = vscode.workspace.getConfiguration('dsh');
+    const folder = globalMemoryFolder(this.instructionRoots().dshHome);
+    if (enabled) {
+      await mkdir(folder, { recursive: true });
+      await config.update('memory.enabled', true, vscode.ConfigurationTarget.Global);
+      this.refreshMemory();
+      return;
+    }
+    const notes = await countFiles(folder);
+    if (notes) {
+      const synced = this.sync.connected;
+      const choice = await vscode.window.showWarningMessage(`Turn off memory and delete ${notes === 1 ? 'the 1 global memory file' : `all ${notes} global memory files`} on this PC?`, {
+        modal: true,
+        detail: synced
+          ? 'Your GitHub sync repository keeps its copy, so turning memory back on brings them back. Project memory in .dsh/memory is project content and is not touched.'
+          : `This cannot be undone: ${folder} is deleted and Sync is not on, so there is no other copy. Project memory in .dsh/memory is project content and is not touched.`,
+      }, 'Turn off and delete');
+      if (choice !== 'Turn off and delete') { this.refreshMemory(); return; }
+    }
+    await config.update('memory.enabled', false, vscode.ConfigurationTarget.Global);
+    await rm(folder, { recursive: true, force: true });
+    // Loaded chats drop their copies now; others drop theirs on their next turn.
+    for (const chat of this.chats.values()) if (!chat.running) await syncGlobalMemory(undefined, chat.mirror.cwd).catch(() => undefined);
+    this.output.appendLine(`Memory turned off; deleted ${folder}.`);
+    this.refreshMemory();
+  }
+
+  /** Tokens of conversation (beyond the session's fixed overhead) at which a chat is compacted, or undefined when off. */
+  private autoCompactAt(): number | undefined {
+    if (!this.feature('autoCompact')) return undefined;
+    return normalizeCompactTokens(vscode.workspace.getConfiguration('dsh').get<unknown>('experimental.autoCompactTokens'));
+  }
+
+  /** Records a context size report; the first one from a fresh session sets that session's baseline. */
+  private noteContext(chat: Chat, tokens: number): void {
+    if (!Number.isFinite(tokens) || tokens <= 0) return;
+    const record = chat.record;
+    record.contextTokens = tokens;
+    if (chat.measureBase !== undefined) {
+      record.baseTokens = Math.max(0, tokens - chat.measureBase);
+      chat.measureBase = undefined;
+    }
+    const watch = chat.running ? chat.compactWatch : undefined;
+    const step = watch && compactStep(watch, tokens - (record.baseTokens || 0));
+    if (!watch || !step) return;
+    const runtime = isCliProvider(record.provider) ? undefined : chat.runtime;
+    const turn: TurnChannel = runtime ? { interrupt: () => runtime.interrupt(this.rid(record)) } : chat.cli;
+    if (!sendCompactRequest(watch, turn, chatCompactRequest(tokens, step === 'urge'))) {
+      // The turn is already ending; the next message compacts between turns as before.
+      if (step === 'ask') watch.askedAt = undefined;
+      return;
+    }
+    this.output.appendLine(`Mid-turn compaction: asked "${record.name}" to checkpoint at about ${Math.round(tokens / 1000)}k tokens${step === 'urge' ? ' (again)' : ''}.`);
+    this.postRun(record.id, 'tool', 'Compacting context…');
+  }
+
+  /** One line per tool call of the running turn, kept with the turn's reply in the transcript. */
+  private logTool(chat: Chat, title: string, detail?: string): void {
+    if (!chat.running || chat.turnTools.length >= MAX_TURN_TOOLS) return;
+    chat.turnTools.push(toolLine(title.replace(/^mcp__dsh-delegate__/, ''), detail));
+  }
+
+  /** Moves the chat to a new backend session; the caller sets what the next prompt hands over. */
+  private async freshBackendSession(chat: Chat, reason: string): Promise<void> {
+    const record = chat.record;
+    if (chat.runtime) {
+      // A failure here must not stop the caller, or the chat would stay "Thinking…" forever.
+      try {
+        record.runtimeId = await chat.runtime.newSession(chat.mirror.cwd, this.mcpServers(chat.ownerId));
+        this.freshSessions?.add(record.runtimeId);
+        if (record.provider === 'cursor-acp') {
+          await this.refreshCursorModels(chat.runtime, record.runtimeId);
+          if (record.backend !== 'auto' || chat.runtime.models(record.runtimeId).some(option => option.value === 'auto')) {
+            await chat.runtime.setModel(record.runtimeId, record.backend);
+          }
+        }
+        if (record.effort) await chat.runtime.setConfigOption(record.runtimeId, 'reasoning_effort', record.effort);
+      } catch (error) {
+        this.output.appendLine(`Starting a session after ${reason} failed: ${String(error)}`);
+      }
+    }
+    record.previousCliSessionId = record.cliSessionId;
+    record.cliSessionId = undefined;
+    record.explorerTokens = 0;
+    record.nudgedAt = undefined;
+  }
+
+  /** Advanced batching: runs the calls in parallel, chained ones in order, and returns one combined result. The sidebar shows one card with a row per call. */
+  private async runBatch(chat: Chat, args: Record<string, unknown>): Promise<DelegateResult> {
+    let calls: BatchCall[];
+    let skipped: number;
+    try { ({ calls, skipped } = uniqueBatchCalls(parseBatchCalls(args))); } catch (error) { return { text: error instanceof Error ? error.message : String(error), isError: true }; }
+    const id = `batch-${randomUUID().slice(0, 8)}`;
+    const children = calls.map(call => {
+      const shown = displayTool(call.tool, callLabel(call).slice(call.tool.length).trim() || undefined);
+      return { title: shown.title, detail: shown.detail, full: shown.full, kind: shown.kind, state: 'running' as 'running' | 'complete' | 'error' };
+    });
+    const post = (): void => {
+      const done = children.every(child => child.state !== 'running');
+      this.sidebar.postMessage({ type: 'toolEvent', sessionId: chat.record.id, entryId: `tool:${chat.turnEntryId}:${id}`, event: {
+        id, kind: 'other', title: 'Batch', detail: `${calls.length} call${calls.length === 1 ? '' : 's'}`, children: children.map(child => ({ ...child })),
+        state: done ? children.some(child => child.state === 'error') && children.every(child => child.state === 'error') ? 'error' : 'complete' : 'running',
+      } });
+    };
+    for (const call of calls) this.logTool(chat, call.tool, callLabel(call).slice(call.tool.length).trim() || undefined);
+    post();
+    const cwd = chat.mirror.cwd;
+    // Outside the working copy the user decides per path, unless DSH has full access. Paths written out in the batch are asked about together, up front.
+    const outsideAnswers = new Map<string, Promise<boolean>>();
+    const askOutside = (paths: string[]): Promise<boolean> => this.askInChat(chat.record.id, 'Read outside the project', `The batch wants to read:\n${paths.join('\n')}`);
+    if (this.approvalMode !== 'full') {
+      const written = calls.filter(call => isBatchFileTool(call.tool) && !call.forEach && typeof call.args.path === 'string' && !/\{\{/.test(call.args.path)).map(call => call.args.path as string);
+      const outside = [...new Set((await Promise.all(written.map(async path => await outsideWorkingCopy(cwd, path) ? resolvePath(cwd, path.trim()) : ''))).filter(Boolean))];
+      if (outside.length) {
+        const answer = askOutside(outside);
+        for (const path of outside) outsideAnswers.set(path, answer);
+      }
+    }
+    // Calls arrive here with their placeholders filled in; forEach calls arrive once per item.
+    const runCall = async (call: BatchCall): Promise<BatchOutcome> => {
+      if (!isBatchFileTool(call.tool)) return this.handleDelegateCall(chat.ownerId, call.tool, call.args);
+      const path = typeof call.args.path === 'string' ? call.args.path : '';
+      const outside = !!path && await outsideWorkingCopy(cwd, path);
+      if (outside && this.approvalMode !== 'full') {
+        const absolute = resolvePath(cwd, path.trim());
+        if (!outsideAnswers.has(absolute)) outsideAnswers.set(absolute, askOutside([absolute]));
+        if (!await outsideAnswers.get(absolute)) return { text: `${path} is outside the project and the user declined.`, isError: true };
+      }
+      // Inside the copy, paths that need approval elsewhere (.env, .ssh, credentials) are not read silently here.
+      if (!outside && this.approvalMode !== 'full' && path && isRiskyAction(path)) return { text: `${path} needs approval; read it with your own tools.`, isError: true };
+      if (call.tool === 'read_file' && !outside) this.noteRead(cwd, path);
+      return runBatchFileTool(cwd, call.tool, call.args, { outside });
+    };
+    const outcomes = await executeBatch(calls, runCall, (index, outcome) => {
+      children[index].state = outcome.isError ? 'error' : 'complete';
+      post();
+    });
+    const result = formatBatchResult(calls, outcomes, skipped);
+    return { text: result.text, ...(result.content.length ? { content: [{ type: 'text', text: result.text }, ...result.content] } : {}) };
+  }
+
+  /** The editor's current state, or nothing when editor context is turned off. */
+  private editorContext(): string {
+    if (!this.feature('editorContext')) return '';
+    const folder = this.root();
+    const editor = vscode.window.activeTextEditor;
+    const tabs = vscode.window.tabGroups.all.flatMap(group => group.tabs).map(tab => {
+      const input = tab.input;
+      return input instanceof vscode.TabInputText ? relative(folder.uri.fsPath, input.uri.fsPath) : undefined;
+    }).filter((item): item is string => !!item && !item.startsWith('..')).slice(0, 20);
+    const parts = [
+      'IDE context (paths are relative to the working copy):',
+      `Open files: ${tabs.join(', ') || '(none)'}`,
+    ];
+    if (editor && editor.document.uri.scheme === 'file') {
+      const path = relative(folder.uri.fsPath, editor.document.uri.fsPath);
+      if (!path.startsWith('..')) {
+        parts.push(`Active file: ${path}`, `Cursor: line ${editor.selection.active.line + 1}, column ${editor.selection.active.character + 1}`);
+        if (!editor.selection.isEmpty) {
+          const selection = editor.document.getText(editor.selection);
+          const truncated = selection.length > 4000 ? `\n[selection truncated: ${selection.length} chars]` : '';
+          parts.push(`Selected text:\n${selection.slice(0, 4000)}${truncated}`);
+        }
+        const diagnostics = vscode.languages.getDiagnostics(editor.document.uri).slice(0, 10);
+        if (diagnostics.length) parts.push(`Diagnostics: ${diagnostics.map(d => `line ${d.range.start.line + 1}: ${d.message}`).join(' | ')}`);
+      }
+    }
+    return parts.join('\n');
+  }
+
+  private mcpServers(ownerId?: string, toolpacksOnly = false): unknown[] {
+    const value = vscode.workspace.getConfiguration('dsh').get<unknown>('mcpServers', []);
+    if (!Array.isArray(value)) throw new Error('dsh.mcpServers must be an array.');
+    const delegate = ownerId ? this.delegateConfig(ownerId, toolpacksOnly) : undefined;
+    return delegate ? [...value, { name: DELEGATE_SERVER, command: delegate.command, args: delegate.args, env: Object.entries(delegate.env).map(([name, envValue]) => ({ name, value: envValue })) }] : value;
+  }
+
+  private subagentProfiles(): SubagentProfile[] {
+    const value = vscode.workspace.getConfiguration('dsh').get<unknown>('subagents', []);
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is SubagentProfile => !!item && typeof item === 'object' && typeof item.name === 'string' && !!item.name.trim()
+      && typeof item.model === 'string' && item.enabled !== false)
+      .map(item => ({ ...item, name: item.name.trim(), mode: item.mode === 'edit' ? 'edit' as const : 'read-only' as const, tools: item.tools !== false }));
+  }
+
+  /** Profiles available to delegation, including the optional built-in explorer. */
+  private delegationProfiles(): SubagentProfile[] {
+    return withExplorer(this.subagentProfiles(), this.modelSetting('explorerModel')).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private refreshSubagents(): void {
+    this.sidebar.postMessage({ type: 'subagentProfilesState', profiles: this.subagentProfiles().map(({ name, description, model, effort, speed, mode, tools }) => ({ name, description, model, effort, speed, mode, tools })) });
+  }
+
+  private async writeSubagents(profiles: SubagentProfile[]): Promise<void> {
+    await vscode.workspace.getConfiguration('dsh').update('subagents', profiles, vscode.ConfigurationTarget.Global);
+    this.refreshSubagents();
+  }
+
+  private async saveSubagent(message: Extract<SidebarWebviewMessage, { type: 'saveSubagent' }>): Promise<void> {
+    const profile = message.profile;
+    const name = String(profile.name || '').trim();
+    const model = this.availableModel(String(profile.model || ''));
+    if (!name || !model) throw new Error('Subagent needs a name and an available model.');
+    if (profile.effort && !model.effortOptions?.includes(profile.effort)) throw new Error(`Effort "${profile.effort}" is not offered by ${model.name}.`);
+    if (profile.speed && !model.speedOptions?.some(item => item.label === profile.speed)) throw new Error(`Speed "${profile.speed}" is not offered by ${model.name}.`);
+    const next: SubagentProfile = { name, description: profile.description?.trim() || undefined, model: model.name, effort: profile.effort || undefined, speed: profile.speed || undefined, mode: profile.mode === 'edit' ? 'edit' : 'read-only', tools: profile.tools !== false };
+    const others = this.subagentProfiles().filter(item => item.name !== name && item.name !== message.originalName);
+    await this.writeSubagents([...others, next]);
+    this.sidebar.postMessage({ type: 'subagentSaved' });
+  }
+
+  private feature(key: SidebarFeatureKey): boolean {
+    return vscode.workspace.getConfiguration('dsh').get<boolean>(FEATURE_SETTINGS[key], defaultFeatures()[key]) !== false;
+  }
+
+  private modelSetting(key: ModelSettingKey): SidebarNameModel {
+    const value = vscode.workspace.getConfiguration?.('dsh').get<unknown>(key);
+    if (!value || typeof value !== 'object') return {};
+    const { model, effort, speed } = value as Record<string, unknown>;
+    const text = (item: unknown): string | undefined => typeof item === 'string' && item.trim() ? item.trim() : undefined;
+    return { model: text(model), effort: text(effort), speed: text(speed) };
+  }
+
+  private refreshCustomize(): void {
+    const features = Object.fromEntries((Object.keys(FEATURE_SETTINGS) as SidebarFeatureKey[]).map(key => [key, this.feature(key)])) as SidebarFeatures;
+    this.sidebar.postMessage({ type: 'customizeState', features, nameModel: this.modelSetting('nameModel'), reviewModel: this.modelSetting('reviewModel'), summaryModel: this.modelSetting('summaryModel'),
+      deciderModel: this.modelSetting('deciderModel'), explorerModel: this.modelSetting('explorerModel'), smartAutoRanks: this.smartAutoRanks(),
+      accessibility: normalizeAccessibility(vscode.workspace.getConfiguration('dsh').get<unknown>('accessibility')),
+      autoCompactTokens: normalizeCompactTokens(vscode.workspace.getConfiguration('dsh').get<unknown>('experimental.autoCompactTokens')),
+      voiceCommands: this.voiceCommands(), voiceAvailable: process.platform === 'win32',
+      processPriority: normalizeProcessPriority(vscode.workspace.getConfiguration('dsh').get<unknown>('runtime.processPriority')),
+      unifyFeatures: allUnifyFeatures() });
+  }
+
+  /** Pushes every Unify feature value (engine defaults and UI-only ones) for the Customize page. */
+  private postUnifyFeatures(): void {
+    this.sidebar.postMessage({ type: 'unifyFeaturesState', features: allUnifyFeatures() });
+  }
+
+  private voiceCommands(): VoiceCommand[] {
+    return normalizeVoiceCommands(vscode.workspace.getConfiguration('dsh').get<unknown>('voice.commands'));
+  }
+
+  /** Downloads local Whisper once, with a progress notification; shared by overlapping starts. */
+  private whisperEngine(): Promise<WhisperEngine> {
+    const root = join(this.context.globalStorageUri.fsPath, 'whisper');
+    const installed = installedWhisper(root);
+    if (installed) return Promise.resolve(installed);
+    this.whisperInstall ??= Promise.resolve(vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: `Downloading local Whisper for voice input (${Math.round(WHISPER_DOWNLOAD_BYTES / 1_000_000)} MB, one time)`,
+    }, async progress => {
+      let reported = 0;
+      return installWhisper(root, fraction => {
+        const percent = Math.floor(fraction * 100);
+        if (percent > reported) {
+          progress.report({ increment: percent - reported, message: `${percent}%` });
+          reported = percent;
+        }
+      });
+    })).finally(() => { this.whisperInstall = undefined; });
+    return this.whisperInstall;
+  }
+
+  /** Stops dictation, or cancels a start that is still downloading Whisper. */
+  private stopVoice(): void {
+    this.voiceSession++;
+    if (this.dictation) this.dictation.stop();
+    else void this.sidebar.postMessage({ type: 'voiceState', listening: false });
+  }
+
+  /** Starts dictation into the composer; a newer start replaces a running one. */
+  private async startVoice(): Promise<void> {
+    const session = ++this.voiceSession;
+    const previous = this.dictation;
+    this.dictation = undefined;
+    previous?.stop();
+    previous?.stop();
+    let engine: WhisperEngine;
+    try {
+      engine = await this.whisperEngine();
+    } catch (error) {
+      const message = `Could not download local Whisper: ${error instanceof Error ? error.message : String(error)}`;
+      this.output.appendLine(`Voice input stopped: ${message}`);
+      if (session === this.voiceSession) void this.sidebar.postMessage({ type: 'voiceState', listening: false, error: message });
+      return;
+    }
+    if (session !== this.voiceSession) return;
+    const dictation = new Dictation(this.voiceCommands(), engine, {
+      onListening: () => { if (this.dictation === dictation) void this.sidebar.postMessage({ type: 'voiceState', listening: true }); },
+      onHypothesis: text => { if (this.dictation === dictation) void this.sidebar.postMessage({ type: 'voiceHypothesis', text }); },
+      onResult: parts => { if (this.dictation === dictation) void this.sidebar.postMessage({ type: 'voiceResult', parts }); },
+      onStopped: error => {
+        if (this.dictation !== dictation) return;
+        this.dictation = undefined;
+        if (error) this.output.appendLine(`Voice input stopped: ${error}`);
+        void this.sidebar.postMessage({ type: 'voiceState', listening: false, error });
+      },
+    });
+    this.dictation = dictation;
+    await dictation.start();
+  }
+
+  private smartAutoRanks(): SmartAutoRank[] {
+    return normalizeRanks(vscode.workspace.getConfiguration('dsh').get<unknown>('smartAutoRanks'));
+  }
+
+  /** Ranked entries whose model is still configured and enabled, smartest first. */
+  private smartAutoCandidates(): (SmartAutoRank & { entry: ModelEntry })[] {
+    return this.smartAutoRanks().flatMap(rank => {
+      const entry = this.availableModel(rank.model);
+      return entry && entry.enabled !== false ? [{ ...rank, entry }] : [];
+    });
+  }
+
+  private smartAutoReady(): boolean {
+    const name = this.modelSetting('deciderModel').model;
+    const decider = name ? this.availableModel(name) : undefined;
+    return this.feature('smartAuto') && !!decider && decider.enabled !== false && this.smartAutoCandidates().length > 0;
+  }
+
+  /** Leaves Smart Auto for a real model once it is turned off or can no longer pick one. */
+  private async dropSmartAuto(): Promise<void> {
+    if (this.selectedModel !== SMART_AUTO || this.smartAutoReady()) return;
+    const current = this.active && this.availableModel(this.active.modelName);
+    this.selectedModel = current?.enabled ? current.name : this.models.list(true)[0]?.name || '';
+    await this.context.workspaceState.update(SELECTED_MODEL_KEY, this.selectedModel);
+    this.refreshModels(); await this.refreshAccount();
+  }
+
+  private async saveSmartAutoRanks(value: SidebarSmartAutoRank[]): Promise<void> {
+    if (!Array.isArray(value) || value.length > MAX_RANKS) throw new Error(`Smart Auto can rank up to ${MAX_RANKS} models.`);
+    const ranks = value.map(item => {
+      const model = this.availableModel(String(item?.model || '').trim());
+      if (!model) throw new Error(`Model "${item?.model}" is not available.`);
+      const effort = item.effort || undefined;
+      if (effort && !model.effortOptions?.includes(effort)) throw new Error(`Effort "${effort}" is not offered by ${model.name}.`);
+      const note = typeof item.note === 'string' && item.note.trim() ? item.note.trim() : undefined;
+      if (note && note.length > MAX_NOTE) throw new Error(`Smart Auto notes can be up to ${MAX_NOTE} characters.`);
+      return { model: model.name, effort, note };
+    });
+    await vscode.workspace.getConfiguration('dsh').update('smartAutoRanks', ranks.length ? ranks : undefined, vscode.ConfigurationTarget.Global);
+    this.refreshCustomize();
+  }
+
+  /**
+   * Has the decider model pick this turn's model from the ranked list, switches the chat to it and notes the pick
+   * in the chat. Throws when the decider fails or its reply names no listed model, so the message is not sent.
+   */
+  private async smartAutoPick(chat: Chat, prompt: string, turnEntryId: string): Promise<void> {
+    const record = chat.record;
+    const decider = this.modelSetting('deciderModel');
+    const candidates = this.smartAutoCandidates();
+    if (!this.feature('smartAuto') || !decider.model || !candidates.length) throw new Error('Smart Auto needs a decider model and at least one ranked model. Set them in Customize.');
+    this.postRun(record.id, 'thinking', 'Smart Auto is choosing a model…');
+    const history = (this.transcripts.get(record.id) || []).filter(item => !item.internal);
+    let reply: string;
+    try {
+      reply = await this.runOneShot({ ...decider, model: decider.model }, chat.mirror.cwd, deciderPrompt(candidates, history, prompt), 120_000, stop => { chat.stopDecider = stop; });
+    } catch (error) {
+      if (chat.cancelRequested) return;
+      throw new Error(`Smart Auto: the decider "${decider.model}" failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally { chat.stopDecider = undefined; }
+    if (chat.cancelRequested) return;
+    const decision = parseDecision(reply, candidates.length);
+    if (!decision) throw new Error(`Smart Auto: the decider "${decider.model}" did not name a listed model. It replied: ${reply.trim().slice(0, 200) || '(nothing)'}`);
+    const pick = candidates[decision.rank - 1];
+    const effort = pick.effort || '';
+    if (record.modelName !== pick.entry.name || record.backend !== pick.entry.backend || (record.effort || '') !== effort) await this.switchModel(chat, pick.entry, effort);
+    record.smartAuto = true;
+    this.sidebar.postMessage({ type: 'noteMessage', sessionId: record.id, entryId: `note:${turnEntryId}`, icon: 'auto_awesome',
+      text: `Smart Auto → ${rankLabel(pick)}${decision.reason ? ` · ${decision.reason}` : ''}` });
+    this.postRun(record.id, 'thinking', 'Thinking…');
+  }
+
+  private async saveAccessibility(value: SidebarAccessibility): Promise<void> {
+    await vscode.workspace.getConfiguration('dsh').update('accessibility', normalizeAccessibility(value), vscode.ConfigurationTarget.Global);
+    this.refreshCustomize();
+  }
+
+  /** Deletes every chat that is not running. The open chat goes last so earlier deletions never switch to a chat about to be removed. */
+  private async deleteAllSessions(): Promise<void> {
+    const activeId = this.active?.id || this.context.workspaceState.get<string>(ACTIVE_SESSION_KEY);
+    const ids = this.sessions().map(item => item.id).filter(id => !this.chats.get(id)?.running)
+      .sort((a, b) => Number(a === activeId) - Number(b === activeId));
+    for (const id of ids) await this.deleteSession(id);
+  }
+
+  private async setFeature(key: SidebarFeatureKey, enabled: boolean): Promise<void> {
+    if (!Object.hasOwn(FEATURE_SETTINGS, key)) throw new Error('Unknown feature.');
+    await vscode.workspace.getConfiguration('dsh').update(FEATURE_SETTINGS[key], enabled === true, vscode.ConfigurationTarget.Global);
+    this.refreshCustomize();
+  }
+
+  private async saveModelSetting(key: ModelSettingKey, value: SidebarNameModel): Promise<void> {
+    const name = String(value?.model || '').trim();
+    let next: SidebarNameModel | undefined;
+    if (name) {
+      const model = this.availableModel(name);
+      if (!model) throw new Error(`Model "${name}" is not available.`);
+      const effort = value.effort || undefined;
+      const speed = value.speed || undefined;
+      if (effort && !model.effortOptions?.includes(effort)) throw new Error(`Effort "${effort}" is not offered by ${model.name}.`);
+      if (speed && !model.speedOptions?.some(item => item.label === speed)) throw new Error(`Speed "${speed}" is not offered by ${model.name}.`);
+      next = { model: model.name, effort, speed };
+    }
+    await vscode.workspace.getConfiguration('dsh').update(key, next, vscode.ConfigurationTarget.Global);
+    this.refreshCustomize();
+  }
+
+  /** Copies global rules and skills into a Claude account directory, or removes earlier copies when sharing is off. */
+  private async shareGlobalInstructions(account: OAuthCliAccount): Promise<void> {
+    try {
+      const { dshHome, agentsHome } = this.instructionRoots();
+      await shareInstructions(account.directory, { dshHome, agentsHome }, this.feature('shareRules'));
+    }
+    catch (error) { this.output.appendLine(`Could not share global rules with ${runtimeLabel(account.provider)}: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+
+  /** Replaces a chat's first-message title with one from the configured name model. Failures keep the provisional title. */
+  private async autoName(sessionId: string, prompt: string, cwd: string): Promise<void> {
+    let choice: SidebarNameModel = {};
+    try {
+      choice = this.modelSetting('nameModel');
+      if (!this.feature('autoName') || !choice.model) return;
+      // No two chats share a rail icon.
+      const taken = (): string[] => this.sessions().flatMap(item => item.id !== sessionId && item.icon ? [item.icon] : []);
+      const named = parseChatName(await this.runOneShot({ ...choice, model: choice.model }, cwd, chatTitlePrompt(prompt, taken())));
+      const record = this.chats.get(sessionId)?.record ?? this.sessions().find(item => item.id === sessionId);
+      if (!named || !record || this.deletedSessions.has(sessionId)) return;
+      // A user rename keeps its name, but the chat still gets an icon.
+      if (!record.renamed) record.name = named.title;
+      // Checked again after the reply, since chats named at the same time may have picked the same icon.
+      const icon = named.icon && uniqueChatIcon(named.icon, taken(), sessionId);
+      if (icon) record.icon = icon;
+      await this.saveSession(record, false);
+      agentBus.update(sessionId, { task: record.name });
+    } catch (error) {
+      this.output.appendLine(`Naming a chat with "${choice.model}" failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** Records usage without delaying or failing the agent turn. */
+  private logUsage(chatId: string, kind: 'main' | 'oneshot' | 'subagent' | 'keepalive' | 'explorer', model: string, usage: TurnUsage): void {
+    const file = join(this.context.globalStorageUri.fsPath, 'usage-log.jsonl');
+    const line = JSON.stringify({ at: new Date().toISOString(), chatId, kind, model, ...usage.total, context: usage.context ?? (usage.total.input + usage.total.cacheRead + usage.total.cacheWrite) }) + '\n';
+    void mkdir(dirname(file), { recursive: true }).then(() => appendFile(file, line)).catch(error => {
+      this.output.appendLine(`Usage logging failed: ${String(error)}`);
+    });
+  }
+
+  /** Runs one prompt on a configured model with tools denied, and returns the reply text. `onCancel` receives a function that stops the run. */
+  private async runOneShot(choice: { model: string; effort?: string; speed?: string }, cwd: string, prompt: string, timeoutMs = 120_000, onCancel?: (cancel: () => void) => void): Promise<string> {
+    const entry = this.availableModel(choice.model);
+    if (!entry || entry.enabled === false) throw new Error(`Model "${choice.model}" is not available.`);
+    const backend = entry.speedOptions?.find(item => item.label === choice.speed)?.backend || entry.backend;
+    const route = await this.resolveRoute({ ...entry, backend });
+    let reply = '';
+    let timer: NodeJS.Timeout | undefined;
+    const limit = (cancel: () => void): void => { timer = setTimeout(cancel, timeoutMs); onCancel?.(cancel); };
+    try {
+      if ('oauthAccount' in route && isCliProvider(route.model.provider)) {
+        const cli = new OAuthCliRuntime();
+        let timedOut = false;
+        limit(() => { timedOut = true; cli.cancel(); });
+        await this.promptPooled(cli, { account: route.oauthAccount, cwd, backend, effort: choice.effort, speed: choice.speed, readOnly: true, prompt,
+          lean: true,
+          onUsage: usage => {
+            const input = usage.total.input + usage.total.cacheRead + usage.total.cacheWrite;
+            this.output.appendLine(`One-shot input: ${input} tokens`);
+            const chat = [...this.chats.values()].find(item => item.mirror.cwd === cwd);
+            this.logUsage(chat?.record.id || '', 'oneshot', choice.model, usage);
+          },
+          onText: text => { reply += text; }, onTool: () => undefined, onApproval: async () => 'Tools are not available for this request.' },
+        () => timedOut, () => { reply = ''; return {}; });
+        return reply;
+      }
+      const slot = await this.ensureRuntime(route, cwd, `oneshot:${randomUUID()}`);
+      if (!slot) throw new Error('No runtime is available for this model.');
+      try {
+        const sessionId = await slot.runtime.newSession(cwd, []);
+        const listener = `${slot.key}\n${sessionId}`;
+        this.oneShots.set(listener, update => {
+          const content = update.content as Record<string, unknown> | undefined;
+          if (update.sessionUpdate === 'agent_message_chunk' && content?.type === 'text' && typeof content.text === 'string') reply += content.text;
+        });
+        limit(() => slot.runtime.cancel(sessionId));
+        try {
+          if (route.model.provider === 'cursor-acp') {
+            await this.refreshCursorModels(slot.runtime, sessionId);
+            if (backend !== 'auto' || slot.runtime.models(sessionId).some(option => option.value === 'auto')) await slot.runtime.setModel(sessionId, backend);
+          }
+          if (choice.effort) await slot.runtime.setConfigOption(sessionId, 'reasoning_effort', choice.effort);
+          await slot.runtime.prompt(sessionId, prompt);
+        } finally {
+          this.oneShots.delete(listener);
+          await slot.runtime.closeSession(sessionId).catch(() => undefined);
+        }
+      } finally { await this.releaseRuntime(slot.key); }
+      return reply;
+    } finally { if (timer) clearTimeout(timer); }
+  }
+
+  private subagentInfos(): DelegateAgentInfo[] {
+    return this.delegationProfiles().map(profile => ({ name: profile.name, description: profile.description, mode: profile.mode, model: profile.model }));
+  }
+
+  /** Subagents get a toolpack-only bridge so they can use external apps without delegating further. */
+  private delegateConfig(ownerId: string, toolpacksOnly = false): { command: string; args: string[]; env: Record<string, string> } | undefined {
+    const url = this.delegateHost.url;
+    if (!url || !vscode.workspace.isTrusted) return undefined;
+    if (toolpacksOnly && !this.bridgeTools().length) return undefined;
+    const nodePath = vscode.workspace.getConfiguration('dsh').get<string>('runtime.nodePath') || undefined;
+    return {
+      command: nodePath || process.execPath,
+      args: [join(this.context.extensionPath, 'dist', 'delegate-server.js')],
+      env: { DSH_DELEGATE_URL: url, DSH_DELEGATE_TOKEN: this.delegateHost.token, DSH_DELEGATE_OWNER: ownerId, ...(toolpacksOnly ? { DSH_DELEGATE_SCOPE: TOOLPACK_SCOPE } : {}), ...(nodePath ? {} : { ELECTRON_RUN_AS_NODE: '1' }) },
+    };
+  }
+
+  private async handleDelegateCall(owner: string, tool: string, args: Record<string, unknown>): Promise<DelegateResult> {
+    const child = [...this.childRuns].find(item => item.owner === owner);
+    if (child) {
+      if (child.parent.cancelRequested && !child.background) return { text: 'Cancelled.', isError: true };
+      if (tool === SUMMARY_TOOL.name) return this.readSummaries(child.parent, args);
+      if (tool === SEND_MEDIA) return this.sendMedia(child.parent, args, child.label);
+      if (tool === GENERATE_IMAGE) return this.generateImage(child.parent, args, child.label);
+      return this.packCall(child.parent, tool, args) ?? { text: `Subagents may only use toolpack, file summary, media and image tools, not "${tool}".`, isError: true };
+    }
+    const chat = [...this.chats.values()].find(item => item.ownerId === owner);
+    if (!chat) return { text: 'This chat is no longer active.', isError: true };
+    if (chat.cancelRequested || chat.ping) return { text: 'Tools are unavailable during this turn.', isError: true };
+    if (isBatchTool(tool)) return this.feature('batching') ? this.runBatch(chat, args) : { text: 'Batching is turned off.', isError: true };
+    if (tool === 'list_subagents') {
+      const infos = this.subagentInfos();
+      return { text: infos.length ? infos.map(info => `- ${info.name} (${info.mode}, model ${info.model})${info.description ? `: ${info.description}` : ''}`).join('\n') : 'No subagents are configured. Add them to the dsh.subagents setting.' };
+    }
+    if (tool === 'list_locked_files') {
+      const locks = [...chat.locks];
+      return { text: locks.length ? locks.map(([path, lock]) => `${path} (locked by subagent "${lock.label}")`).join('\n') : 'No files are locked.' };
+    }
+    if (tool === 'checkpoint') {
+      try {
+        chat.pendingCheckpoint = parseCheckpoint(args);
+        if (chat.compactWatch?.askedAt !== undefined) return { text: 'Checkpoint saved. End your turn now with one short line; DSH continues the task in a fresh session automatically.' };
+        return { text: 'Checkpoint saved; it takes effect after this turn. Nothing continues automatically: finish the user\'s request in this turn before you end it.' };
+      } catch (error) {
+        return { text: error instanceof Error ? error.message : String(error), isError: true };
+      }
+    }
+    if (tool === CHAT_HISTORY_TOOL) {
+      // The running turn's own message is already in the agent's prompt.
+      const history = this.transcripts.get(chat.record.id) || [];
+      return { text: chatHistoryReply(chat.running ? history.slice(0, -1) : history, Number(args.count) || 10, typeof args.query === 'string' ? args.query : undefined) };
+    }
+    if (tool === 'delegate_task') return this.runSubagent(chat, args);
+    if (tool === WAIT_SUBAGENTS) return this.waitSubagents(chat, args);
+    if (tool === CANCEL_SUBAGENT) return this.cancelSubagent(chat, args);
+    if (tool === 'ask_questions') return this.askQuestions(chat, args);
+    if (tool === SUMMARY_TOOL.name) return this.readSummaries(chat, args);
+    if (tool === SEND_MEDIA) return this.sendMedia(chat, args);
+    if (tool === GENERATE_IMAGE) return this.generateImage(chat, args);
+    return this.packCall(chat, tool, args, true) ?? { text: `Unknown tool "${tool}".`, isError: true };
+  }
+
+  private async runSubagent(chat: Chat, args: Record<string, unknown>): Promise<DelegateResult> {
+    const fail = (text: string): DelegateResult => ({ text, isError: true });
+    const name = typeof args.agent === 'string' ? args.agent.trim() : '';
+    const task = typeof args.task === 'string' ? args.task.trim() : '';
+    const profile = this.delegationProfiles().find(item => item.name === name);
+    if (!profile) return fail(`Unknown subagent "${name}". Available: ${this.subagentInfos().map(info => info.name).join(', ') || '(none)'}.`);
+    if (!task) return fail('"task" is required.');
+    const files = (Array.isArray(args.files) ? args.files : []).filter((item): item is string => typeof item === 'string');
+    if (args.background !== true) return this.runSubagentCore(chat, profile, task, files);
+    const afterTurn: AfterTurn = args.after_turn === 'hold' || args.after_turn === 'cancel' ? args.after_turn : 'resume';
+    const id = `bg-${randomUUID().slice(0, 8)}`;
+    const entry: BackgroundTask = { id, label: profile.name, afterTurn, done: false, finished: Promise.resolve() };
+    chat.background.set(id, entry);
+    entry.finished = this.runSubagentCore(chat, profile, task, files, run => { entry.run = run; })
+      .catch((error): DelegateResult => ({ text: `Subagent "${profile.name}" failed: ${error instanceof Error ? error.message : String(error)}`, isError: true }))
+      .then(result => { entry.done = true; entry.result = result; entry.run = undefined; this.backgroundSettled(chat); });
+    return { text: `Started subagent "${profile.name}" in the background as task ${id}. Keep working; call ${WAIT_SUBAGENTS} to yield until it finishes and get its report.`
+      + ` If your turn ends first: ${afterTurn === 'resume' ? 'its result is sent to you in a new turn' : afterTurn === 'hold' ? 'its result is attached to the user\'s next message' : 'it is cancelled'}.` };
+  }
+
+  /** Background tasks finished and not yet collected, removed from the chat and formatted as one report. */
+  private takeBackgroundResults(chat: Chat, ids?: string[]): string {
+    const done = [...chat.background.values()].filter(task => task.done && (!ids || ids.includes(task.id)));
+    for (const task of done) chat.background.delete(task.id);
+    return done.map(task => `### ${task.id} (${task.label})${task.result?.isError ? ' FAILED' : ''}\n${task.result?.text || '(no report)'}`).join('\n\n');
+  }
+
+  private async waitSubagents(chat: Chat, args: Record<string, unknown>): Promise<DelegateResult> {
+    const asked = Array.isArray(args.ids) ? args.ids.filter((item): item is string => typeof item === 'string') : undefined;
+    const unknown = asked?.filter(id => !chat.background.has(id)) || [];
+    const tasks = [...chat.background.values()].filter(task => !asked || asked.includes(task.id));
+    if (!tasks.length) return { text: unknown.length ? `No background subagent with id ${unknown.join(', ')} is waiting to be collected.` : 'No background subagents are running or waiting to be collected.', isError: !!unknown.length };
+    const seconds = Number.isFinite(Number(args.timeout_seconds)) ? Math.max(0, Math.min(3000, Number(args.timeout_seconds))) : 1800;
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<void>(resolve => { timer = setTimeout(resolve, seconds * 1000); });
+    // Cancelling the parent turn ends the wait; the subagents themselves keep running unless cancelled.
+    const stopped = new Promise<void>(resolve => { const poll = setInterval(() => { if (chat.cancelRequested || !chat.running) { clearInterval(poll); resolve(); } }, 200); void timeout.then(() => clearInterval(poll)); });
+    const finished = args.any === true ? Promise.race(tasks.map(task => task.finished)) : Promise.all(tasks.map(task => task.finished));
+    try { await Promise.race([finished, timeout, stopped]); } finally { clearTimeout(timer); }
+    const report = this.takeBackgroundResults(chat, tasks.map(task => task.id));
+    const running = tasks.filter(task => !task.done).map(task => `${task.id} (${task.label})`);
+    return { text: [report, running.length ? `Still running: ${running.join(', ')}.` : '', unknown.length ? `Unknown ids: ${unknown.join(', ')}.` : ''].filter(Boolean).join('\n\n') || 'Nothing finished yet.' };
+  }
+
+  /** Stops a background subagent and reports what it did so far, waiting briefly for it to wind down. */
+  private async cancelSubagent(chat: Chat, args: Record<string, unknown>): Promise<DelegateResult> {
+    const id = typeof args.id === 'string' ? args.id.trim() : '';
+    const task = chat.background.get(id);
+    if (!task) return { text: `No background subagent with id "${id}".`, isError: true };
+    chat.background.delete(id);
+    const heading = task.done ? `Background subagent ${id} (${task.label}) had already finished.` : `Cancelled background subagent ${id} (${task.label}).`;
+    task.run?.cancel();
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([task.finished, new Promise<void>(resolve => { timer = setTimeout(resolve, 5_000); })]);
+    clearTimeout(timer);
+    const report = task.done ? task.result?.text || '(no report)' : 'It had not stopped after 5 seconds, so there is no report of its work.';
+    return { text: `${heading}\n\n${report}` };
+  }
+
+  /** Called when a background subagent finishes: once every "resume" task of an idle chat is done, their results start a new turn. */
+  private backgroundSettled(chat: Chat): void {
+    const id = chat.record.id;
+    if (this.deletedSessions.has(id) || this.chats.get(id) !== chat || chat.running || chat.jobActive || this.promptStarts.has(id)) return;
+    const tasks = [...chat.background.values()];
+    if (tasks.some(task => !task.done)) { this.postRun(id, 'tool', `${tasks.filter(task => !task.done).length} subagent${tasks.filter(task => !task.done).length === 1 ? '' : 's'} working…`); return; }
+    this.postRun(id, 'idle', 'Ready');
+    const ready = tasks.filter(task => task.afterTurn === 'resume');
+    if (!ready.length) return;
+    void this.guarded(() => this.sendPrompt(`Background subagent results (your earlier turn ended before you collected them). Continue the task with them.\n\n${this.takeBackgroundResults(chat, ready.map(task => task.id))}`,
+      undefined, [], id, 'queue', { internal: true }));
+  }
+
+  /**
+   * Copies files an agent sent into extension storage and shows them in the chat.
+   * into is the entry id of a generated image's box, already in the chat; the files fill it as an expandable thumbnail.
+   */
+  private async sendMedia(chat: Chat, args: Record<string, unknown>, from?: string, into?: string): Promise<DelegateResult> {
+    const paths = (Array.isArray(args.paths) ? args.paths : typeof args.path === 'string' ? [args.path] : []).filter((item): item is string => typeof item === 'string' && !!item.trim());
+    if (!paths.length) return { text: '"paths" must list at least one file.', isError: true };
+    if (paths.length > MAX_MEDIA_FILES) return { text: `Send at most ${MAX_MEDIA_FILES} files at a time.`, isError: true };
+    const dir = join(this.context.globalStorageUri.fsPath, 'media', chat.record.id);
+    await mkdir(dir, { recursive: true });
+    const items: { name: string; mimeType: string; file: string }[] = [];
+    const problems: string[] = [];
+    for (const raw of paths) {
+      const source = isAbsolute(raw) ? raw : resolvePath(chat.mirror.cwd, raw);
+      try {
+        const info = await stat(source);
+        if (!info.isFile()) { problems.push(`${raw}: not a file`); continue; }
+        if (info.size > MAX_MEDIA_BYTES) { problems.push(`${raw}: larger than ${MAX_MEDIA_BYTES / 1024 / 1024} MB`); continue; }
+        const name = `${randomUUID()}${extname(source).toLowerCase().slice(0, 12)}`;
+        await copyFile(source, join(dir, name));
+        items.push({ name: basename(source), mimeType: mediaType(source), file: `${chat.record.id}/${name}` });
+      } catch (error) { problems.push(`${raw}: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+    if (!items.length) return { text: `No files were sent. ${problems.join('; ')}`, isError: true };
+    const caption = typeof args.caption === 'string' && args.caption.trim() ? args.caption.trim().slice(0, 4000) : undefined;
+    // Media from the parent's own turn is placed between its text segments, like a tool call. A generated image's box already was.
+    if (!from && !into && chat.running) chat.segment++;
+    this.sidebar.postMessage({ type: 'mediaMessage', sessionId: chat.record.id, entryId: into || `media:${randomUUID()}`, caption: from ? `**${from}:** ${caption || ''}`.trim() : caption, items, ...(into ? { generated: true } : {}) });
+    return { text: `Shown to the user: ${items.map(item => item.name).join(', ')}.${problems.length ? ` Not sent: ${problems.join('; ')}` : ''}` };
+  }
+
+  /** Generates an image with the chat's ChatGPT (Codex) account, or the default one, saves it under .dsh/images in the real workspace and shows it in the chat. */
+  private async generateImage(chat: Chat, args: Record<string, unknown>, from?: string): Promise<DelegateResult> {
+    const request = parseImageRequest(args);
+    if (typeof request === 'string') return { text: request, isError: true };
+    const own = this.oauthAccounts.get(chat.record.accountId);
+    const account = own?.provider === 'codex-cli' ? own : this.oauthAccounts.getDefault('codex-cli');
+    if (!account) return { text: 'Image generation needs a ChatGPT (Codex) account. Connect one in Accounts.', isError: true };
+    // Relative input paths resolve in the agent's working copy first, then in the real workspace, where .dsh/images is in mirror mode.
+    const inputs: Buffer[] = [];
+    const problems: string[] = [];
+    for (const raw of request.images) {
+      const candidates = isAbsolute(raw) ? [raw] : [resolvePath(chat.mirror.cwd, raw), resolvePath(this.root().uri.fsPath, raw)];
+      let found: string | undefined;
+      for (const candidate of candidates) if (!found && (await stat(candidate).catch(() => undefined))?.isFile()) found = candidate;
+      if (!found) { problems.push(`${raw}: file not found`); continue; }
+      if ((await stat(found)).size > MAX_INPUT_BYTES) { problems.push(`${raw}: larger than ${MAX_INPUT_BYTES / 1024 / 1024} MB`); continue; }
+      const bytes = await readFile(found);
+      const problem = inputImageProblem(bytes);
+      if (problem) problems.push(`${raw}: ${problem}`); else inputs.push(bytes);
+    }
+    if (problems.length) return { text: `No image was generated. ${problems.join('; ')}.`, isError: true };
+    // The image's box shows in the chat right away with a loading circle, and is filled or marked failed when generation ends.
+    const entryId = `media:${randomUUID()}`;
+    const box = (status: 'pending' | 'failed'): void => {
+      this.sidebar.postMessage({ type: 'mediaMessage', sessionId: chat.record.id, entryId, caption: from ? `**${from}:**` : undefined, items: [], generated: true, status });
+    };
+    if (!from && chat.running) chat.segment++;
+    box('pending');
+    try {
+      const image = await generateImage({ home: account.directory }, request, inputs);
+      // The real workspace, not the chat's private copy: .dsh is outside the mirror's review scope.
+      const dir = join(this.root().uri.fsPath, '.dsh', 'images');
+      await mkdir(dir, { recursive: true });
+      const path = join(dir, imageFileName(args.name, request.prompt, image.extension));
+      await writeFile(path, image.bytes, { flag: 'wx' });
+      const size = pngSize(image.bytes);
+      const shown = await this.sendMedia(chat, { paths: [path] }, from, entryId);
+      if (shown.isError) box('failed');
+      return { text: `Image saved to ${path}${size ? ` (${size})` : ''}. ${shown.isError ? `It could not be shown in the chat: ${shown.text}` : 'It is already shown to the user in the chat.'}` };
+    } catch (error) {
+      box('failed');
+      return { text: error instanceof Error ? error.message : String(error), isError: true };
+    }
+  }
+
+  private async openMedia(file: string): Promise<void> {
+    const root = join(this.context.globalStorageUri.fsPath, 'media');
+    const path = resolvePath(root, file);
+    const rel = relative(root, path);
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new Error('That file is not in the chat media folder.');
+    await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(path));
+  }
+
+  private async runSubagentCore(chat: Chat, profile: SubagentProfile, task: string, paths: string[], onBackground?: (run: ChildRun) => void): Promise<DelegateResult> {
+    const fail = (text: string): DelegateResult => ({ text, isError: true });
+    const name = profile.name;
+    const entry = this.availableModel(profile.model);
+    if (!entry || !entry.enabled) return fail(`Subagent "${name}" uses model "${profile.model}", which is not available.`);
+    const speed = profile.speed ?? entry.speedOptions?.[0]?.label;
+    const speedOption = entry.speedOptions?.find(item => item.label === speed);
+    if (profile.speed && !speedOption) return fail(`Speed "${profile.speed}" is not an option for model "${entry.name}".`);
+    if (profile.effort && !entry.effortOptions?.includes(profile.effort)) return fail(`Effort "${profile.effort}" is not an option for model "${entry.name}".`);
+    const files = paths.map(item => item.replaceAll('\\', '/').replace(/^\.\//, '').trim()).filter(Boolean);
+    const readOnly = profile.mode !== 'edit' || !files.length || this.jobReadOnly(chat);
+    if (files.some(item => item.startsWith('..') || isAbsolute(item))) return fail('"files" must be paths relative to the working copy.');
+    const overlaps = (a: string, b: string): boolean => a === b || (a.endsWith('/') && b.startsWith(a)) || (b.endsWith('/') && a.startsWith(b));
+    if (!readOnly) {
+      const conflicts = files.flatMap(file => [...chat.locks].filter(([path]) => overlaps(path, file)).map(([path, lock]) => `${file} (locked by "${lock.label}" via ${path})`));
+      if (conflicts.length) return fail(`Cannot lock: ${conflicts.join('; ')}. Wait for that subagent or choose other files.`);
+    }
+    const backend = speedOption?.backend || entry.backend;
+    const model: ModelEntry = { ...entry, backend };
+    const owner = `sub:${randomUUID()}`;
+    const agentId = `${chat.turnEntryId}:delegate:${randomUUID()}`;
+    const post = (event: { title?: string; prompt?: string; model?: string; state?: 'running' | 'complete' | 'error' | 'cancelled'; delegated?: boolean; files?: string[]; text?: string; messageId?: string; role?: 'assistant' | 'tool'; tool?: SidebarSubagentTool }): void => {
+      this.sidebar.postMessage({ type: 'subagentEvent', sessionId: chat.record.id, agentId, ...event });
+    };
+    const run: ChildRun = { parent: chat, owner, label: profile.name, readOnly, changed: new Set(), outOfScope: new Set(), files: readOnly ? [] : files, background: !!onBackground, cancel: () => undefined };
+    this.childRuns.add(run); chat.children.add(run);
+    onBackground?.(run);
+    if (!readOnly) for (const file of files) chat.locks.set(file, { owner, label: profile.name });
+    const modelLabel = `${entry.name}${profile.effort ? ` · ${profile.effort}` : ''}${speed ? ` · ${speed}` : ''}`;
+    post({ title: profile.name, prompt: task, model: modelLabel, state: 'running', delegated: true, files: readOnly ? [] : files });
+    let reply = '';
+    let cancelled = false;
+    run.cancel = () => { cancelled = true; };
+    const instructions = readOnly
+      ? 'You are a READ-ONLY subagent. Do not modify, create or delete any files.'
+      : `You may edit ONLY these paths: ${files.join(', ')}. Do not touch anything else; other agents are working in parallel.`;
+    const summaries = profile.tools !== false && this.summariesOn() ? `${SUMMARY_INSTRUCTIONS}\n\n` : '';
+    const memory = memoryInstructions(chat.mirror.cwd, this.memorySettings().enabled);
+    const explorer = name === 'explorer' && readOnly;
+    const explorerNote = explorer ? 'Answer in at most about 300 words. Include file paths with line numbers for every claim.\n\n' : '';
+    const shell = [BACKGROUND_CLEANUP, shellInstructions()].filter(Boolean).join('\n');
+    const intro = `You are a subagent working in a shared working copy on behalf of another agent. ${instructions}\n\n${shell}`;
+    // Claude already gets the delegation note as system text.
+    const promptFor = (text: string, systemDelegation: boolean): string => `${intro}\n\n${systemDelegation ? '' : `${delegationInstructions(false)}\n\n`}${memory ? `${memory}\n\n` : ''}${summaries}Task:\n${explorerNote}${text}\n\n`
+      + 'When you finish, reply with a concise final report of at most 300 words unless the task asks for more: findings, files changed, and anything the requester must still do.';
+    // Where the reply of the session that finished the task starts; earlier sessions ended in checkpoints.
+    let reportStart = 0;
+    // Text after a tool call or a new model message starts a new paragraph instead of running on.
+    let gap = false;
+    // Text after a tool call opens a new message, so the subagent view keeps text and tools in order.
+    let replySegment = 0;
+    let segmentStarted = false;
+    const onText = (raw: string): void => {
+      const text = gap && reply.trim() && raw.trim() ? `${reply.endsWith('\n\n') ? '' : reply.endsWith('\n') ? '\n' : '\n\n'}${raw.trimStart()}` : raw;
+      if (raw.trim()) gap = false;
+      reply += text;
+      // A message that starts after a tool call drops the paragraph break that joined it to the reply.
+      const shown = segmentStarted ? text : text.replace(/^\s+/, '');
+      if (!shown) return;
+      segmentStarted = true;
+      post({ text: shown, messageId: `reply:${replySegment}` });
+    };
+    // The latest tool calls, reported if the subagent is cancelled or fails.
+    const toolLog: string[] = [];
+    let toolCount = 0;
+    const onTool = (id: string, title: string, detail: string | undefined, state: 'running' | 'complete' | 'error'): void => {
+      if (state !== 'running') return;
+      gap = true;
+      toolCount += 1;
+      toolLog.push(`- ${title}${detail ? `: ${detail.replace(/\s+/g, ' ').slice(0, 150)}` : ''}`);
+      if (toolLog.length > 30) toolLog.shift();
+      if (segmentStarted) { replySegment += 1; segmentStarted = false; }
+      post({ text: `${title}${detail ? `: ${detail.slice(0, 300)}` : ''}`, messageId: `tool:${id}`, role: 'tool', tool: displayTool(title, detail) });
+      this.noteRead(chat.mirror.cwd, readToolPath(title, detail));
+    };
+    try {
+      const route = await this.resolveRoute(model);
+      const effort = profile.effort || undefined;
+      // Mid-turn compaction: past the threshold a subagent replies with a checkpoint and goes on in a fresh session from it.
+      const compactAt = this.autoCompactAt();
+      let watch: CompactWatch | undefined;
+      let turn: TurnChannel | undefined;
+      // The first context report of a session is its fixed overhead plus the opening prompt.
+      let base: number | undefined;
+      let askedFrom = -1;
+      const onContext = (tokens: number): void => {
+        if (!watch || !turn || !Number.isFinite(tokens) || tokens <= 0) return;
+        if (base === undefined) { base = tokens; return; }
+        const step = compactStep(watch, tokens - base);
+        if (!step) return;
+        if (!sendCompactRequest(watch, turn, subagentCompactRequest(tokens, step === 'urge'))) { if (step === 'ask') watch.askedAt = undefined; return; }
+        if (askedFrom < 0) askedFrom = reply.length;
+        this.output.appendLine(`Mid-turn compaction: asked subagent "${name}" to checkpoint at about ${Math.round(tokens / 1000)}k tokens${step === 'urge' ? ' (again)' : ''}.`);
+      };
+      let runSession: (sessionTask: string) => Promise<void>;
+      if ('oauthAccount' in route && isCliProvider(route.model.provider)) {
+        const account = route.oauthAccount;
+        const cli = new OAuthCliRuntime();
+        run.cancel = () => { cancelled = true; cli.cancel(); };
+        await this.shareGlobalInstructions(account);
+        if (cancelled) throw new Error('Cancelled.');
+        turn = cli;
+        runSession = async sessionTask => {
+          await this.promptPooled(cli, { account, cwd: chat.mirror.cwd, backend, effort, speed, readOnly, fullAccess: this.approvalMode === 'full',
+            cacheTtl: explorer ? '5m' : undefined,
+            onContext,
+            onUsage: usage => {
+              this.logUsage(chat.record.id, explorer ? 'explorer' : 'subagent', entry.name, usage);
+              if (explorer) {
+                const total = usage.total;
+                chat.record.explorerTokens = (chat.record.explorerTokens || 0) + total.input + total.cacheRead + total.cacheWrite + total.output;
+                this.refreshSessions();
+                void this.saveSession(chat.record).catch(error => this.output.appendLine(`Saving explorer usage failed: ${String(error)}`));
+              }
+            },
+            delegate: profile.tools === false ? undefined : this.delegateConfig(owner, true), prompt: promptFor(sessionTask, true), onText, onTool, onMessageBreak: () => { gap = true; }, onApproval: (description, info) => this.decideApproval(chat, { owner, label: profile.name, readOnly }, description, info) },
+          () => cancelled, (next, failed) => { post({ text: `Account switch: ${failed.label} hit its usage limit; continuing on ${next.label}`, messageId: `account:${next.id}`, role: 'tool' }); gap = true; return {}; });
+        };
+      } else {
+        const slot = await this.ensureRuntime(route, chat.mirror.cwd, owner);
+        if (!slot) throw new Error('No runtime is available for this subagent model.');
+        run.runtimeKey = slot.key;
+        const cursor = route.model.provider === 'cursor-acp';
+        const toolTexts = new Set<string>();
+        run.onUpdate = update => {
+          const kind = String(update.sessionUpdate || '');
+          if (kind === 'agent_message_chunk') {
+            const content = update.content as Record<string, unknown> | undefined;
+            if (content?.type === 'text' && typeof content.text === 'string') onText(content.text);
+          } else if (kind === 'tool_call' && typeof update.toolCallId === 'string' && !toolTexts.has(update.toolCallId)) {
+            toolTexts.add(update.toolCallId);
+            onTool(update.toolCallId, String(update.title || 'Tool'), undefined, 'running');
+          } else if (kind === 'usage_update' && typeof update.used === 'number') onContext(update.used);
+          if (kind.startsWith('tool_call') && String(update.kind || '').toLowerCase() === 'read' && Array.isArray(update.locations)) {
+            this.noteRead(chat.mirror.cwd, (update.locations as Record<string, unknown>[]).find(item => typeof item.path === 'string')?.path);
+          }
+        };
+        runSession = async sessionTask => {
+          run.cancel = () => { cancelled = true; void slot.runtime.stop(); };
+          if (cancelled) throw new Error('Cancelled.');
+          const sessionId = await slot.runtime.newSession(chat.mirror.cwd, this.mcpServers(profile.tools === false ? undefined : owner, true));
+          run.sessionId = sessionId;
+          run.cancel = () => { cancelled = true; slot.runtime.cancel(sessionId); };
+          turn = { interrupt: () => slot.runtime.interrupt(sessionId) };
+          try {
+            if (cursor) {
+              await this.refreshCursorModels(slot.runtime, sessionId);
+              if (backend !== 'auto' || slot.runtime.models(sessionId).some(option => option.value === 'auto')) await slot.runtime.setModel(sessionId, backend);
+            }
+            if (effort) await slot.runtime.setConfigOption(sessionId, 'reasoning_effort', effort);
+            if (cancelled) throw new Error('Cancelled.');
+            await slot.runtime.prompt(sessionId, promptFor(sessionTask, false));
+            // Mid-turn compaction stopped the prompt to ask for a checkpoint; the request is the session's next prompt.
+            for (let ask = takeFollowUp(watch); ask && !cancelled; ask = takeFollowUp(watch)) await slot.runtime.prompt(sessionId, ask);
+          } finally {
+            turn = undefined;
+            if (cancelled) await slot.runtime.stop();
+            else await slot.runtime.closeSession(sessionId).catch(() => undefined);
+          }
+        };
+      }
+      let sessionTask = task;
+      for (let segment = 1; ; segment++) {
+        watch = compactAt && segment < MAX_SUBAGENT_SEGMENTS ? { threshold: compactAt } : undefined;
+        base = undefined;
+        askedFrom = -1;
+        reportStart = reply.length;
+        await runSession(sessionTask);
+        // No checkpoint means the session finished the task (or stopped for another reason) before it saw the request.
+        const checkpoint = askedFrom >= 0 && !cancelled ? subagentCheckpoint(reply.slice(askedFrom)) : undefined;
+        if (!checkpoint) break;
+        post({ text: `Context compacted; continuing in a fresh session (part ${segment + 1})`, messageId: `compact:${segment}`, role: 'tool' });
+        gap = true;
+        sessionTask = subagentResumeTask(task, checkpoint, segment);
+      }
+      if (cancelled) throw new Error('Cancelled.');
+      post({ state: 'complete' });
+      let result = reply.slice(reportStart).trim() || '(The subagent finished without a written report.)';
+      if (run.changed.size) {
+        result += `\n\n---\nFiles changed by this subagent: ${[...run.changed].join(', ')}`;
+        if (run.outOfScope.size) result += `\nWARNING: edits outside its locked paths (${files.join(', ') || 'none'}): ${[...run.outOfScope].join(', ')}`;
+      } else if (!readOnly) {
+        result += '\n\n---\nNo files were changed by this subagent.';
+      }
+      return { text: result };
+    } catch (error) {
+      post({ state: cancelled ? 'cancelled' : 'error' });
+      const message = error instanceof Error ? error.message : String(error);
+      let result = cancelled ? 'The subagent was cancelled.' : `Subagent "${name}" failed: ${message}`;
+      // What it did before stopping, so the requester need not redo or guess at it.
+      const partial = reply.slice(reportStart).trim();
+      if (partial) result += `\n\nIts reply so far:\n${partial.length > 1500 ? `…${partial.slice(-1500)}` : partial}`;
+      if (toolLog.length) result += `\n\nTools it ran${toolCount > toolLog.length ? ` (last ${toolLog.length} of ${toolCount})` : ''}:\n${toolLog.join('\n')}`;
+      if (run.changed.size) result += `\n\n---\nFiles changed by this subagent: ${[...run.changed].join(', ')}`;
+      return { text: result, isError: true };
+    } finally {
+      for (const [path, lock] of [...chat.locks]) if (lock.owner === owner) chat.locks.delete(path);
+      this.childRuns.delete(run); chat.children.delete(run);
+      await this.releaseRuntime(run.runtimeKey);
+    }
+  }
+
+  private cancel(clearQueue = true, chatId?: string): void {
+    const chat = chatId ? this.chats.get(chatId) : this.chat;
+    if (!chat) return;
+    if (clearQueue && chat.jobActive) { chat.jobCancelled = true; chat.jobNotes = []; }
+    if (chat.jobActive || clearQueue) for (const child of [...chat.children]) child.cancel();
+    // Cancel stops background subagents too; a message that interrupts the turn leaves them running.
+    if (clearQueue) chat.background.clear();
+    if (clearQueue && chat.queue.length) { chat.queue = []; this.postQueue(chat); }
+    this.settleChatApprovals(chat.record.id, !clearQueue);
+    if (chat.running) {
+      chat.cancelRequested = true;
+      this.postRun(chat.record.id, 'cancelling', 'Cancelling…');
+      chat.stopDecider?.();
+      for (const child of [...chat.children]) if (!child.background) child.cancel();
+      if (isCliProvider(chat.record.provider)) chat.cli.cancel(); else chat.runtime?.cancel(this.rid(chat.record));
+    }
+  }
+
+  private async pickModel(): Promise<void> {
+    const pick = await vscode.window.showQuickPick([
+      ...(this.smartAutoReady() ? [{ label: SMART_AUTO, description: 'A decider model picks a ranked model for each message', name: SMART_AUTO }] : []),
+      ...this.availableModels().filter(model => model.enabled).map(model => ({
+        label: model.name, description: `${model.provider} · ${model.backend}`, name: model.name,
+      })),
+    ], { placeHolder: 'Select a model' });
+    if (pick) await this.selectModel(pick.name);
+  }
+
+  private async selectModel(name: string): Promise<void> {
+    if (name === SMART_AUTO) {
+      if (!this.smartAutoReady()) throw new Error('Smart Auto needs a decider model and at least one ranked model. Set them in Customize.');
+      this.selectedModel = name;
+      await this.context.workspaceState.update(SELECTED_MODEL_KEY, name);
+      this.refreshModels();
+      return;
+    }
+    const model = this.availableModel(name);
+    if (!model || !model.enabled) throw new Error(`Model '${name}' is unavailable.`);
+    this.selectedModel = name;
+    await this.context.workspaceState.update(SELECTED_MODEL_KEY, name);
+    this.refreshModels(); await this.refreshAccount();
+  }
+
+  private async selectChoice(kind: 'speed' | 'effort', value: string): Promise<void> {
+    const model = this.availableModel(this.selectedModel);
+    if (!model) throw new Error('Choose a model first.');
+    const valid = kind === 'speed'
+      ? model.speedOptions?.some(item => item.label === value)
+      : value === '' || model.effortOptions?.includes(value);
+    if (!valid) throw new Error(`This ${kind} choice is unavailable for ${model.name}.`);
+    this.modelChoices[model.name] = { ...this.modelChoices[model.name], [kind]: value };
+    await this.context.workspaceState.update(MODEL_CHOICES_KEY, this.modelChoices);
+    this.refreshModels();
+  }
+
+  private async manageAccounts(): Promise<void> {
+    await vscode.commands.executeCommand('workbench.view.extension.dsh');
+    this.sidebar.postMessage({ type: 'showPage', page: 'accounts' });
+    await this.refreshAccounts();
+  }
+
+  private async manageModels(): Promise<void> {
+    await vscode.commands.executeCommand('workbench.view.extension.dsh');
+    this.sidebar.postMessage({ type: 'showPage', page: 'models' });
+    this.refreshModels();
+  }
+
+  private async saveModel(message: Extract<SidebarWebviewMessage, { type: 'saveModel' }>): Promise<void> {
+    const allowed = new Set(['deepseek-official', 'openai', 'anthropic', 'openrouter', 'opencode-go', 'mistral', SELF_HOSTED, 'cursor-acp', 'codex-cli', 'claude-cli']);
+    if (!allowed.has(message.provider)) throw new Error('Choose a supported model provider.');
+    const name = message.name.trim();
+    const backend = message.backend.trim();
+    if (!name || !backend || name.length > 80) throw new Error('A model name and backend ID are required.');
+    if (name === SMART_AUTO) throw new Error(`"${SMART_AUTO}" is reserved for the model picker. Choose another name.`);
+    const account = message.provider === 'cursor-acp' ? 'cursor-login' : message.account || 'default';
+    const speedOptions = message.speedOptions || [];
+    const effortOptions = message.effortOptions || [];
+    if (!Array.isArray(speedOptions) || speedOptions.length > 8 || speedOptions.some(item =>
+      !item || typeof item.label !== 'string' || typeof item.backend !== 'string' || !item.label.trim() || !item.backend.trim() || item.label.length > 30 || item.backend.length > 120) ||
+      new Set(speedOptions.map(item => item.label.toLowerCase())).size !== speedOptions.length ||
+      (speedOptions.length > 0 && (speedOptions[0].label !== 'None' || speedOptions[0].backend !== backend))) {
+      throw new Error('Speed routes must have distinct names and valid model IDs.');
+    }
+    if (!Array.isArray(effortOptions) || effortOptions.length > 10 || effortOptions.some(item => typeof item !== 'string' || !/^[a-z][a-z0-9_-]{0,29}$/.test(item)) ||
+      new Set(effortOptions).size !== effortOptions.length) throw new Error('Effort choices must be distinct provider effort values.');
+    // Cursor models may be typed as slugs before a session has listed them; Cursor itself rejects unknown ones when the chat starts.
+    const cursorSlug = /^[A-Za-z0-9][A-Za-z0-9._:/@[\]=,+-]{0,119}$/;
+    if (message.provider === 'cursor-acp' && [backend, ...speedOptions.map(item => item.backend)].some(slug => !cursorSlug.test(slug))) {
+      throw new Error('Cursor model slugs may only use letters, digits and . _ : / @ [ ] = , + -');
+    }
+    if (message.provider !== 'cursor-acp' && account !== 'default' &&
+      (isOAuthProvider(message.provider) ? this.oauthAccounts.get(account)?.provider : this.accounts.get(account)?.provider) !== message.provider) {
+      throw new Error('The selected account does not belong to this provider.');
+    }
+    // The label lets Config Sync match the account on other PCs. A model still on "default" because this PC
+    // lacks its synced account keeps that label, so editing it here does not unbind it everywhere.
+    const previous = message.originalName ? this.models.get(message.originalName) : undefined;
+    const chosen = account === 'default' || message.provider === 'cursor-acp' ? undefined
+      : isOAuthProvider(message.provider) ? this.oauthAccounts.get(account) : this.accounts.get(account);
+    const accountLabel = chosen?.label
+      ?? (account === 'default' && previous?.provider === message.provider && (!previous.account || previous.account === 'default') ? previous.accountLabel : undefined);
+    await this.models.set({ name, provider: message.provider, backend, account, ...(accountLabel ? { accountLabel } : {}), enabled: true, speedOptions, effortOptions }, message.originalName);
+    if (message.originalName && message.originalName !== name && this.modelChoices[message.originalName]) {
+      this.modelChoices[name] = this.modelChoices[message.originalName];
+      delete this.modelChoices[message.originalName];
+      await this.context.workspaceState.update(MODEL_CHOICES_KEY, this.modelChoices);
+    }
+    if (message.originalName && this.selectedModel === message.originalName) {
+      this.selectedModel = name;
+      await this.context.workspaceState.update(SELECTED_MODEL_KEY, name);
+      if (this.active && this.active.provider === message.provider && this.active.backend === backend &&
+        (message.provider === 'cursor-acp' || this.active.accountId === (account === 'default' ?
+          isOAuthProvider(message.provider) ? this.oauthAccounts.getDefault(message.provider)?.id : this.accounts.getDefault(message.provider)?.id : account))) {
+        this.active.modelName = name;
+        await this.saveSession(this.active);
+      }
+    }
+    this.refreshModels();
+    await this.refreshAccount();
+    this.sidebar.postMessage({ type: 'modelSaved' });
+  }
+
+  private async removeModel(name: string): Promise<void> {
+    if (!this.models.get(name)) throw new Error(`Model '${name}' is not configured.`);
+    try { await this.models.remove(name); } catch (error) { this.sidebar.postMessage({ type: 'modelRemoveFailed', name }); this.refreshModels(); throw error; }
+    if (this.selectedModel === name) {
+      this.selectedModel = this.models.list(true)[0]?.name || '';
+      await this.context.workspaceState.update(SELECTED_MODEL_KEY, this.selectedModel);
+    }
+    this.refreshModels();
+    await this.refreshAccount();
+  }
+
+  private async removeAccount(accountId: string): Promise<void> {
+    const affected = [...this.chats.values()].filter(chat => chat.record.accountId === accountId);
+    if (affected.length) {
+      if (affected.some(chat => chat.running)) throw new Error('Wait for running chats before removing their account.');
+      if (affected.some(chat => chat.review.pending().length)) throw new Error('Apply or reject pending edits before removing the active account.');
+      const wasActive = affected.some(chat => chat.record.id === this.active?.id);
+      for (const chat of affected) await this.unloadChat(chat.record.id);
+      if (wasActive) await this.context.workspaceState.update(ACTIVE_SESSION_KEY, undefined);
+      this.refreshSessions();
+      this.syncActiveView();
+    }
+    if (this.oauthAccounts.get(accountId)) await this.oauthAccounts.remove(accountId);
+    else await this.accounts.remove(accountId);
+    await this.refreshAccounts(false);
+  }
+
+  private async restartRuntime(): Promise<void> {
+    for (const chat of this.chats.values()) this.cancel(true, chat.record.id);
+    const id = this.active?.id;
+    for (const [key, runtime] of [...this.runtimes]) { this.runtimes.delete(key); await runtime.stop(); runtime.dispose(); }
+    for (const chat of [...this.chats.values()]) if (!chat.running || !isCliProvider(chat.record.provider)) { chat.runtime = undefined; chat.runtimeKey = undefined; await this.unloadChat(chat.record.id); }
+    if (id) await this.continueChat(id);
+  }
+
+  private async reviewNext(): Promise<void> {
+    const item = this.review?.pending()[0];
+    if (item) await this.review?.open(item.id);
+    else void vscode.window.showInformationMessage('DSH has no pending edits.');
+  }
+
+  private async openWorkingCopyTerminal(): Promise<void> {
+    if (!this.active) await this.newChat();
+    if (!this.active) return;
+    const chat = await this.loadChat(this.active);
+    const terminal = vscode.window.createTerminal({ name: 'DSH Working Copy', cwd: chat.mirror.cwd });
+    terminal.show();
+  }
+
+  private onProposalsChanged(chatId: string, items: ReviewProposal[]): void {
+    if (this.active?.id !== chatId) return;
+    this.sidebar.postMessage({ type: 'diffState', diffs: this.diffItems(items) });
+    this.updateStatus();
+  }
+
+  private diffItems(items: ReviewProposal[]): { id: string; path: string; summary: string; additions: number; deletions: number; state: ReviewProposal['state'] }[] {
+    const lineCount = (value?: string): number => value ? value.split(/\r\n|\r|\n/).length - (/[\r\n]$/.test(value) ? 1 : 0) : 0;
+    return items.map(item => ({
+        id: item.id, path: item.path,
+        summary: `${item.fromPath ? `Rename from ${item.fromPath}` : item.base === undefined ? 'Create' : item.proposed === undefined ? 'Delete' : `${item.hunks.length} hunk${item.hunks.length === 1 ? '' : 's'}`} · ${item.state}`,
+        additions: item.base === undefined ? lineCount(item.proposed) : item.proposed === undefined ? 0 : item.hunks.reduce((sum, hunk) => sum + hunk.currentLines.length, 0),
+        deletions: item.proposed === undefined ? lineCount(item.base) : item.base === undefined ? 0 : item.hunks.reduce((sum, hunk) => sum + hunk.baseLines.length, 0),
+        state: item.state,
+      }));
+  }
+
+  private onRuntimeUpdate(event: RuntimeEvent, key: string): void {
+    const chat = this.chatForRuntime(event.sessionId, key);
+    if (!chat) {
+      const oneShot = this.oneShots.get(`${key}\n${event.sessionId}`);
+      if (oneShot) oneShot(event.update);
+      else [...this.childRuns].find(run => run.runtimeKey === key && run.sessionId === event.sessionId)?.onUpdate?.(event.update);
+      return;
+    }
+    const chatId = chat.record.id;
+    if (chat.cancelRequested) return;
+    const update = event.update;
+    const kind = String(update.sessionUpdate || '');
+    if (kind === 'cursor_task') {
+      const id = String(update.toolCallId || update.agentId || Date.now());
+      chat.subagentIds.add(id);
+      this.sidebar.postMessage({ type: 'subagentEvent', sessionId: chatId, agentId: `${chat.turnEntryId}:${id}`,
+        title: typeof update.description === 'string' ? update.description : 'Subagent',
+        prompt: typeof update.prompt === 'string' ? update.prompt : undefined,
+        model: typeof update.model === 'string' ? update.model : chat.record.modelName,
+        state: typeof update.durationMs === 'number' ? 'complete' : 'running' });
+      return;
+    }
+    if (kind === 'usage_update') { if (typeof update.used === 'number') this.noteContext(chat, update.used); return; }
+    if (kind === 'config_option_update' && chat.record.provider === 'cursor-acp' && chat.runtime) void this.refreshCursorModels(chat.runtime, event.sessionId);
+    if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk') {
+      const content = update.content as Record<string, unknown> | undefined;
+      if (content?.type === 'text' && typeof content.text === 'string' && kind === 'agent_message_chunk') {
+        chat.turnReply += content.text;
+        this.sidebar.postMessage({ type: 'assistantDelta', sessionId: chatId, entryId: `assistant:${chat.turnEntryId}:${chat.segment}`, text: content.text });
+      }
+    } else if (kind.startsWith('tool_call')) {
+      const id = String(update.toolCallId || Date.now());
+      const title = String(update.title || 'Tool');
+      const batch = isBatchTool(title);
+      if (kind === 'tool_call' && !batch) {
+        const path = (Array.isArray(update.locations) ? update.locations as Record<string, unknown>[] : []).find(item => typeof item.path === 'string')?.path;
+        this.logTool(chat, title, typeof path === 'string' ? path : update.rawInput && typeof update.rawInput === 'object' ? JSON.stringify(update.rawInput) : undefined);
+      }
+      if (batch || isDelegationTool(title)) { if (!chat.delegationToolIds.has(id)) chat.segment++; chat.delegationToolIds.add(id); }
+      // Delegation has its own card, posted by runSubagent rather than this MCP call.
+      if (chat.delegationToolIds.has(id)) return;
+      const alreadyKnown = chat.subagentIds.has(id);
+      if (/^(subagent(?: activity)?|task)$/i.test(title)) chat.subagentIds.add(id);
+      if (chat.subagentIds.has(id)) {
+        const contents = Array.isArray(update.content) ? update.content as Record<string, unknown>[] : [];
+        const currentText = contents.filter(item => item.type === 'text' && typeof item.text === 'string').map(item => item.text as string).join('\n');
+        const previousText = chat.subagentText.get(id) || '';
+        const text = currentText.startsWith(previousText) ? currentText.slice(previousText.length) : currentText === previousText ? '' : currentText;
+        if (currentText) chat.subagentText.set(id, currentText);
+        this.sidebar.postMessage({ type: 'subagentEvent', sessionId: chatId, agentId: `${chat.turnEntryId}:${id}`,
+          title: alreadyKnown ? undefined : title,
+          model: chat.record.modelName,
+          state: update.status === 'failed' ? 'error' : kind === 'tool_call' || update.status === 'in_progress' ? 'running' : 'complete',
+          ...(text ? { text, messageId: `update:${id}` } : {}) });
+        return;
+      }
+      const rawKind = String(update.kind || 'other').toLowerCase();
+      const toolKind = /search|grep|glob|web/.test(rawKind + ' ' + title) ? 'search'
+        : /edit|write|patch/.test(rawKind + ' ' + title) ? 'edit'
+        : /shell|command|bash|powershell/.test(rawKind + ' ' + title) ? 'shell'
+        : /read|file/.test(rawKind + ' ' + title) ? 'read' : 'other';
+      const locations = Array.isArray(update.locations) ? update.locations as Record<string, unknown>[] : [];
+      const location = locations.find(item => typeof item.path === 'string')?.path;
+      const detail = typeof location === 'string' ? location : typeof update.status === 'string' ? update.status : undefined;
+      if (rawKind === 'read') this.noteRead(chat.mirror.cwd, location);
+      if (!chat.startedTools.has(id)) { chat.startedTools.add(id); chat.segment++; }
+      const rawInput = update.rawInput && typeof update.rawInput === 'object' ? JSON.stringify(update.rawInput) : undefined;
+      const shown = displayTool(title, rawInput && toolKind === 'shell' ? rawInput : detail);
+      this.sidebar.postMessage({ type: 'toolEvent', sessionId: chatId, entryId: `tool:${chat.turnEntryId}:${id}`, event: {
+        id, kind: shown.kind === 'other' ? toolKind : shown.kind, title: shown.title, detail: shown.detail, full: shown.full,
+        state: update.status === 'failed' ? 'error' : kind === 'tool_call' || update.status === 'in_progress' ? 'running' : 'complete',
+      } });
+      if (chat.running) this.postRun(chatId, 'tool', 'Using tools…');
+    }
+  }
+
+  private async requestPermission(params: Record<string, unknown>, key: string): Promise<string | undefined> {
+    if (!vscode.workspace.isTrusted) return undefined;
+    const sessionId = typeof params.sessionId === 'string' ? params.sessionId : '';
+    const chat = this.chatForRuntime(sessionId, key);
+    const child = chat ? undefined : [...this.childRuns].find(run => run.runtimeKey === key && run.sessionId === sessionId);
+    const parent = chat ?? child?.parent;
+    const tool = params.toolCall as Record<string, unknown> | undefined;
+    const options = Array.isArray(params.options) ? params.options as Record<string, unknown>[] : [];
+    const allow = options.find(option => option.kind === 'allow_once');
+    const reject = options.find(option => option.kind === 'reject_once');
+    const title = typeof tool?.title === 'string' ? tool.title : 'DSH tool';
+    if (!parent) return reject ? String(reject.optionId || '') : undefined;
+    const locations = Array.isArray(tool?.locations) ? tool.locations as Record<string, unknown>[] : [];
+    const path = locations.find(item => typeof item.path === 'string')?.path;
+    const isEdit = ['edit', 'delete', 'move'].includes(String(tool?.kind || ''));
+    const actor: Actor = child ? { owner: child.owner, label: child.label, readOnly: child.readOnly } : PARENT;
+    const detail = `${title} ${JSON.stringify(tool?.rawInput ?? tool?.content ?? '')}`;
+    const verdict = await this.decideApproval(parent, actor, detail, isEdit ? { tool: 'Edit', input: { file_path: typeof path === 'string' ? path : undefined } } : { tool: title, input: {} });
+    return verdict === true ? String(allow?.optionId || '') : reject ? String(reject.optionId || '') : undefined;
+  }
+
+  private async decideApproval(chat: Chat, actor: Actor, description: string, info?: ToolInfo): Promise<boolean | string> {
+    // Claude sends this hint on every tool, including reads.
+    if (info?.autoAllowEdits && !EDIT_TOOLS.test(info.tool)) info = { ...info, autoAllowEdits: false };
+    const verdict = await this.decideApprovalInner(chat, actor, description, info);
+    if (verdict === true && info && EDIT_TOOLS.test(info.tool) && actor.owner !== PARENT.owner) {
+      const rel = this.relPath(chat, info.input);
+      const run = [...this.childRuns].find(item => item.owner === actor.owner);
+      if (rel && run) {
+        run.changed.add(rel);
+        if (!run.files.some(file => rel === file || (file.endsWith('/') && rel.startsWith(file)))) run.outOfScope.add(rel);
+      }
+    }
+    return verdict;
+  }
+
+  private async decideApprovalInner(chat: Chat, actor: Actor, description: string, info?: ToolInfo): Promise<boolean | string> {
+    const background = !!this.backgroundRun(actor.owner);
+    if (chat.cancelRequested && !background) return false;
+    if (!vscode.workspace.isTrusted) return false;
+    if (info && this.jobReadOnly(chat) && (EDIT_TOOLS.test(info.tool) || info.autoAllowEdits)) return 'The job is in a read-only phase (drafting or reviewing); do not edit files.';
+    if (info && isNativeSubagentTool(info.tool)) return 'Use DSH delegate_task with a configured subagent profile.';
+    if (info && EDIT_TOOLS.test(info.tool)) {
+      if (actor.readOnly) return 'This subagent is read-only and may not edit files.';
+      const path = this.relPath(chat, info.input);
+      const conflict = path ? this.lockConflict(chat, path, actor.owner) : undefined;
+      if (conflict) return `"${path}" is locked by subagent "${conflict.label}" until it finishes. Edit other files or wait.`;
+      // Memory vaults are part of every agent's permissions, like any file in the project, unless the user
+      // turned off agent writes to the knowledge folders (knowledge.agentWrites); then edits are asked about.
+      if (path && isMemoryPath(path) && this.memorySettings().enabled && getUnifyFeature('knowledge.agentWrites')) return true;
+      // Outside the working copy nothing reviews the edit, so only full access skips asking.
+      if (!path && this.rawToolPath(info.input)) {
+        return this.approvalMode === 'full' || this.askInChat(chat.record.id, actor.owner === PARENT.owner ? 'Edit outside the project' : `Subagent "${actor.label}" wants to edit outside the project`, description, background);
+      }
+      if (info.autoAllowEdits) return true;
+    }
+    if (this.approvalMode === 'full' || (this.approvalMode === 'auto' && !isRiskyAction(description))) return true;
+    // Only shell commands can be remembered as an allow rule ("Always allow").
+    const command = info && typeof info.input.command === 'string' ? info.input.command : '';
+    const prefix = command ? commandPrefix(command) : undefined;
+    return this.askInChat(chat.record.id, actor.owner === PARENT.owner ? 'Permission requested' : `Subagent "${actor.label}" requests permission`, description, background, prefix);
+  }
+
+  private backgroundRun(owner: string): ChildRun | undefined {
+    const run = [...this.childRuns].find(item => item.owner === owner);
+    return run?.background ? run : undefined;
+  }
+
+  private rawToolPath(input: Record<string, unknown>): string | undefined {
+    return [input.file_path, input.notebook_path, input.path].find((value): value is string => typeof value === 'string' && !!value);
+  }
+
+  private relPath(chat: Chat, input: Record<string, unknown>): string | undefined {
+    const raw = this.rawToolPath(input);
+    if (!raw) return undefined;
+    const rel = (isAbsolute(raw) ? relative(chat.mirror.cwd, raw) : raw).replaceAll('\\', '/').replace(/^\.\//, '');
+    return rel.startsWith('..') ? undefined : rel;
+  }
+
+  private lockConflict(chat: Chat, rel: string, owner: string): { owner: string; label: string } | undefined {
+    for (const [path, lock] of chat.locks) if (lock.owner !== owner && (rel === path || (path.endsWith('/') && rel.startsWith(path)))) return lock;
+    return undefined;
+  }
+
+  private async handleCursorRequest(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (method === 'cursor/ask_question') {
+      const questions = Array.isArray(params.questions) ? params.questions as Record<string, unknown>[] : [];
+      const answers: { questionId: string; selectedOptionIds: string[] }[] = [];
+      for (const question of questions) {
+        const options = Array.isArray(question.options) ? question.options as Record<string, unknown>[] : [];
+        const items = options.filter(option => typeof option.id === 'string' && typeof option.label === 'string')
+          .map(option => ({ label: option.label as string, id: option.id as string }));
+        const placeHolder = typeof question.prompt === 'string' ? question.prompt : 'Choose an answer';
+        if (question.allowMultiple) {
+          const picked = await vscode.window.showQuickPick(items, { placeHolder, canPickMany: true });
+          if (!picked) return { outcome: { outcome: 'skipped' } };
+          answers.push({ questionId: String(question.id), selectedOptionIds: picked.map(item => item.id) });
+        } else {
+          const picked = await vscode.window.showQuickPick(items, { placeHolder });
+          if (!picked) return { outcome: { outcome: 'skipped' } };
+          answers.push({ questionId: String(question.id), selectedOptionIds: [picked.id] });
+        }
+      }
+      return { outcome: { outcome: 'answered', answers } };
+    }
+    if (method === 'cursor/create_plan') {
+      const title = typeof params.name === 'string' ? params.name : 'Cursor plan';
+      const plan = typeof params.plan === 'string' ? params.plan : '';
+      const choice = await vscode.window.showInformationMessage(title, { modal: true, detail: plan.slice(0, 15000) }, 'Accept plan', 'Reject plan');
+      return { outcome: { outcome: choice === 'Accept plan' ? 'accepted' : choice === 'Reject plan' ? 'rejected' : 'cancelled' } };
+    }
+    throw new Error(`Unsupported Cursor request: ${method}`);
+  }
+
+  private async onSidebarMessage(message: SidebarWebviewMessage): Promise<void> {
+    await this.guarded(async () => {
+      switch (message.type) {
+        case 'checkDependencies': await this.refreshDependencies(); break;
+        case 'installProvider': await this.installProvider(message.provider); break;
+        case 'pageChanged': this.sidebar.setPage(message.page); if (message.page === 'accounts') this.refreshUsage(); if (message.page === 'instructions') await this.refreshInstructions(); break;
+        case 'ready': this.sidebar.postMessage({ type: 'usageState', usage: this.usage.snapshot() }); this.refreshUsage(); if (this.active) { this.restoreJob(this.active); this.postJob(this.active); } await this.refreshInstructions(); this.postToolpacks(); this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode }); this.refreshCustomize(); this.postUnifyFeatures(); if (this.agentRoster.size) this.sidebar.postMessage({ type: 'agentRoster', agents: [...this.agentRoster.values()] }); this.refreshMemory(); this.sync.post(); this.refreshSubagents(); this.refreshModels(); this.refreshSessions(); await this.refreshAccount(); await this.refreshAccounts(); break;
+        case 'sendPrompt': {
+          const slash = parseSlash(message.prompt);
+          if (slash?.name === 'job') await this.startJob(slash.args, message.images);
+          else await this.sendPrompt(message.prompt, message.images, undefined, undefined, message.mode === 'queue' ? 'queue' : 'interrupt', { chatId: message.chatId });
+          break;
+        }
+        case 'unqueue': { const target = this.chats.get(message.sessionId); if (target && Number.isInteger(message.index)) { target.queue.splice(message.index, 1); this.postQueue(target); } break; }
+        case 'editMessage': await this.editMessage(message.sessionId, message.entryId, message.text); break;
+        case 'readInstruction': this.sidebar.postMessage({ type: 'instructionContent', id: message.id, content: await readInstruction(this.instructionRoots(), message.id) }); break;
+        case 'openInstruction': await vscode.window.showTextDocument(vscode.Uri.file(await locateInstruction(this.instructionRoots(), message.id))); break;
+        case 'saveInstruction': await this.saveInstructionRequest(message); break;
+        case 'removeInstruction': await this.removeInstructionRequest(message.id); break;
+        case 'approvalResponse': this.settleApproval(message.id, message.allow === true, message.always === true); break;
+        case 'questionResponse': this.settleQuestion(message.id, Array.isArray(message.answers) ? message.answers.map(item => String(item)) : null); break;
+        case 'pickToolpack': await this.addToolpack(); break;
+        case 'setFeature': await this.setFeature(message.key, message.enabled); break;
+        case 'setUnifyFeature':
+          if (typeof message.id === 'string' && message.id && ['boolean', 'number', 'string'].includes(typeof message.value)) {
+            setUnifyFeature(message.id, message.value);
+            this.postUnifyFeatures();
+          }
+          break;
+        case 'saveReviewModel': await this.saveModelSetting('reviewModel', message.reviewModel); break;
+        case 'saveNameModel': await this.saveModelSetting('nameModel', message.nameModel); break;
+        case 'saveSummaryModel': await this.saveModelSetting('summaryModel', message.summaryModel); break;
+        case 'saveDeciderModel': await this.saveModelSetting('deciderModel', message.deciderModel); break;
+        case 'saveExplorerModel': await this.saveModelSetting('explorerModel', message.explorerModel); break;
+        case 'saveSmartAutoRanks': await this.saveSmartAutoRanks(message.ranks); break;
+        case 'setMemory': await this.setMemory(message.enabled === true); break;
+        case 'openMemoryFolder': {
+          const folder = globalMemoryFolder(this.instructionRoots().dshHome);
+          await mkdir(folder, { recursive: true });
+          await vscode.env.openExternal(vscode.Uri.file(folder));
+          break;
+        }
+        case 'saveAutoCompactTokens':
+          await vscode.workspace.getConfiguration('dsh').update('experimental.autoCompactTokens', normalizeCompactTokens(message.tokens), vscode.ConfigurationTarget.Global);
+          this.refreshCustomize();
+          break;
+        case 'saveProcessPriority':
+          await vscode.workspace.getConfiguration('dsh').update('runtime.processPriority', normalizeProcessPriority(message.priority), vscode.ConfigurationTarget.Global);
+          this.refreshCustomize();
+          break;
+        case 'saveAccessibility': await this.saveAccessibility(message.accessibility); break;
+        case 'voiceStart': void this.startVoice(); break;
+        case 'voiceStop': this.stopVoice(); break;
+        case 'saveVoiceCommands':
+          await vscode.workspace.getConfiguration('dsh').update('voice.commands', normalizeVoiceCommands(message.commands), vscode.ConfigurationTarget.Global);
+          this.refreshCustomize();
+          break;
+        case 'deleteAllSessions': await this.deleteAllSessions(); break;
+        case 'syncAction': await this.syncAction(message.action); break;
+        case 'setSyncAuto': await this.sync.setAuto(message.enabled === true); break;
+        case 'toolpackAction':
+          if (message.action === 'remove') await this.toolpacks.remove(message.id);
+          else if (message.action === 'reload') await this.toolpacks.reload(message.id);
+          else await this.toolpacks.setEnabled(message.id, message.action === 'enable');
+          this.postToolpacks();
+          break;
+        case 'setApproval':
+          this.approvalMode = message.mode === 'auto' || message.mode === 'full' ? message.mode : 'ask';
+          await this.context.workspaceState.update(APPROVAL_KEY, this.approvalMode);
+          this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode });
+          break;
+        case 'applyAll': await this.chatForMessage(message.chatId)?.review.applyAll(); break;
+        case 'rejectAll': await this.chatForMessage(message.chatId)?.review.rejectAll(); break;
+        case 'cancel': this.cancel(true, message.chatId); break;
+        case 'newSession': await this.newChat(message.project); break;
+        case 'selectSession': await this.continueChat(message.sessionId); break;
+        case 'deleteSession': await this.deleteSession(message.sessionId); break;
+        case 'renameSession': {
+          // Prefer the loaded chat's record so a later turn save does not restore the old name.
+          const record = this.chats.get(message.sessionId)?.record ?? this.sessions().find(item => item.id === message.sessionId);
+          if (record) {
+            const name = message.name.trim() || await vscode.window.showInputBox({ prompt: 'Session name', value: record.name });
+            if (name?.trim()) { record.name = name.trim().slice(0, 100); record.renamed = true; await this.saveSession(record, false); agentBus.update(record.id, { task: record.name }); }
+          }
+          break;
+        }
+        case 'selectModel': await this.selectModel(message.modelId); break;
+        case 'selectSpeed': await this.selectChoice('speed', message.value); break;
+        case 'selectEffort': await this.selectChoice('effort', message.value); break;
+        case 'saveSubagent': await this.saveSubagent(message); break;
+        case 'removeSubagent': await this.writeSubagents(this.subagentProfiles().filter(item => item.name !== message.name)); break;
+        case 'saveModel': await this.saveModel(message); break;
+        case 'removeModel': await this.removeModel(message.name); break;
+        case 'manageAccounts': await this.manageAccounts(); break;
+        case 'refreshAccounts': await this.refreshAccounts(); break;
+        case 'refreshUsage': this.refreshUsage(true, message.accountId); break;
+        case 'reauthAccount': {
+          if (!this.oauthAccounts.get(message.accountId)) throw new Error('Account not found.');
+          await this.ensureNode();
+          await this.refreshDependencies();
+          await this.oauthAccounts.reauth(message.accountId);
+          await this.refreshAccounts(false);
+          this.sidebar.postMessage({ type: 'accountSaved' });
+          this.refreshUsage(true, message.accountId);
+          break;
+        }
+        case 'replaceAccountKey': {
+          const account = this.accounts.get(message.accountId);
+          if (!account) throw new Error('Account not found.');
+          if (!['deepseek-official', 'openrouter', 'opencode-go', 'mistral', SELF_HOSTED].includes(account.provider)) throw new Error('Choose a supported API provider.');
+          await this.accounts.replaceSecret(message.accountId, message.secret);
+          await this.refreshAccounts(false);
+          this.sidebar.postMessage({ type: 'accountSaved' });
+          this.refreshUsage(true, message.accountId);
+          break;
+        }
+        case 'listProviderModels': await this.listProviderModels(message.accountId); break;
+        case 'openCliSetting':
+          await vscode.commands.executeCommand('workbench.action.openSettings', 'dsh.runtime.claudePath');
+          break;
+        case 'viewProviderUsage': {
+          const url = PROVIDER_USAGE_URLS.get(message.provider);
+          if (url) await vscode.env.openExternal(vscode.Uri.parse(url));
+          break;
+        }
+        case 'addAccount': {
+          if (!['deepseek-official', 'openrouter', 'opencode-go', 'mistral', SELF_HOSTED].includes(message.provider)) throw new Error('Choose a supported API provider.');
+          const baseURL = message.provider === SELF_HOSTED ? normalizeBaseURL(message.baseURL ?? '') : undefined;
+          await this.accounts.add({ provider: message.provider, label: message.label, email: message.email, secret: message.secret,
+            ...(baseURL ? { metadata: { baseURL } } : {}) });
+          await this.refreshAccounts(false);
+          this.sidebar.postMessage({ type: 'accountSaved' });
+          break;
+        }
+        case 'addOAuthAccount':
+          await this.ensureNode();
+          await this.refreshDependencies();
+          await this.oauthAccounts.add(message.provider, message.label, message.email);
+          await this.refreshAccounts(false);
+          this.sidebar.postMessage({ type: 'accountSaved' });
+          break;
+        case 'setDefaultAccount':
+          if (isOAuthProvider(message.provider)) await this.oauthAccounts.setDefault(message.provider, message.accountId);
+          else await this.accounts.setDefault(message.provider, message.accountId);
+          await this.refreshAccounts(false);
+          break;
+        case 'removeAccount': await this.removeAccount(message.accountId); break;
+        case 'cursorLogin': await this.cursorLogin(); break;
+        case 'cursorLogout': await this.cursorLogout(); break;
+        case 'openAuthUrl': if (this.safeCursorAuthUrl(message.url) && message.url === this.cursorAccount.authUrl) await vscode.env.openExternal(vscode.Uri.parse(message.url)); break;
+        case 'openFile': {
+          const target = this.chatForMessage(message.chatId);
+          const item = target?.review.pending().find(diff => diff.path === message.path);
+          if (item) await target?.review.open(item.id);
+          else if (target?.mirror) {
+            const editor = await vscode.window.showTextDocument(target.mirror.uri(message.path));
+            if (message.line && Number.isInteger(message.line) && message.line > 0) {
+              const position = new vscode.Position(message.line - 1, Math.max(0, (message.column || 1) - 1));
+              editor.selection = new vscode.Selection(position, position);
+              editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+            }
+          }
+          break;
+        }
+        case 'openMedia': await this.openMedia(String(message.file || '')); break;
+        case 'applyDiff': await this.chatForMessage(message.chatId)?.review.apply(message.diffId); break;
+        case 'openDiff': await this.chatForMessage(message.chatId)?.review.open(message.diffId); break;
+        case 'rejectDiff': await this.chatForMessage(message.chatId)?.review.reject(message.diffId); break;
+        case 'reviewAll': await this.chatForMessage(message.chatId)?.review.openAll(); break;
+        case 'openTerminal': await this.openWorkingCopyTerminal(); break;
+        default: await this.handleUnhandledSidebarMessage(message); break;
+      }
+    });
+  }
+
+  /**
+   * Routes messages this host has no case for through the Unify request handlers (screen data and
+   * actions owned by other modules). An unhandled one is logged instead of silently disappearing.
+   */
+  private async handleUnhandledSidebarMessage(message: SidebarWebviewMessage): Promise<void> {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    const handled = await handleUnifyRequest(
+      message as unknown as { type: string; [key: string]: unknown },
+      reply => this.sidebar.postMessage(reply as SidebarHostMessage),
+      { workspaceRoot: folder?.uri.fsPath },
+    );
+    if (!handled) {
+      const type = (message as { type?: unknown }).type;
+      this.output.appendLine(`Unhandled sidebar message: ${typeof type === 'string' ? type : '(no type)'}`);
+    }
+  }
+}
+
+let host: ExtensionHost | undefined;
+
+export function activate(context: vscode.ExtensionContext): void {
+  host = new ExtensionHost(context);
+  context.subscriptions.push(host);
+}
+
+export function deactivate(): Thenable<void> | undefined { const saved = host?.dispose(); host = undefined; return saved; }
+
+/** Files under a folder, for the memory status and the warning before deleting it. */
+async function countFiles(folder: string): Promise<number> {
+  let count = 0;
+  const walk = async (directory: string): Promise<void> => {
+    let entries;
+    try { entries = await readdir(directory, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.isDirectory()) await walk(join(directory, entry.name));
+      else if (entry.isFile()) count += 1;
+    }
+  };
+  await walk(folder);
+  return count;
+}

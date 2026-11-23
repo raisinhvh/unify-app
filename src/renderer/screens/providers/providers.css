@@ -1,0 +1,1017 @@
+/* Providers screen (Figma 24, 24b, 24c). Walnut Dark is the reference; every colour is a theme token. */
+
+.providers-screen {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface);
+}
+
+.providers-screen-panel {
+  position: relative;
+  flex: none;
+  width: var(--panel-width);
+  height: 100%;
+}
+
+.providers-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 29px 40px 40px;
+  overflow-y: auto;
+}
+
+.providers-column {
+  width: 100%;
+  max-width: 760px;
+}
+
+/* ---------------------------------------------------------------- panel */
+
+.providers-panel-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 9px 0 16px;
+}
+
+.providers-panel-header h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.providers-panel-header .icon-button {
+  width: 28px;
+  height: 28px;
+}
+
+.providers-panel-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  padding: 4px 8px 16px;
+  overflow-y: auto;
+}
+
+.pv-panel-row {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px 0 6px;
+  border-radius: var(--radius-row);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: left;
+  white-space: nowrap;
+  background-color: rgb(from var(--hover) r g b / 0);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.pv-panel-row:hover,
+.pv-panel-row.selected {
+  background: var(--hover);
+}
+
+.pv-row-chevron-slot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+.pv-row-icon {
+  flex: none;
+  color: var(--text2);
+}
+
+.pv-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pv-row-meta {
+  flex: none;
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.pv-provider-chevron {
+  flex: none;
+  color: var(--text3);
+}
+
+.pv-provider-glyph {
+  flex: none;
+  color: var(--text2);
+}
+
+.pv-folder-warn {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.pv-panel-empty {
+  margin: 8px 6px;
+  color: var(--text3);
+}
+
+.pv-panel-usage .pv-row-chevron-slot {
+  opacity: 0;
+}
+
+/* Account rows start at the folder's left edge (absolute x64); guide and status sit inside. */
+.pv-account-children {
+  position: relative;
+}
+
+.pv-account-list {
+  position: relative;
+  padding: 0;
+}
+
+.pv-account-list::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 13.5px;
+  width: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+.pv-account-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  margin-left: 0;
+  padding: 0 8px 0 28px;
+  border-radius: var(--radius-row);
+  color: var(--text);
+  cursor: pointer;
+  background-color: rgb(from var(--hover) r g b / 0);
+  transition: background-color 120ms ease;
+}
+
+.pv-account-row:hover,
+.pv-account-row.selected {
+  background: var(--hover);
+}
+
+.pv-account-row.signedOut {
+  gap: 5px;
+  padding-right: 5px;
+}
+
+.pv-panel-status {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+}
+
+.pv-account-check {
+  color: var(--text3);
+}
+
+.pv-status-dot {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--text3);
+  border-radius: 50%;
+}
+
+.pv-status-dot.warn {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 26%, transparent);
+}
+
+.pv-account-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-account-caption {
+  flex: none;
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.pv-account-caption.warn {
+  color: var(--warn);
+}
+
+/* Figma draws "Sign in" as a plain text link, not a bordered button. */
+.pv-signin {
+  flex: none;
+  margin-left: 6px;
+  padding: 0;
+  color: var(--text2);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.pv-signin:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.pv-mini-meter {
+  flex: none;
+  width: 24px;
+  height: 3px;
+  overflow: hidden;
+  background: var(--border);
+  border-radius: 1.5px;
+}
+
+.pv-mini-fill {
+  display: block;
+  height: 100%;
+  border-radius: 1px;
+}
+
+/* ---------------------------------------------------------------- pages */
+
+.pv-page {
+  width: 100%;
+  color: var(--text);
+}
+
+.pv-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 50px;
+}
+
+.pv-page-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pv-title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 28px;
+  letter-spacing: -0.015em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-page-status {
+  margin: 0;
+  color: var(--text3);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.pv-icon-28 {
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+
+/* ---------------------------------------------------------------- usage page */
+
+.pv-usage-page > .pv-page-header {
+  margin-top: 20px;
+}
+
+.pv-combined {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.pv-combined-value {
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 56px;
+  letter-spacing: -0.04em;
+}
+
+.pv-combined-caption {
+  padding-bottom: 8px;
+  color: var(--text3);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.pv-stack {
+  display: flex;
+  gap: 2px;
+  width: 100%;
+  height: 6px;
+  margin-top: 16px;
+  overflow: hidden;
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.pv-stack-segment {
+  flex: none;
+  height: 100%;
+}
+
+.pv-usage-accounts {
+  margin-top: 40px;
+}
+
+.pv-section-heading {
+  margin: 20px 0 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 28px;
+}
+
+.pv-usage-accounts > .pv-section-heading {
+  margin-top: 0;
+}
+
+.pv-usage-table {
+  margin-top: 0;
+}
+
+.pv-usage-columns,
+.pv-usage-row {
+  display: grid;
+  grid-template-columns: 190px 130px 50px 96px 120px 36px 66px;
+  column-gap: 12px;
+  align-items: center;
+}
+
+.pv-usage-columns {
+  height: 28px;
+  color: var(--text3);
+}
+
+.pv-usage-row {
+  height: 40px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pv-usage-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+  text-align: left;
+}
+
+.pv-usage-glyph {
+  flex: none;
+  color: var(--text2);
+}
+
+.pv-usage-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-usage-plan {
+  overflow: hidden;
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pv-usage-plan-price {
+  display: block;
+  color: var(--text3);
+  font-size: 11px;
+}
+
+.pv-usage-share,
+.pv-usage-used {
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.pv-usage-limit {
+  overflow: hidden;
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-usage-bar {
+  display: block;
+  width: 120px;
+  height: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+
+.pv-usage-fill {
+  display: block;
+  height: 100%;
+  border-radius: 1px;
+}
+
+.pv-usage-reset {
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 14px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.pv-usage-none {
+  margin: 8px 0;
+  color: var(--text3);
+}
+
+.pv-usage-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 40px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pv-usage-missing {
+  overflow: hidden;
+  color: var(--text3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-link {
+  flex: none;
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.pv-link:hover {
+  color: var(--text);
+}
+
+/* ---------------------------------------------------------------- empty */
+
+.pv-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 320px;
+  color: var(--text3);
+  text-align: center;
+}
+
+.pv-empty-title {
+  margin: 4px 0 0;
+  color: var(--text);
+}
+
+.pv-empty-copy {
+  max-width: 320px;
+  margin: 0;
+  color: var(--text3);
+}
+
+/* ---------------------------------------------------------------- account page */
+
+.pv-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 16px;
+  overflow: hidden;
+  color: var(--text3);
+  white-space: nowrap;
+}
+
+.pv-crumb-link {
+  overflow: hidden;
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+}
+
+.pv-crumb-link:hover {
+  color: var(--text2);
+}
+
+.pv-crumb-sep {
+  color: var(--text3);
+}
+
+.pv-crumb-current {
+  overflow: hidden;
+  color: var(--text2);
+  text-overflow: ellipsis;
+}
+
+.pv-account-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 50px;
+  margin-top: 20px;
+}
+
+.pv-account-glyph {
+  flex: none;
+  color: var(--text2);
+}
+
+.pv-account-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.pv-account-title {
+  line-height: 28px;
+}
+
+.pv-account-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.pv-account-connected {
+  color: var(--text2);
+}
+
+.pv-account-models {
+  color: var(--text3);
+}
+
+.pv-sep {
+  color: var(--text3);
+}
+
+.pv-account-header .pv-icon-28 {
+  margin-left: auto;
+}
+
+.pv-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 10px 12px;
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 16px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.pv-notice-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.pv-notice .pv-status-dot {
+  flex: none;
+}
+
+.pv-notice-action.button {
+  flex: none;
+  height: 28px;
+  font-size: 12px;
+}
+
+.pv-account-divider {
+  height: 1px;
+  margin-top: 24px;
+  background: var(--border);
+}
+
+.pv-account-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.pv-section-divider {
+  height: 1px;
+  margin-top: 20px;
+  background: var(--border);
+}
+
+.pv-section-divider + .pv-section .pv-section-heading {
+  margin-top: 20px;
+}
+
+.pv-section {
+  min-width: 0;
+}
+
+.pv-section-heading-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pv-section-heading-row .pv-section-heading {
+  margin-top: 20px;
+}
+
+.pv-section-note {
+  margin-left: auto;
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.pv-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+}
+
+.pv-setting-label {
+  flex: none;
+  width: 168px;
+  color: var(--text3);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.pv-setting-value {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.pv-row-action {
+  flex: none;
+  margin-left: auto;
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.pv-row-action:hover {
+  color: var(--text);
+}
+
+.pv-text-input {
+  width: 160px;
+  height: 28px;
+  padding: 0 11px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  outline: none;
+}
+
+.pv-text-input::placeholder {
+  color: var(--text3);
+}
+
+.pv-text-input:focus {
+  border-color: var(--text3);
+}
+
+.pv-default-model .button {
+  height: 24px;
+  padding: 0 6px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.pv-default-model .button-trailing {
+  color: var(--text3);
+}
+
+/* "Usage" is a label row whose value column holds the three limit rows (Figma 24). */
+.pv-account-usage {
+  align-items: flex-start;
+}
+
+.pv-account-usage > .pv-setting-label {
+  padding-top: 9px;
+}
+
+.pv-inline-usage {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pv-metric-row {
+  display: grid;
+  grid-template-columns: 116px 188px 48px 108px 1fr;
+  column-gap: 0;
+  align-items: center;
+  height: 36px;
+}
+
+.pv-metric-label {
+  overflow: hidden;
+  color: var(--text3);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-metric-bar {
+  display: block;
+  width: 176px;
+  height: 4px;
+  margin-right: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+
+.pv-metric-fill {
+  display: block;
+  height: 100%;
+  border-radius: 1px;
+}
+
+.pv-metric-used {
+  color: var(--text2);
+  font-size: 12px;
+}
+
+.pv-metric-reset {
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.pv-view-usage {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 6px;
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.pv-view-usage:hover {
+  color: var(--text);
+}
+
+.pv-view-usage .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.pv-models {
+  margin-top: 4px;
+}
+
+.pv-model-row {
+  display: grid;
+  grid-template-columns: 180px 1fr auto;
+  align-items: center;
+  height: 36px;
+}
+
+.pv-model-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-model-name.off {
+  color: var(--text3);
+}
+
+.pv-model-context {
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.pv-model-row .toggle {
+  justify-self: end;
+}
+
+.pv-section-note.type-body {
+  margin: 8px 0;
+  line-height: 18px;
+}
+
+/* ---------------------------------------------------------------- add provider */
+
+.pv-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.pv-dialog {
+  display: flex;
+  flex-direction: column;
+  width: 480px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-pop);
+}
+
+.pv-dialog-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pv-dialog-title {
+  flex: 1;
+  margin: 0;
+}
+
+.pv-add-list {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+}
+
+.pv-add-row {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 40px;
+  padding: 0 10px 0 12px;
+  border-radius: var(--radius-row);
+  color: var(--text);
+  text-align: left;
+  background-color: rgb(from var(--hover) r g b / 0);
+  transition: background-color 120ms ease;
+}
+
+.pv-add-row:hover,
+.pv-add-row.expanded {
+  background: var(--hover);
+}
+
+.pv-add-glyph {
+  flex: none;
+  color: var(--text2);
+}
+
+.pv-add-title {
+  flex: none;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.pv-add-hint {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--text3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-add-chevron {
+  flex: none;
+  color: var(--text3);
+}
+
+.pv-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 2px 0 6px 19.5px;
+  padding: 6px 0 10px 16px;
+  border-left: 1px solid var(--border);
+}
+
+.pv-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pv-field-label {
+  flex: none;
+  width: 96px;
+  color: var(--text3);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.pv-field-input {
+  flex: 1;
+  width: auto;
+  max-width: 316px;
+}
+
+.pv-add-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-left: 88px;
+  margin-top: 2px;
+}
+
+.pv-add-caption {
+  flex: 1;
+  min-width: 0;
+  color: var(--text3);
+}
+
+.pv-connect.button {
+  flex: none;
+  justify-content: center;
+  min-width: 76px;
+  height: 30px;
+}
+
+.pv-dialog-footer {
+  flex: none;
+  padding: 11px 16px;
+  color: var(--text3);
+  border-top: 1px solid var(--border);
+}

@@ -1,0 +1,141 @@
+/**
+ * Native agent messaging — implementation of the shared AgentBus contract.
+ *
+ * The roster and every agent's inbox live in memory in the engine process. Scope rules are read
+ * from the Unify feature settings on every call, so changing 'agents.messaging' or
+ * 'agents.messaging.scope' in Settings takes effect immediately.
+ */
+import { randomUUID } from 'node:crypto';
+import type { AgentBus, AgentBusEvent, AgentInfo, AgentMessage } from './agentBus';
+import { getUnifyFeature, type AgentMessagingScope } from './settings';
+
+type AgentBusListener = (event: AgentBusEvent) => void;
+
+const roster = new Map<string, AgentInfo>();
+const inboxes = new Map<string, AgentMessage[]>();
+const listeners = new Set<AgentBusListener>();
+
+function emit(event: AgentBusEvent): void {
+  for (const listener of listeners) {
+    try {
+      listener(event);
+    } catch (error) {
+      console.error('agentBus listener failed:', error);
+    }
+  }
+}
+
+function emitRoster(): void {
+  emit({ kind: 'roster', agents: [...roster.values()].map(agent => ({ ...agent })) });
+}
+
+function messagingEnabled(): boolean {
+  return getUnifyFeature('agents.messaging');
+}
+
+function assertMessagingEnabled(): void {
+  if (!messagingEnabled()) {
+    throw new Error('Agent-to-agent messaging is turned off in Settings (agents.messaging).');
+  }
+}
+
+function currentScope(): AgentMessagingScope {
+  const scope = getUnifyFeature('agents.messaging.scope');
+  if (scope === 'same-chat' || scope === 'parent-child') return scope;
+  return 'everyone';
+}
+
+function isDirectParentOrChild(from: AgentInfo, to: AgentInfo): boolean {
+  return to.parentId === from.id || from.parentId === to.id;
+}
+
+function inScope(from: AgentInfo, to: AgentInfo): boolean {
+  switch (currentScope()) {
+    case 'same-chat':
+      return from.chatId === to.chatId;
+    case 'parent-child':
+      return isDirectParentOrChild(from, to);
+    default:
+      return true;
+  }
+}
+
+function outOfScopeError(from: AgentInfo, to: AgentInfo): string {
+  if (currentScope() === 'same-chat') {
+    return `"${to.name}" is in a different chat, and agents.messaging.scope is set to "same-chat".`;
+  }
+  return `"${to.name}" is not your direct parent or child, and agents.messaging.scope is set to "parent-child".`;
+}
+
+function requireAgent(agentId: string): AgentInfo {
+  const agent = roster.get(agentId);
+  if (!agent) throw new Error(`No running agent has id "${agentId}". Call list_agents to see who is available.`);
+  return agent;
+}
+
+export const agentBus: AgentBus = {
+  register(agent: AgentInfo): void {
+    if (!agent.id) throw new Error('An agent needs an id before it can be registered.');
+    if (!agent.name) throw new Error(`Agent "${agent.id}" needs a name before it can be registered.`);
+    roster.set(agent.id, { ...agent });
+    if (!inboxes.has(agent.id)) inboxes.set(agent.id, []);
+    emitRoster();
+  },
+
+  update(agentId: string, patch: Partial<Omit<AgentInfo, 'id'>>): void {
+    const agent = roster.get(agentId);
+    if (!agent) return;
+    Object.assign(agent, patch);
+    emitRoster();
+  },
+
+  unregister(agentId: string): void {
+    if (!roster.delete(agentId)) return;
+    inboxes.delete(agentId);
+    emitRoster();
+  },
+
+  listVisible(fromAgentId: string): AgentInfo[] {
+    assertMessagingEnabled();
+    const from = requireAgent(fromAgentId);
+    return [...roster.values()].filter(agent => agent.id !== from.id && inScope(from, agent)).map(agent => ({ ...agent }));
+  },
+
+  send(fromAgentId: string, toAgentId: string, text: string, replyToId?: string): AgentMessage {
+    assertMessagingEnabled();
+    if (!text || !text.trim()) throw new Error('A message needs some text.');
+    if (fromAgentId === toAgentId) throw new Error('An agent cannot message itself.');
+    const from = requireAgent(fromAgentId);
+    const to = requireAgent(toAgentId);
+    if (!inScope(from, to)) throw new Error(outOfScopeError(from, to));
+    const message: AgentMessage = {
+      id: randomUUID(),
+      fromId: from.id,
+      fromName: from.name,
+      toId: to.id,
+      toName: to.name,
+      text: text.trim(),
+      sentAt: Date.now(),
+      ...(replyToId ? { replyToId } : {}),
+    };
+    const inbox = inboxes.get(to.id) ?? [];
+    inbox.push(message);
+    inboxes.set(to.id, inbox);
+    emit({ kind: 'message', message: { ...message } });
+    return message;
+  },
+
+  takeInbox(agentId: string): AgentMessage[] {
+    const inbox = inboxes.get(agentId);
+    if (!inbox || !inbox.length) return [];
+    inboxes.set(agentId, []);
+    return inbox.splice(0, inbox.length).map(message => ({ ...message }));
+  },
+
+  onEvent(listener: AgentBusListener): () => void {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  },
+};

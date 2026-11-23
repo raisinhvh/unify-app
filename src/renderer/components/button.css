@@ -1,0 +1,125 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-control);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  /* Resting fill is the hover colour at alpha 0, so hover fades in its own hue (no dark flash from transparent black). */
+  background-color: rgb(from var(--hover) r g b / 0);
+  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.button-text {
+  color: var(--text2);
+  padding: 0 6px;
+}
+
+.button-text:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.button-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.button-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, var(--bg));
+}
+
+.button-secondary {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.button-secondary:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.button-ghost {
+  color: var(--text2);
+  padding: 0 6px;
+  height: 24px;
+}
+
+.button-ghost:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.button-row {
+  display: flex;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-row);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.button-row:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.button-trailing {
+  color: var(--text3);
+  margin-left: -2px;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border-radius: var(--radius-control);
+  color: var(--text2);
+  background-color: rgb(from var(--hover) r g b / 0);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.icon-button:hover:not(:disabled),
+.icon-button.active {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.icon-button-small {
+  width: 20px;
+  height: 20px;
+}
+
+.icon-button-small .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.icon-button-medium {
+  width: 24px;
+  height: 24px;
+}
+
+.icon-button-large {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}

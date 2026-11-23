@@ -1,0 +1,422 @@
+/* Files screen (Figma 20 · Files + Editor 306:1623). */
+
+/* Composite for the content card: panel | editor. */
+.files-screen {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.files-screen-panel {
+  position: relative;
+  width: var(--panel-width);
+  height: 100%;
+  flex: none;
+}
+
+/* ---------------------------------------------------------------- panel */
+
+.files-panel {
+  padding: 0 8px;
+}
+
+.files-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 2px 0 8px;
+  flex: none;
+}
+
+.files-panel-header h2 {
+  margin: 0;
+}
+
+.files-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.files-panel-actions .icon-button {
+  width: 28px;
+  height: 28px;
+}
+
+.files-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  margin-bottom: 8px;
+  color: var(--text2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  transition: border-color 140ms ease;
+}
+
+.files-search:focus-within {
+  border-color: var(--text3);
+}
+
+.files-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.files-search input::placeholder {
+  color: var(--text3);
+}
+
+.files-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.files-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 12px;
+  scrollbar-width: thin;
+}
+
+.files-dir > .tree-folder-row .tree-label {
+  color: var(--text2);
+}
+
+.files-dir > .tree-folder-row:hover .tree-label {
+  color: var(--text);
+}
+
+/* File icons line up with folder icons (past the chevron column). */
+.files-panel .tree-item.files-file {
+  padding-left: 24px;
+}
+
+.files-panel .files-file .tree-leading {
+  width: 14px;
+  height: 14px;
+  margin-right: 0;
+  color: var(--text2);
+}
+
+.files-panel .tree-item {
+  font-size: 13px;
+}
+
+.files-panel .tree-row.selected {
+  background: var(--accent-tint);
+}
+
+.files-panel .tree-row.selected:hover {
+  background: color-mix(in srgb, var(--hover) 60%, var(--accent-tint));
+}
+
+.files-results .tree-trailing {
+  max-width: 55%;
+}
+
+.files-empty {
+  padding: 8px;
+  color: var(--text3);
+}
+
+/* +N −M */
+.files-delta {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+  font-size: 11px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.files-add {
+  color: var(--add);
+}
+
+.files-del {
+  color: var(--del);
+}
+
+/* ---------------------------------------------------------------- editor card */
+
+.files-editor {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  background: var(--surface);
+}
+
+.files-tabs-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 8px 0 6px;
+  flex: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.files-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.files-tab-slot {
+  flex: none;
+}
+
+.files-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  max-width: 220px;
+  padding: 0 6px 0 8px;
+  border-radius: var(--radius-control);
+  color: var(--text3);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  background-color: rgb(from var(--raised) r g b / 0);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.files-tab:hover {
+  color: var(--text2);
+}
+
+.files-tab.active {
+  color: var(--text);
+  background: var(--raised);
+}
+
+.files-tab-icon {
+  flex: none;
+}
+
+.files-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.files-tab-dirty {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 3px;
+  background: var(--text2);
+}
+
+.files-tab-close {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 4px;
+  color: var(--text2);
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.files-tab.active .files-tab-close,
+.files-tab:hover .files-tab-close,
+.files-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.files-tab-close:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.files-tabs-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.files-tabs-actions .icon-button {
+  width: 28px;
+  height: 28px;
+}
+
+.files-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 32px;
+  padding: 0 16px;
+  flex: none;
+  color: var(--text3);
+}
+
+.files-crumbs {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-crumb-sep {
+  margin: 0 6px;
+}
+
+.files-crumb.last {
+  color: var(--text2);
+}
+
+.files-status {
+  flex: none;
+  color: var(--text3);
+}
+
+.files-code {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.files-monaco {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+.files-monaco.ready {
+  opacity: 1;
+}
+
+.files-empty-editor {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: 1;
+  color: var(--text3);
+}
+
+.files-error {
+  padding: 16px;
+  color: var(--del);
+}
+
+/* Plain code view: the same 12/18 metrics as Monaco, so swapping the two does not shift the text. */
+.files-plain {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 8px 0;
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-ligatures: contextual;
+  color: var(--text);
+  background: var(--surface);
+  scrollbar-width: thin;
+}
+
+.files-plain-line {
+  display: flex;
+  min-width: max-content;
+  height: 18px;
+  white-space: pre;
+}
+
+.files-plain-number {
+  width: 44px;
+  padding-right: 8px;
+  flex: none;
+  text-align: right;
+  color: var(--text3);
+}
+
+.files-plain-mark {
+  width: 16px;
+  flex: none;
+  text-align: center;
+}
+
+.files-plain-text {
+  padding-right: 24px;
+}
+
+.files-plain-line.added {
+  background: var(--add-tint);
+}
+
+.files-plain-line.added .files-plain-mark {
+  color: var(--add);
+}
+
+.files-plain-line.removed {
+  background: var(--del-tint);
+}
+
+.files-plain-line.removed .files-plain-mark {
+  color: var(--del);
+}
+
+.files-plain-line.removed .files-plain-text {
+  color: var(--text2);
+}
+
+/* Agent-changed lines inside Monaco. */
+.files-editor .monaco-editor .files-line-add,
+.files-editor .monaco-editor .files-margin-add {
+  background: var(--add-tint);
+}
+
+.files-editor .monaco-editor .files-mark-add::before {
+  content: '+';
+  display: block;
+  width: 100%;
+  text-align: center;
+  color: var(--add);
+  font: 12px/18px var(--font-mono);
+}
+
+.files-editor .monaco-editor .files-zone-removed,
+.files-editor .monaco-editor .files-zone-removed-margin {
+  background: var(--del-tint);
+  font: 12px/18px var(--font-mono);
+  font-variant-ligatures: contextual;
+  white-space: pre;
+}
+
+.files-editor .monaco-editor .files-zone-removed {
+  color: var(--text2);
+}
+
+.files-editor .monaco-editor .files-zone-removed-margin {
+  padding-right: 5px;
+  text-align: right;
+  color: var(--del);
+}

@@ -1,0 +1,17 @@
+.popover.tooltip {
+  min-width: 0;
+  max-width: 320px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text);
+  pointer-events: none;
+  z-index: 60;
+}
+
+.popover.tooltip-rich {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}

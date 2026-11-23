@@ -1,0 +1,52 @@
+await import('./review-hunks.test.mjs');
+await import('./sidebar-view.test.mjs');
+await import('./activity-rail.test.mjs');
+await import('./accessibility.test.mjs');
+await import('./cursor-models.test.mjs');
+await import('./speed-protocol.test.mjs');
+await import('./instructions.test.mjs');
+await import('./instructions-share.test.mjs');
+await import('./naming.test.mjs');
+await import('./smart-auto.test.mjs');
+await import('./job.test.mjs');
+await import('./delegation.test.mjs');
+await import('./subagent-behavior.test.mjs');
+await import('./review-controller.test.mjs');
+await import('./chat-state.test.mjs');
+await import('./cancellation.test.mjs');
+await import('./toolpacks.test.mjs');
+await import('./dsh-update.test.mjs');
+await import('./extension-update.test.mjs');
+await import('./update-plan.test.mjs');
+await import('./config-sync.test.mjs');
+await import('./summaries.test.mjs');
+await import('./toolpack-access.test.mjs');
+await import('./handoff.test.mjs');
+await import('./batch.test.mjs');
+await import('./memory.test.mjs');
+await import('./sync-repo.test.mjs');
+await import('./sync-controller.test.mjs');
+await import('./limits.test.mjs');
+await import('./image-gen.test.mjs');
+await import('./pi-ai.test.mjs');
+
+await import('./codex-usage.test.mjs');
+await import('./cursor-usage.test.mjs');
+await import('./plan-weights.test.mjs');
+await import('./deepseek-usage.test.mjs');
+await import('./usage-fixes.test.mjs');
+
+await import('./claude-args.test.mjs');
+await import('./outline.test.mjs');
+await import('./editor-context.test.mjs');
+
+await import('./checkpoint.test.mjs');
+await import('./mid-turn-compact.test.mjs');
+await import('./image-trim.test.mjs');
+await import('./keep-alive.test.mjs');
+
+await import('./explorer.test.mjs');
+await import('./prompt-prefix.test.mjs');
+await import('./rust-tools.test.mjs');
+await import('./tool-display.test.mjs');
+await import('./self-hosted.test.mjs');

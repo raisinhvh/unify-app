@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Motion audit — bad fixture</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #0a0e13;
+    color: #e7edf4;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .app { width: min(820px, calc(100vw - 64px)); margin: 0 auto; padding: 46px 0 70px; }
+  h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: -0.4px; }
+  .lede { color: #8e9caf; font-size: 14px; margin: 0 0 28px; max-width: 650px; line-height: 1.55; }
+  button { font: inherit; color: inherit; border: 0; cursor: pointer; }
+  .secondary {
+    padding: 11px 16px;
+    border-radius: 11px;
+    background: #151d27;
+    border: 1px solid #293747;
+    color: #cad7e7;
+    font-weight: 600;
+  }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+  .menu {
+    display: none;
+    margin: 0 0 18px;
+    padding: 16px;
+    border-radius: 16px;
+    background: #172232;
+    border: 1px solid #2b3c50;
+    box-shadow: 0 18px 45px rgba(0, 0, 0, 0.34);
+  }
+  .menu.open { display: block; }
+  .menu h2 { font-size: 15px; margin: 0 0 8px; }
+  .menu p { margin: 0; color: #93a4b8; font-size: 13px; line-height: 1.5; }
+  .panel {
+    border: 1px solid #202d3b;
+    border-radius: 18px;
+    background: rgba(15, 22, 30, 0.84);
+    padding: 22px;
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.24);
+  }
+  .section { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 0; border-bottom: 1px solid #1b2836; }
+  .section:last-child { border-bottom: 0; }
+  .section h3 { font-size: 14px; margin: 0 0 4px; color: #dfe9f5; }
+  .section p { margin: 0; color: #8798ab; font-size: 12.5px; line-height: 1.45; }
+  .icon-stack {
+    position: relative;
+    width: 50px;
+    height: 50px;
+    border-radius: 14px;
+    background: #182432;
+    border: 1px solid #2c4058;
+    overflow: hidden;
+    flex: 0 0 auto;
+  }
+  .swap-icon {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    transform-origin: center;
+  }
+  .icon-a { color: #ffd166; opacity: 1; transform: scale(1); }
+  .icon-b { color: #7fe3df; opacity: 0; transform: scale(0.6); }
+  .icon-stack.swapped .icon-a { opacity: 0; transform: scale(0.6); }
+  .icon-stack.swapped .icon-b { opacity: 1; transform: scale(1); }
+  .toggle {
+    width: 84px;
+    height: 44px;
+    padding: 4px;
+    border-radius: 999px;
+    background: #1b2736;
+    border: 1px solid #33475d;
+    position: relative;
+    flex: 0 0 auto;
+    overflow: hidden;
+  }
+  .knob {
+    display: block;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: linear-gradient(180deg, #8ed3ff, #3c9ce4);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+  }
+  .list { list-style: none; padding: 0; margin: 20px 0 0; }
+  .list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 0;
+    border-bottom: 1px dashed #1b2836;
+    color: #b7c6d7;
+    font-size: 13px;
+  }
+  .list li:last-child { border-bottom: 0; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #e8a35f; flex: 0 0 auto; }
+  .slider-wrap { margin-top: 22px; border-top: 1px solid #1b2836; padding-top: 18px; }
+  .slider-track { height: 58px; border-radius: 14px; background: #101821; border: 1px solid #223244; position: relative; overflow: hidden; }
+  .slider { width: 150px; height: 100%; border-radius: 13px; background: linear-gradient(100deg, #8e5cff, #e859a7); transform: translateX(0); transition: transform 1200ms linear; will-change: transform; }
+  .slider.moved { transform: translateX(520px); }
+  .hint { color: #6f8094; font-size: 12px; margin-top: 18px; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <main class="app">
+    <h1>Instant cabinet</h1>
+    <p class="lede">A fixture of common motion mistakes: display toggles, instant icon swaps, removal that shifts siblings, a long linear slide, and a reversal that restarts instead of retargeting.</p>
+
+    <div class="toolbar">
+      <button id="menuToggle" class="secondary" data-motion="bad-menu-toggle" aria-expanded="false">Toggle menu</button>
+      <button id="swap" class="secondary" data-motion="bad-swap-button">Swap icon</button>
+    </div>
+
+    <section id="menu" class="menu" data-motion="instant-menu">
+      <h2>No entrance, no exit</h2>
+      <p>This panel is toggled with a display class. Its full-size appearance is a pop-in.</p>
+    </section>
+
+    <section class="panel">
+      <div class="section">
+        <div>
+          <h3>Icon swap</h3>
+          <p>Clicking changes opacity and scale in the same frame, with no transition.</p>
+        </div>
+        <button id="iconStack" class="icon-stack" data-motion="bad-icon-stack" aria-label="Instant icon swap">
+          <span class="swap-icon icon-a" data-motion="bad-icon-a">✦</span>
+          <span class="swap-icon icon-b" data-motion="bad-icon-b">✧</span>
+        </button>
+      </div>
+      <div class="section">
+        <div>
+          <h3>Restarting toggle</h3>
+          <p>Click while this knob is moving: it jumps back to zero and restarts.</p>
+        </div>
+        <button id="reversible" class="toggle" data-motion="bad-toggle" aria-label="Restarting toggle" role="switch" aria-checked="false">
+          <span id="knob" class="knob" data-motion="bad-knob"></span>
+        </button>
+      </div>
+    </section>
+
+    <ul id="list" class="list" data-motion="bad-list">
+      <li data-motion="list-row-1"><span class="dot"></span>Row one stays put</li>
+      <li id="removeMe" data-motion="list-row-2"><span class="dot"></span>Row two disappears instantly <button id="removeItem" class="secondary" type="button" data-motion="remove-button">Remove</button></li>
+      <li data-motion="list-row-3"><span class="dot"></span>Row three jumps up</li>
+      <li data-motion="list-row-4"><span class="dot"></span>Row four jumps up</li>
+    </ul>
+
+    <div class="slider-wrap">
+      <div class="toolbar">
+        <button id="slideStart" class="secondary" data-motion="slide-button">Start 1.2 s linear slide</button>
+      </div>
+      <div class="slider-track">
+        <div id="slider" class="slider" data-motion="linear-slider"></div>
+      </div>
+    </div>
+    <p class="hint">This page is expected to produce snap, pop-in, pop-out, layout-jump, slow, linear, and restart findings.</p>
+  </main>
+
+<script>
+  const menu = document.querySelector('#menu');
+  const menuToggle = document.querySelector('#menuToggle');
+  menuToggle.addEventListener('click', () => {
+    const open = menu.classList.toggle('open');
+    menuToggle.setAttribute('aria-expanded', String(open));
+  });
+
+  const iconStack = document.querySelector('#iconStack');
+  document.querySelector('#swap').addEventListener('click', () => {
+    iconStack.classList.toggle('swapped');
+  });
+
+  document.querySelector('#removeItem').addEventListener('click', event => {
+    event.stopPropagation();
+    document.querySelector('#removeMe').remove();
+  });
+
+  document.querySelector('#slideStart').addEventListener('click', () => {
+    document.querySelector('#slider').classList.add('moved');
+  });
+
+  const knob = document.querySelector('#knob');
+  const reversible = document.querySelector('#reversible');
+  let toggleTarget = 0;
+  let hasMoved = false;
+  reversible.addEventListener('click', () => {
+    toggleTarget = toggleTarget === 1 ? 0 : 1;
+    const reset = hasMoved ? 0 : 0;
+    hasMoved = true;
+    knob.style.transition = 'none';
+    knob.style.transform = `translateX(${reset}px)`;
+    reversible.setAttribute('aria-checked', String(toggleTarget === 1));
+    // Force the reset to commit, then start a fresh transition from the start.
+    void knob.offsetWidth;
+    requestAnimationFrame(() => {
+      knob.style.transition = 'transform 620ms cubic-bezier(.2,.8,.3,1)';
+      knob.style.transform = `translateX(${toggleTarget * 40}px)`;
+    });
+  });
+</script>
+</body>
+</html>

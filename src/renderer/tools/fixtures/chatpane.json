@@ -1,0 +1,51 @@
+{
+  "extends": "base",
+  "persisted": {
+    "panelOpen": false,
+    "layout": { "preset": "single", "cells": ["s-header"], "splits": { "x": 0.5, "y": 0.5 }, "focused": 0 }
+  },
+  "messages": [
+    {
+      "type": "sessionState",
+      "activeSessionId": "s-header",
+      "sessions": [
+        { "id": "s-header", "name": "Match pane header to mockup", "updatedAt": -1, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
+        { "id": "s-acp", "name": "Fix ACP init timeout", "updatedAt": -3, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } }
+      ]
+    },
+    { "type": "runState", "sessionId": "s-header", "state": "tool", "label": "Editing" },
+    {
+      "type": "timelineState",
+      "sessionId": "s-header",
+      "subagents": {
+        "sol": { "id": "sol", "title": "Sol", "prompt": "Wire pane layout store", "state": "running", "messages": [] },
+        "luna": { "id": "luna", "title": "Luna", "prompt": "Split header controls", "state": "running", "messages": [] }
+      },
+      "timeline": [
+        { "id": "u1", "kind": "message", "role": "user", "text": "make the header match this" },
+        { "id": "a1", "kind": "message", "role": "assistant", "text": "The screenshot keeps the same 40px row as `Pane/Header`. Two things differ:\n\n1. The model pill sits right after the title, not at the far end.\n2. Close is separated from pop-out and more by a hairline." },
+        { "id": "t1", "kind": "tool", "event": { "id": "t1", "kind": "read", "title": "Read", "detail": "src/ui/pane/header.ts", "state": "complete" } },
+        { "id": "t2", "kind": "tool", "event": { "id": "t2", "kind": "search", "title": "Searched", "detail": "\"layoutMode\" · 6 hits", "state": "complete" } },
+        { "id": "t3", "kind": "tool", "event": { "id": "t3", "kind": "read", "title": "Read", "detail": "src/runtime/acp.ts", "state": "complete" } },
+        { "id": "subagent:sol", "kind": "subagent", "agentId": "sol" },
+        { "id": "subagent:luna", "kind": "subagent", "agentId": "luna" },
+        { "id": "approval:b1", "kind": "approval", "title": "Wants to run a command", "detail": "npm run build && npm test -- pane", "status": "pending" },
+        {
+          "id": "question:q1",
+          "kind": "question",
+          "status": "pending",
+          "questions": [
+            {
+              "question": "Where should the model pill go when the pane is narrow?",
+              "options": [
+                { "label": "Keep it after the title", "description": "Title truncates first" },
+                { "label": "Move it into the composer", "description": "Header shows title only" },
+                { "label": "Hide below 480px", "description": "Model stays in the composer" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

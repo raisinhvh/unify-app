@@ -1,0 +1,706 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { build } from 'esbuild';
+import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+
+const source = await readFile('src/engine/extension.ts', 'utf8');
+const bundle = await build({
+  stdin: { contents: source + '\nexport { ExtensionHost, DshSidebarProvider, WorkspaceMirror };', resolveDir: resolve('src/engine'), loader: 'ts' },
+  bundle: true, write: false, platform: 'node', format: 'esm',
+  logOverride: { 'import-is-undefined': 'silent' },
+  plugins: [{ name: 'vscode-stub', setup(builder) {
+    builder.onResolve({ filter: /^vscode$/ }, () => ({ path: 'vscode', namespace: 'stub' }));
+    builder.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: 'export const workspace = { getConfiguration: () => ({ get: (_key, fallback) => fallback }) }; export const window = {}; export const Uri = { file: path => ({ fsPath: path }) };' }));
+  } }],
+});
+const { ExtensionHost, DshSidebarProvider, WorkspaceMirror } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+function navigationHost(records) {
+  const host = Object.create(ExtensionHost.prototype);
+  const store = new Map([['dsh.ide.sessions.v1', records], ['dsh.ide.activeSession.v1', records[0]?.id]]);
+  const messages = [];
+  Object.assign(host, {
+    active: records[0], chats: new Map(), chatLoads: new Map(), promptStarts: new Map(), deletedSessions: new Set(),
+    transcripts: new Map(), timelines: {}, modelChoices: {}, selectedModel: 'Model',
+    context: { globalStorageUri: { fsPath: '/storage' }, workspaceState: {
+      get: (key, fallback) => store.has(key) ? store.get(key) : fallback,
+      update: (key, value) => { store.set(key, value); return Promise.resolve(); },
+    } },
+    root: () => ({ uri: { scheme: 'file', fsPath: '/workspace' } }),
+    sidebar: { hasTimeline: () => true, postMessage: message => messages.push(message) },
+    availableModel: () => ({ name: 'Model', provider: 'cursor-acp', backend: 'auto' }),
+    effectiveModel: model => model, choiceFor: () => ({}), accounts: { getDefault: () => undefined },
+    refreshModels() {}, refreshAccount: async () => {}, syncActiveView() {}, updateStatus() {},
+    output: { appendLine() {} },
+  });
+  return { host, store, messages };
+}
+
+function promptChat(record, calls = []) {
+  return {
+    record, running: false, cancelRequested: false, queue: [], background: new Map(), turnEntryId: '', segment: 0,
+    startedTools: new Set(), subagentIds: new Set(), delegationToolIds: new Set(), subagentText: new Map(),
+    turnReply: '', handoffPending: false, ownerId: 'owner', mirror: { cwd: '/workspace', beginTurn: async () => {}, endTurn: async () => { calls.push('scan'); } },
+    runtime: { isRunning: true, prompt: async (_id, prompt) => { calls.push(['runtime prompt', prompt]); } },
+  };
+}
+
+function preparePromptHost(records) {
+  const fixture = navigationHost(records);
+  const { host } = fixture;
+  Object.assign(host, {
+    sessions: () => records,
+    pendingApprovals: new Map(),
+    pendingQuestions: new Map(),
+    replayTranscript: id => { if (!fixture.messages.some(message => message.type === 'timelineState' && message.sessionId === id)) host.sidebar.postMessage({ type: 'timelineState', sessionId: id, timeline: [], subagents: {} }); },
+    availableModel: () => undefined, effectiveModel: model => model, choiceFor: () => ({}),
+    // These tests are about turns and queues; memory is off so its sync does not change their timing.
+    memorySettings: () => ({ enabled: false }),
+    editorContext: () => '', agentInstructions: () => '', turnOnPacks: () => [], delegateConfig: () => undefined, saveTranscripts: async () => {},
+    saveSession: async () => {}, postRun() {}, postQueue(chat) { fixture.messages.push({ type: 'queueState', sessionId: chat.record.id, items: chat.queue.map(item => item.prompt) }); },
+    cancel(_all, id) { host.chats.get(id).cancelRequested = true; },
+  });
+  return fixture;
+}
+
+test('new chats appear without copying files or starting a provider', async () => {
+  const { host, store, messages } = navigationHost([]);
+  host.prepareChat = () => { throw new Error('New must not initialize the chat'); };
+  await host.newChat();
+  const record = store.get('dsh.ide.sessions.v1')[0];
+  assert.equal(record.pendingMirror, true);
+  assert.equal(host.chats.size, 0);
+  assert.equal(host.chatLoads.size, 0);
+  assert.equal(host.active.id, record.id);
+  assert.ok(messages.some(message => message.type === 'sessionState' && message.activeSessionId === record.id));
+});
+
+test('switches publish the selected chat before slow persistence finishes', async () => {
+  const records = [{ id: 'one', modelName: 'Model' }, { id: 'two', modelName: 'Model', pendingMirror: true }];
+  const { host, messages } = navigationHost(records);
+  const gate = deferred();
+  const update = host.context.workspaceState.update;
+  host.context.workspaceState.update = (key, value) => { update(key, value); return gate.promise; };
+  const switched = host.continueChat('two');
+  assert.equal(host.active.id, 'two');
+  assert.ok(messages.some(message => message.type === 'sessionState' && message.activeSessionId === 'two'));
+  gate.resolve();
+  await switched;
+});
+
+test('switching warm idle chats keeps their runtime and review state', async () => {
+  const records = [{ id: 'one', modelName: 'Model' }, { id: 'two', modelName: 'Model' }];
+  const { host } = navigationHost(records);
+  const first = { record: records[0], running: false, background: new Map() };
+  const second = { record: records[1], running: false, background: new Map() };
+  host.chats.set('one', first); host.chats.set('two', second);
+  host.unloadChat = () => { throw new Error('Navigation must keep warm chats'); };
+  host.prepareChat = () => { throw new Error('Navigation must reuse warm chats'); };
+  await host.continueChat('two'); await host.continueChat('one');
+  assert.equal(host.chat, first);
+  assert.equal(host.chats.get('two'), second);
+});
+
+test('a slow earlier switch cannot replace a newer selection when loading finishes', async () => {
+  const records = [{ id: 'one', modelName: 'Model', pendingMirror: true }, { id: 'two', modelName: 'Model' }];
+  const { host, messages } = navigationHost(records);
+  const gate = deferred();
+  host.prepareChat = async record => { await gate.promise; return { record }; };
+  const earlier = host.continueChat('two');
+  await new Promise(resolve => setImmediate(resolve));
+  await host.continueChat('one');
+  gate.resolve(); await earlier;
+  assert.equal(host.active.id, 'one');
+  assert.equal(messages.filter(message => message.type === 'sessionState').at(-1).activeSessionId, 'one');
+});
+
+test('simultaneous chat loads share initialization and failed loads can retry', async () => {
+  const record = { id: 'one' };
+  const { host } = navigationHost([record]);
+  const gate = deferred();
+  let attempts = 0;
+  host.prepareChat = () => { attempts++; return gate.promise; };
+  const first = host.loadChat(record);
+  const second = host.loadChat(record);
+  assert.equal(first, second); assert.equal(attempts, 1);
+  const failed = assert.rejects(first, /failed/);
+  gate.reject(new Error('failed')); await failed;
+  host.prepareChat = async () => { attempts++; return { record }; };
+  assert.equal((await host.loadChat(record)).record, record);
+  assert.equal(attempts, 2);
+});
+
+test('posts idle prompt before a gated chat load and starts it exactly once', async () => {
+  const record = { id: 'one', modelName: 'Model', provider: 'cursor-acp', backend: 'auto', name: 'New chat' };
+  const { host, messages } = preparePromptHost([record]);
+  const gate = deferred();
+  const calls = [];
+  const chat = promptChat(record, calls);
+  let loads = 0;
+  host.loadChat = async selected => { loads++; assert.equal(selected, record); await gate.promise; host.chats.set(record.id, chat); return chat; };
+  const sending = host.sendPrompt('hello');
+  assert.deepEqual(messages.filter(message => message.type === 'userMessage').map(message => message.text), ['hello']);
+  assert.equal(host.promptStarts.has(record.id), true);
+  gate.resolve(); await sending;
+  assert.equal(loads, 1);
+  assert.equal(calls.filter(call => Array.isArray(call) && call[0] === 'runtime prompt').length, 1);
+  assert.equal(messages.filter(message => message.type === 'userMessage').length, 1);
+});
+
+test('posts idle prompt before gated image persistence', async () => {
+  const record = { id: 'one', modelName: 'Model', provider: 'cursor-acp', backend: 'auto' };
+  const { host, messages } = preparePromptHost([record]);
+  const gate = deferred();
+  const calls = [];
+  const chat = promptChat(record, calls);
+  host.saveImages = async () => { await gate.promise; return []; };
+  host.loadChat = async () => { host.chats.set(record.id, chat); return chat; };
+  const sending = host.sendPrompt('with file', [{ name: 'photo.png', mimeType: 'image/png', data: 'YQ==' }]);
+  assert.equal(messages.filter(message => message.type === 'userMessage').length, 1);
+  assert.equal(host.promptStarts.has(record.id), true);
+  gate.resolve(); await sending;
+  assert.equal(calls.filter(call => Array.isArray(call) && call[0] === 'runtime prompt').length, 1);
+});
+
+test('startup remains bound to the selected chat if navigation changes while loading', async () => {
+  const records = [
+    { id: 'one', modelName: 'Model', provider: 'cursor-acp', backend: 'auto' },
+    { id: 'two', modelName: 'Model', provider: 'cursor-acp', backend: 'auto' },
+  ];
+  const { host, messages } = preparePromptHost(records);
+  const gate = deferred();
+  const calls = [];
+  const chat = promptChat(records[0], calls);
+  host.loadChat = async selected => { assert.equal(selected, records[0]); await gate.promise; host.chats.set('one', chat); return chat; };
+  const sending = host.sendPrompt('first chat');
+  await new Promise(resolve => setImmediate(resolve));
+  host.active = records[1];
+  gate.resolve(); await sending;
+  assert.deepEqual(messages.filter(message => message.type === 'userMessage').map(message => message.sessionId), ['one']);
+  assert.deepEqual(calls.filter(call => Array.isArray(call) && call[0] === 'runtime prompt').map(call => call[1].split('User request:\n')[1]), ['first chat']);
+});
+
+test('failed startup releases reservation so the next submit can retry', async () => {
+  const record = { id: 'one', modelName: 'Model', provider: 'cursor-acp', backend: 'auto' };
+  const { host } = preparePromptHost([record]);
+  const gate = deferred();
+  const chat = promptChat(record);
+  let attempts = 0;
+  host.loadChat = async () => { attempts++; if (attempts === 1) { await gate.promise; throw new Error('load failed'); } host.chats.set(record.id, chat); return chat; };
+  const first = host.sendPrompt('try one');
+  const rejected = assert.rejects(first, /load failed/);
+  gate.resolve(); await rejected;
+  assert.equal(host.promptStarts.has(record.id), false);
+  await host.sendPrompt('try two');
+  assert.equal(attempts, 2);
+  assert.equal(host.promptStarts.has(record.id), false);
+});
+
+test('rapid queue submission during startup produces one user echo and queues after load', async () => {
+  const record = { id: 'one', modelName: 'Model', provider: 'cursor-acp', backend: 'auto' };
+  const { host, messages } = preparePromptHost([record]);
+  const gate = deferred();
+  const promptGate = deferred();
+  const calls = [];
+  const chat = promptChat(record, calls);
+  chat.runtime.prompt = async (_id, prompt) => { calls.push(['runtime prompt', prompt]); await promptGate.promise; };
+  let loads = 0;
+  host.loadChat = async () => { loads++; await gate.promise; host.chats.set(record.id, chat); return chat; };
+  const first = host.sendPrompt('first');
+  const second = host.sendPrompt('second', undefined, undefined, undefined, 'queue');
+  assert.equal(messages.filter(message => message.type === 'userMessage').length, 1);
+  gate.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  await second;
+  assert.equal(loads, 2);
+  assert.equal(messages.filter(message => message.type === 'userMessage').length, 1);
+  assert.deepEqual(chat.queue.map(item => item.prompt), ['second']);
+  assert.equal(messages.filter(message => message.type === 'queueState').at(-1).items[0], 'second');
+  assert.equal(calls.filter(call => Array.isArray(call) && call[0] === 'runtime prompt').length, 1);
+  promptGate.resolve(); await first;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(messages.filter(message => message.type === 'userMessage').map(message => message.text), ['first', 'second']);
+  assert.equal(calls.filter(call => Array.isArray(call) && call[0] === 'runtime prompt').length, 2);
+});
+
+test('rapid interrupt submission during startup queues once then requests cancellation', async () => {
+  const record = { id: 'one', modelName: 'Model', provider: 'cursor-acp', backend: 'auto' };
+  const { host, messages } = preparePromptHost([record]);
+  const gate = deferred();
+  const promptGate = deferred();
+  const chat = promptChat(record);
+  chat.runtime.prompt = async () => { await promptGate.promise; };
+  host.loadChat = async () => { await gate.promise; host.chats.set(record.id, chat); return chat; };
+  const first = host.sendPrompt('first');
+  const second = host.sendPrompt('interrupt');
+  gate.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  await second;
+  assert.equal(chat.cancelRequested, true);
+  assert.deepEqual(chat.queue.map(item => item.prompt), ['interrupt']);
+  assert.equal(messages.filter(message => message.type === 'userMessage').length, 1);
+  promptGate.resolve(); await first;
+});
+
+test('first submission is displayed before new chat persistence completes', async () => {
+  const records = [];
+  const { host, messages } = preparePromptHost(records);
+  const gate = deferred();
+  host.availableModel = () => ({ name: 'Model', provider: 'cursor-acp', backend: 'auto' });
+  host.saveSession = async record => { if (!records.includes(record)) records.push(record); await gate.promise; };
+  host.loadChat = async record => { const chat = promptChat(record); host.chats.set(record.id, chat); return chat; };
+  const sending = host.sendPrompt('first message');
+  assert.equal(messages.filter(message => message.type === 'userMessage').length, 1);
+  assert.equal(messages.find(message => message.type === 'userMessage').sessionId, host.active.id);
+  gate.resolve(); await sending;
+  assert.equal(messages.filter(message => message.type === 'userMessage').length, 1);
+});
+
+test('saved history is restored before the early user echo', async () => {
+  const record = { id: 'one', modelName: 'Model', provider: 'cursor-acp', backend: 'auto' };
+  const { host } = preparePromptHost([record]);
+  host.sidebar = new DshSidebarProvider({});
+  delete host.replayTranscript;
+  host.timelines.one = { timeline: [{ id: 'old', kind: 'message', role: 'user', text: 'earlier' }], subagents: {} };
+  const gate = deferred();
+  host.loadChat = async () => { await gate.promise; return promptChat(record); };
+  const sending = host.sendPrompt('new message');
+  assert.deepEqual(host.sidebar.timeline('one').map(entry => entry.text), ['earlier', 'new message']);
+  gate.resolve(); await sending;
+  assert.deepEqual(host.sidebar.timeline('one').map(entry => entry.text), ['earlier', 'new message']);
+});
+
+test('deletion while switching models prevents a prepared turn from starting', async () => {
+  const record = { id: 'one', modelName: 'Model', provider: 'cursor-acp', backend: 'auto' };
+  const { host } = preparePromptHost([record]);
+  const gate = deferred();
+  const calls = [];
+  const chat = promptChat(record, calls);
+  host.chats.set(record.id, chat);
+  host.availableModel = () => ({ name: 'Model', provider: 'cursor-acp', backend: 'different' });
+  host.switchModel = async () => { await gate.promise; };
+  const sending = host.sendPrompt('hello');
+  await new Promise(resolve => setImmediate(resolve));
+  host.deletedSessions.add(record.id);
+  gate.resolve(); await sending;
+  assert.equal(chat.running, false);
+  assert.equal(calls.length, 0);
+  assert.equal(host.promptStarts.size, 0);
+});
+
+test('deletion updates navigation before backend close and prevents late saves', async () => {
+  const records = [{ id: 'one', modelName: 'Model' }, { id: 'two', modelName: 'Model', pendingMirror: true }];
+  const { host, store, messages } = navigationHost(records);
+  const gate = deferred();
+  let disposed = false;
+  host.chats.set('one', { record: records[0], running: false, background: new Map(),
+    runtime: { closeSession: () => gate.promise },
+    review: { dispose() { disposed = true; } }, mirror: { dispose() {} },
+  });
+  const deleted = host.deleteSession('one');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(disposed, false);
+  assert.equal(host.active.id, 'two');
+  assert.deepEqual(store.get('dsh.ide.sessions.v1').map(record => record.id), ['two']);
+  assert.ok(messages.some(message => message.type === 'sessionDeleted'));
+  await host.saveSession(records[0]);
+  assert.deepEqual(store.get('dsh.ide.sessions.v1').map(record => record.id), ['two']);
+  gate.resolve(); await deleted;
+  assert.equal(disposed, true);
+});
+
+test('retained chat limit protects active and running chats', () => {
+  const records = Array.from({ length: 6 }, (_, index) => ({ id: String(index) }));
+  const { host } = navigationHost(records);
+  host.chats = new Map(records.map((record, index) => [record.id, { record, running: index === 1, background: new Map() }]));
+  const evicted = [];
+  host.unloadChat = async id => { evicted.push(id); host.chats.delete(id); };
+  host.trimChats();
+  assert.deepEqual(evicted, ['2', '3']);
+  assert.ok(host.chats.has('0')); assert.ok(host.chats.has('1'));
+});
+
+test('first use keeps the local chat ID and stores the separately created backend ID', async t => {
+  const record = { id: 'local', mirrorId: 'private-copy', pendingMirror: true, modelName: 'Model', provider: 'cursor-acp', backend: 'auto' };
+  const { host } = navigationHost([record]);
+  const mirror = { id: record.mirrorId, cwd: '/private', dispose() {} };
+  t.mock.method(WorkspaceMirror, 'create', async (_root, _storage, _onChanges, id) => {
+    assert.equal(id, record.mirrorId); return mirror;
+  });
+  const runtime = { newSession: async () => 'backend', models: () => [] };
+  Object.assign(host, {
+    createReview: () => ({ update() {}, dispose() {} }),
+    ensureRuntime: async () => ({ runtime, key: 'provider' }),
+    mcpServers: () => [], refreshCursorModels: async () => {},
+  });
+  const chat = await host.loadChat(record);
+  assert.equal(chat.record.id, 'local');
+  assert.equal(host.rid(record), 'backend');
+  assert.equal(record.pendingMirror, undefined);
+  assert.equal(host.chats.get('local'), chat);
+});
+
+test('reopening a chat preserves the initial scan results without scanning twice', async t => {
+  const record = { id: 'local', runtimeId: 'backend', mirrorId: 'private-copy', modelName: 'Model', provider: 'cursor-acp', backend: 'auto' };
+  const { host } = navigationHost([record]);
+  const changes = [{ path: 'file.txt', base: 'before', proposed: 'after' }];
+  const mirror = { id: record.mirrorId, cwd: '/private', dispose() {}, scan() { throw new Error('Redundant scan'); } };
+  t.mock.method(WorkspaceMirror, 'reopen', async (_root, _storage, _id, onChanges) => {
+    onChanges(changes); return mirror;
+  });
+  let reviewed, resumed;
+  const runtime = { resumeSession: async id => { resumed = id; }, models: () => [] };
+  Object.assign(host, {
+    createReview: () => ({ update(value) { reviewed = value; }, dispose() {} }),
+    ensureRuntime: async () => ({ runtime, key: 'provider' }),
+    mcpServers: () => [], refreshCursorModels: async () => {},
+  });
+  await host.loadChat(record);
+  assert.equal(reviewed, changes);
+  assert.equal(resumed, 'backend');
+});
+
+test('deleting a draft during initialization disposes it without restoring the chat', async t => {
+  const record = { id: 'local', mirrorId: 'private-copy', pendingMirror: true, modelName: 'Model', provider: 'cursor-acp', backend: 'auto' };
+  const { host } = navigationHost([record]);
+  const gate = deferred();
+  const calls = [];
+  t.mock.method(WorkspaceMirror, 'create', async () => {
+    await gate.promise;
+    return { id: record.mirrorId, cwd: '/private', dispose() { calls.push('dispose mirror'); } };
+  });
+  t.mock.method(WorkspaceMirror, 'remove', async () => { calls.push('remove mirror'); });
+  Object.assign(host, {
+    createReview: () => ({ update() {}, dispose() { calls.push('dispose review'); } }),
+    ensureRuntime: async () => { throw new Error('Deleted chat must not start a provider'); },
+  });
+  const loading = host.loadChat(record);
+  const failed = assert.rejects(loading, /deleted/);
+  const deleting = host.deleteSession(record.id);
+  gate.resolve();
+  await failed; await deleting;
+  assert.equal(host.chats.size, 0);
+  assert.equal(host.sessions().length, 0);
+  assert.deepEqual(calls, ['dispose review', 'dispose mirror', 'remove mirror']);
+});
+
+test('saved timelines restore tools, approvals and subagent output in order', () => {
+  let saved;
+  const sidebar = new DshSidebarProvider({}, undefined, (sessionId, timeline, subagents) => {
+    saved = JSON.parse(JSON.stringify({ sessionId, timeline, subagents }));
+  });
+  sidebar.postMessage({ type: 'userMessage', sessionId: 'chat', entryId: 'user', text: 'hello' });
+  sidebar.postMessage({ type: 'toolEvent', sessionId: 'chat', event: { id: 'read', kind: 'read', title: 'Read file', state: 'complete' } });
+  sidebar.postMessage({ type: 'subagentEvent', sessionId: 'chat', agentId: 'child', title: 'Composer', text: 'Done', state: 'complete' });
+  sidebar.postMessage({ type: 'approvalRequest', sessionId: 'chat', id: 'approval', title: 'Run', detail: 'command' });
+  sidebar.postMessage({ type: 'approvalResolved', sessionId: 'chat', id: 'approval', allowed: true });
+  sidebar.postMessage({ type: 'assistantDelta', sessionId: 'chat', entryId: 'answer', text: 'finished' });
+  const restored = new DshSidebarProvider({});
+  restored.postMessage({ type: 'timelineState', ...saved });
+  assert.deepEqual(restored.timeline('chat').map(entry => entry.kind), ['message', 'tool', 'subagent', 'approval', 'message']);
+  assert.equal(restored.subagents('chat').child.messages[0].text, 'Done');
+  assert.equal(restored.timeline('chat')[3].status, 'allowed');
+});
+
+test('cancelling a turn leaves delegated subagents to the host, which reports how they end', () => {
+  const sidebar = new DshSidebarProvider({});
+  sidebar.postMessage({ type: 'subagentEvent', sessionId: 'chat', agentId: 'native', title: 'Explore', state: 'running' });
+  sidebar.postMessage({ type: 'subagentEvent', sessionId: 'chat', agentId: 'delegated', title: 'Composer', state: 'running', delegated: true });
+  sidebar.postMessage({ type: 'runState', sessionId: 'chat', state: 'cancelling' });
+  sidebar.postMessage({ type: 'runState', sessionId: 'chat', state: 'idle' });
+  assert.equal(sidebar.subagents('chat').native.state, 'cancelled');
+  assert.equal(sidebar.subagents('chat').delegated.state, 'running');
+  sidebar.postMessage({ type: 'subagentEvent', sessionId: 'chat', agentId: 'delegated', state: 'cancelled' });
+  assert.equal(sidebar.subagents('chat').delegated.state, 'cancelled');
+});
+
+test('generated media keeps its flag in the saved timeline', () => {
+  const sidebar = new DshSidebarProvider({});
+  sidebar.postMessage({ type: 'mediaMessage', sessionId: 'chat', entryId: 'media:1', items: [{ name: 'a.png', mimeType: 'image/png', file: 'chat/a.png' }], generated: true });
+  sidebar.postMessage({ type: 'mediaMessage', sessionId: 'chat', entryId: 'media:2', items: [{ name: 'b.png', mimeType: 'image/png', file: 'chat/b.png' }] });
+  assert.deepEqual(sidebar.timeline('chat').map(entry => entry.generated), [true, undefined]);
+});
+
+test('a generated image box appears pending, then the same entry is filled in place', () => {
+  const sidebar = new DshSidebarProvider({});
+  sidebar.postMessage({ type: 'mediaMessage', sessionId: 'chat', entryId: 'media:1', items: [], generated: true, status: 'pending' });
+  sidebar.postMessage({ type: 'assistantDelta', sessionId: 'chat', entryId: 'after', text: 'Working on it' });
+  sidebar.postMessage({ type: 'mediaMessage', sessionId: 'chat', entryId: 'media:1', items: [{ name: 'a.png', mimeType: 'image/png', file: 'chat/a.png' }], generated: true });
+  const timeline = sidebar.timeline('chat');
+  assert.deepEqual(timeline.map(entry => entry.id), ['media:1', 'after']);
+  assert.equal(timeline[0].status, undefined);
+  assert.equal(timeline[0].items[0].name, 'a.png');
+});
+
+test('editing replaces the backend session and retains only the earlier conversation', async () => {
+  const host = Object.create(ExtensionHost.prototype);
+  const record = { id: 'chat', provider: 'deepseek-official', runtimeId: 'old', cliSessionId: 'old-cli' };
+  const calls = [];
+  const chat = { record, mirror: { cwd: '/workspace' }, running: false, ownerId: 'owner', runtime: {
+    async newSession() { calls.push('new'); return 'fresh'; },
+    async closeSession(id) { calls.push(['close', id]); },
+  } };
+  Object.assign(host, {
+    active: record, chats: new Map([['chat', chat]]),
+    transcripts: new Map([['chat', [
+      { role: 'user', text: 'first' }, { role: 'assistant', text: 'earlier answer' },
+      { role: 'user', text: 'second' }, { role: 'assistant', text: 'discard this' },
+    ]]]),
+    sidebar: {
+      timeline: () => [
+        { id: 'u1', kind: 'message', role: 'user', text: 'first' },
+        { id: 'a1', kind: 'message', role: 'assistant', text: 'earlier answer' },
+        { id: 'u2', kind: 'message', role: 'user', text: 'second' },
+        { id: 'tool', kind: 'tool', event: { title: 'Discarded tool' } },
+      ],
+      subagents: () => ({ discarded: {} }),
+      postMessage: message => calls.push(message),
+    },
+    mcpServers: () => [], saveSession: async () => {}, saveTranscripts: async () => {},
+    sendPrompt: async text => calls.push(['prompt', text]),
+  });
+  await host.editMessage('chat', 'u2', 'changed');
+  assert.equal(record.runtimeId, 'fresh');
+  assert.equal(record.cliSessionId, undefined);
+  assert.equal(chat.handoffPending, true);
+  assert.deepEqual(host.transcripts.get('chat').map(item => item.text), ['first', 'earlier answer']);
+  const reset = calls.find(item => item.type === 'timelineState');
+  assert.deepEqual(reset.timeline.map(item => item.id), ['u1', 'a1']);
+  assert.deepEqual(reset.subagents, {});
+  assert.deepEqual(calls.at(-1), ['prompt', 'changed']);
+});
+
+test('editing a running chat cannot truncate it', async () => {
+  const host = Object.create(ExtensionHost.prototype);
+  host.active = { id: 'chat' };
+  host.chats = new Map([['chat', { running: true }]]);
+  await assert.rejects(host.editMessage('chat', 'u1', 'changed'), /finish before editing/);
+});
+
+test('replacing a cancelled Cursor runtime creates a fresh session and hands off conversation', async () => {
+  const host = Object.create(ExtensionHost.prototype);
+  const record = { id: 'chat', modelName: 'Cursor', provider: 'cursor-acp', accountId: 'cursor-login', backend: 'auto', runtimeId: 'old' };
+  const old = { closeSession: async () => {} };
+  const runtime = { newSession: async () => 'fresh', models: () => [] };
+  const chat = { record, mirror: { cwd: '/workspace' }, ownerId: 'owner', runtimeKey: 'same-key', runtime: old };
+  const model = { name: 'Cursor', provider: 'cursor-acp', backend: 'auto' };
+  Object.assign(host, {
+    resolveRoute: async () => ({ model }),
+    ensureRuntime: async () => ({ key: 'same-key', runtime }),
+    mcpServers: () => [], refreshCursorModels: async () => {},
+    saveSession: async () => {}, refreshSessions() {},
+  });
+  await host.switchModel(chat, model);
+  assert.equal(chat.runtime, runtime);
+  assert.equal(record.runtimeId, 'fresh');
+  assert.equal(chat.handoffPending, true);
+});
+
+test('late ACP tool events cannot overwrite Cancelling state', () => {
+  const host = Object.create(ExtensionHost.prototype);
+  host.chatForRuntime = () => ({ record: { id: 'chat' }, cancelRequested: true });
+  host.sidebar = { postMessage() { throw new Error('Unexpected late event'); } };
+  host.onRuntimeUpdate({ sessionId: 'runtime', update: { sessionUpdate: 'tool_call', toolCallId: 'late' } }, 'key');
+});
+
+test('uploads preserve non-image bytes and reject malformed or oversized data', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-upload-'));
+  try {
+    const host = Object.create(ExtensionHost.prototype);
+    host.context = { globalStorageUri: { fsPath: dir } };
+    const payload = Buffer.from('context\nwith unicode: café');
+    const saved = await host.saveImages([{ name: '../notes.txt', mimeType: 'text/plain', data: payload.toString('base64') }]);
+    assert.deepEqual(await readFile(saved[0].path), payload);
+    assert.equal(saved[0].path.startsWith(join(dir, 'attachments')), true);
+    await assert.rejects(host.saveImages([{ name: 'bad', data: '!bad!' }]), /Invalid attachment/);
+    await assert.rejects(host.saveImages([{ name: 'large', data: Buffer.alloc(10 * 1024 * 1024 + 1).toString('base64') }]), /10 MB/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('messages for a chat whose history is not shown yet do not save over that history', () => {
+  const saves = [];
+  const sidebar = new DshSidebarProvider({}, undefined, (sessionId, timeline) => saves.push([sessionId, timeline.length]));
+  // A reload posts job and run state for the reopened chat before its saved timeline is replayed.
+  sidebar.postMessage({ type: 'jobState', sessionId: 'one', job: null });
+  sidebar.postMessage({ type: 'runState', sessionId: 'one', state: 'idle', label: 'Ready' });
+  assert.deepEqual(saves, []);
+  sidebar.postMessage({ type: 'timelineState', sessionId: 'one', timeline: [{ id: 'old', kind: 'message', role: 'user', text: 'earlier' }], subagents: {} });
+  sidebar.postMessage({ type: 'runState', sessionId: 'one', state: 'idle', label: 'Ready' });
+  assert.deepEqual(saves, [['one', 1], ['one', 1]]);
+});
+
+test('a chat whose saved timeline was emptied is rebuilt from its transcript', () => {
+  const records = [{ id: 'one', modelName: 'Model' }];
+  const { host } = navigationHost(records);
+  host.sidebar = new DshSidebarProvider({});
+  host.timelines.one = { timeline: [], subagents: {} };
+  host.transcripts.set('one', [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'hello' }]);
+  host.replayTranscript('one');
+  assert.deepEqual(host.sidebar.timeline('one').map(entry => entry.text), ['hi', 'hello']);
+});
+
+test('turns DSH starts on its own never appear as the user speaking', async () => {
+  const record = { id: 'one', modelName: 'Model', provider: 'cursor-acp', backend: 'auto' };
+  const { host, messages } = preparePromptHost([record]);
+  const calls = [];
+  const chat = promptChat(record, calls);
+  host.chats.set(record.id, chat);
+  host.loadChat = async () => chat;
+  await host.sendPrompt('Background subagent results: ...', undefined, [], record.id, 'queue', { internal: true });
+  assert.equal(calls.filter(call => Array.isArray(call)).length, 1);
+  assert.equal(messages.filter(message => message.type === 'userMessage').length, 0);
+  assert.equal(host.transcripts.get('one')[0].internal, true);
+  // A rebuilt history skips them as well.
+  host.sidebar = new DshSidebarProvider({});
+  delete host.replayTranscript;
+  host.transcripts.set('two', [{ role: 'user', text: 'mine' }, { role: 'user', text: 'internal', internal: true }, { role: 'assistant', text: 'reply' }]);
+  host.replayTranscript('two');
+  assert.deepEqual(host.sidebar.timeline('two').map(entry => entry.text), ['mine', 'reply']);
+});
+
+
+test('checkpoint takes effect after a successful turn and opens the next prompt from its summary', async () => {
+  const record = { id: 'one', modelName: 'Model', provider: 'claude-cli', backend: 'default', accountId: 'account', cliSessionId: 'old', name: 'Chat' };
+  const { host } = preparePromptHost([record]);
+  const chat = promptChat(record);
+  chat.runtime = undefined;
+  chat.cli = {};
+  const gate = deferred();
+  const prompts = [];
+  host.chats.set(record.id, chat);
+  host.loadChat = async () => chat;
+  host.delegateConfig = () => ({});
+  host.oauthAccounts = { get: () => ({ id: 'account', provider: 'claude-cli' }) };
+  host.shareGlobalInstructions = async () => {};
+  host.runOneShot = () => { throw new Error('must not summarize'); };
+  host.promptPooled = async (_cli, turn) => {
+    prompts.push(turn.prompt);
+    if (prompts.length === 1) {
+      assert.equal((await host.handleDelegateCall('owner', 'checkpoint', { summary: 'Work completed', reason: 'done', keep_files: ['src/a.ts'] })).text, 'Checkpoint saved; it takes effect after this turn. Nothing continues automatically: finish the user\'s request in this turn before you end it.');
+      await gate.promise;
+      return 'old';
+    }
+    return 'new';
+  };
+  host.childRuns = new Set();
+  const first = host.sendPrompt('first');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(record.cliSessionId, 'old');
+  gate.resolve();
+  await first;
+  assert.equal(record.cliSessionId, undefined);
+  assert.equal(record.previousCliSessionId, 'old');
+  await host.sendPrompt('next');
+  assert.match(prompts[1], /Work completed/);
+  assert.match(prompts[1], /Files to re-read if needed: src\/a.ts/);
+  assert.equal(record.checkpoint, undefined);
+});
+
+test('idle Claude sessions reset only above the hint', async () => {
+  for (const [tokens, expected] of [[80000, true], [79999, false]]) {
+    const record = { id: 'one', modelName: 'Model', provider: 'claude-cli', backend: 'default', accountId: 'account', cliSessionId: 'old', name: 'Chat', contextTokens: tokens, lastTurnAt: Date.now() - 61 * 60_000 };
+    const { host } = preparePromptHost([record]);
+    const chat = promptChat(record);
+    chat.runtime = undefined;
+    chat.cli = {};
+    host.chats.set(record.id, chat);
+    host.loadChat = async () => chat;
+    host.oauthAccounts = { get: () => ({ id: 'account', provider: 'claude-cli' }) };
+    host.shareGlobalInstructions = async () => {};
+    let sentSession;
+    let sentPrompt;
+    if (expected) {
+      record.checkpoint = { summary: 'Saved idle summary', keepFiles: ['src/a.ts'] };
+      chat.handoffPending = true;
+      record.previousCliSessionId = record.cliSessionId;
+      record.cliSessionId = undefined;
+    }
+    host.promptPooled = async (_cli, turn) => { sentSession = turn.sessionId; sentPrompt = turn.prompt; return 'new'; };
+    await host.sendPrompt('continue');
+    assert.equal(sentSession === undefined, expected);
+    if (expected) assert.match(sentPrompt, /Saved idle summary/);
+  }
+});
+
+test('auto compaction starts a fresh Claude session from transcript parts once the conversation passes the threshold', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'dsh-parts-'));
+  for (const [tokens, expected] of [[85000, true], [84999, false]]) {
+    // 15k of the context is the session's own overhead, so 85k is 70k of conversation.
+    const record = { id: 'one', modelName: 'Model', provider: 'claude-cli', backend: 'default', accountId: 'account', cliSessionId: 'old', name: 'Chat', contextTokens: tokens, baseTokens: 15000, lastTurnAt: Date.now() - 60_000 };
+    const { host } = preparePromptHost([record]);
+    const chat = promptChat(record);
+    chat.runtime = undefined;
+    chat.cli = {};
+    chat.mirror.cwd = cwd;
+    host.chats.set(record.id, chat);
+    host.loadChat = async () => chat;
+    host.oauthAccounts = { get: () => ({ id: 'account', provider: 'claude-cli' }) };
+    host.shareGlobalInstructions = async () => {};
+    host.feature = key => key === 'autoCompact';
+    host.delegateConfig = () => ({ command: 'node', args: [], env: {} });
+    host.output = { appendLine() {} };
+    const summarized = [];
+    host.runOneShot = async (choice, _cwd, prompt) => {
+      summarized.push([choice.model, prompt]);
+      return '```json\n{"parts":[{"start":1,"title":"Parser","summary":"PARSER BUILT"},{"start":2,"title":"Reply","summary":"REPLY GIVEN"}]}\n```';
+    };
+    host.transcripts.set(record.id, [
+      { role: 'user', text: 'Build the parser' }, { role: 'assistant', text: 'Built it.', tools: ['Edit src/parser.ts'] },
+      { role: 'user', text: 'Add tests' }, { role: 'assistant', text: 'Added them.' },
+    ]);
+    let sent;
+    host.promptPooled = async (_cli, turn) => { sent = turn; turn.onContext?.(30000); return 'new'; };
+    await host.sendPrompt('continue');
+    assert.equal(sent.sessionId === undefined, expected);
+    if (expected) {
+      // Every part's summary opens the session; the parts themselves are files the agent can read.
+      assert.match(sent.prompt, /part-01\.md \(messages 1-1\), Parser: PARSER BUILT/);
+      assert.match(sent.prompt, /part-02\.md \(messages 2-2\), Reply: REPLY GIVEN/);
+      assert.match(sent.prompt, /Latest messages, word for word:\nUser: Add tests/);
+      assert.deepEqual(record.parts.map(part => [part.from, part.to]), [[0, 1], [1, 2]]);
+      const part = await readFile(join(cwd, '.dsh', 'transcripts', 'one', 'part-02.md'), 'utf8');
+      assert.match(part, /Assistant: Built it\.\n\[Tools: Edit src\/parser\.ts\]/);
+      assert.equal(await readFile(join(cwd, '.dsh', 'transcripts', '.gitignore'), 'utf8'), '*\n');
+      // No name model is set, so the chat's own model splits and summarizes, and it sees the tools each turn used.
+      assert.equal(summarized.length, 1);
+      assert.equal(summarized[0][0], 'Model');
+      assert.match(summarized[0][1], /\[2\] Assistant: Built it\.\n\[Tools: Edit src\/parser\.ts\]/);
+      assert.equal(record.resumeNotice, 'compact');
+      assert.equal(record.previousCliSessionId, 'old');
+      assert.equal(record.contextTokens, 30000);
+      assert.equal(record.baseTokens, 30000 - Math.ceil(sent.prompt.length / 4));
+    } else {
+      assert.equal(summarized.length, 0);
+      assert.equal(record.resumeNotice, undefined);
+      assert.equal(record.baseTokens, 15000);
+    }
+    // The transcript keeps everything, including this turn.
+    assert.equal(host.transcripts.get(record.id).length, 5);
+  }
+  await rm(cwd, { recursive: true, force: true });
+});
+
+test('auto compaction stays off unless turned on', async () => {
+  const record = { id: 'one', modelName: 'Model', provider: 'claude-cli', backend: 'default', accountId: 'account', cliSessionId: 'old', name: 'Chat', contextTokens: 400000, baseTokens: 0, lastTurnAt: Date.now() - 60_000 };
+  const { host } = preparePromptHost([record]);
+  const chat = promptChat(record);
+  chat.runtime = undefined;
+  chat.cli = {};
+  host.chats.set(record.id, chat);
+  host.loadChat = async () => chat;
+  host.oauthAccounts = { get: () => ({ id: 'account', provider: 'claude-cli' }) };
+  host.shareGlobalInstructions = async () => {};
+  host.feature = () => false;
+  let sentSession = 'unset';
+  host.promptPooled = async (_cli, turn) => { sentSession = turn.sessionId; return 'old'; };
+  await host.sendPrompt('continue');
+  assert.equal(sentSession, 'old');
+});

@@ -1,0 +1,23 @@
+.loader {
+  display: block;
+  flex: none;
+  overflow: visible;
+}
+
+.chat-loader {
+  position: relative;
+  display: inline-block;
+  flex: none;
+}
+
+.chat-loader > .loader,
+.chat-loader-done {
+  position: absolute;
+  inset: 0;
+}
+
+.chat-loader-done {
+  display: grid;
+  place-items: center;
+  color: var(--text3);
+}

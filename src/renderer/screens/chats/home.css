@@ -1,0 +1,84 @@
+/* Home: the bottom layer. Title + composer start 160px right of the rail, centred on the composer. */
+.home {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.home-column {
+  position: absolute;
+  left: calc(var(--rail-width) + 160px);
+  top: calc(50% - 105px);
+  width: 680px;
+  max-width: calc(100% - var(--rail-width) - 192px);
+  display: flex;
+  flex-direction: column;
+}
+
+.home-title {
+  margin: 0 0 24px;
+  color: var(--text);
+}
+
+.home-composer .composer {
+  min-height: 84px;
+}
+
+.home-project {
+  display: flex;
+  margin-top: 12px;
+}
+
+.home-project-chip.button-text {
+  height: 22px;
+  padding: 0 6px 0 14px;
+  margin-left: 0;
+  color: var(--text2);
+  border-radius: var(--radius-row);
+}
+
+.home-project-chip .button-trailing {
+  rotate: var(--chip-chevron-rotate, 0deg);
+}
+
+.home-project-chip.open {
+  color: var(--text);
+  background: var(--hover);
+}
+
+/* Project picker popover (306:11820): 300px, caption, tree, separator, Open folder. */
+.project-picker {
+  width: 300px;
+  padding: 8px 6px;
+}
+
+.project-picker-caption {
+  padding: 2px 8px 6px;
+  color: var(--text3);
+}
+
+.project-picker-empty {
+  padding: 4px 8px 8px;
+  color: var(--text3);
+}
+
+.project-picker .menu-separator {
+  margin: 6px 2px;
+}
+
+.project-picker-check {
+  color: var(--text);
+}
+
+/* Lines the plus up with the folder icons (row padding 6 + chevron 12 + gap 6). */
+.project-picker-open.tree-item {
+  padding-left: 24px;
+}
+
+.project-picker-open .tree-label {
+  color: var(--text2);
+}
+
+.project-picker-open .tree-trailing {
+  font-family: var(--font-mono);
+}

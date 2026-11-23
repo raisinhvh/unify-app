@@ -1,0 +1,61 @@
+{
+  "extends": "base",
+  "persisted": {
+    "panelOpen": true,
+    "layout": { "preset": "grid", "cells": ["s-acp", "s-pane", "s-refactor", "s-hub"], "splits": { "x": 0.5, "y": 0.5 }, "focused": 0 },
+    "unread": { "s-release": 1, "s-rebirth": 1 }
+  },
+  "messages": [
+    { "type": "runState", "sessionId": "s-acp", "state": "tool", "label": "Editing" },
+    { "type": "runState", "sessionId": "s-pane", "state": "tool", "label": "Waiting for approval" },
+    { "type": "runState", "sessionId": "s-refactor", "state": "thinking", "label": "Planning" },
+    { "type": "runState", "sessionId": "s-drag", "state": "thinking", "label": "Thinking" },
+    { "type": "runState", "sessionId": "s-conveyor", "state": "tool", "label": "Reading" },
+    {
+      "type": "timelineState",
+      "sessionId": "s-acp",
+      "subagents": {},
+      "timeline": [
+        { "id": "u1", "kind": "message", "role": "user", "text": "ACP init hangs ~30s on cold start. Find out why." },
+        { "id": "a1", "kind": "message", "role": "assistant", "text": "The client sends initialize before the stdio transport is attached, so the first request is dropped and only the 30s retry recovers it." },
+        { "id": "t1", "kind": "tool", "event": { "id": "t1", "kind": "read", "title": "Read", "detail": "src/runtime/acp.ts", "state": "complete" } },
+        { "id": "t2", "kind": "tool", "event": { "id": "t2", "kind": "search", "title": "Searched", "detail": "\"initialize\" · 4 hits", "state": "complete" } },
+        { "id": "t3", "kind": "tool", "event": { "id": "t3", "kind": "other", "title": "Editing", "detail": "src/runtime/acp.ts", "state": "running" } }
+      ]
+    },
+    {
+      "type": "timelineState",
+      "sessionId": "s-pane",
+      "subagents": {},
+      "timeline": [
+        { "id": "u1", "kind": "message", "role": "user", "text": "Persist the layout preset per window." },
+        { "id": "a1", "kind": "message", "role": "assistant", "text": "I'll keep it next to the window bounds in the store and add a test for restoring it." },
+        { "id": "t1", "kind": "tool", "event": { "id": "t1", "kind": "read", "title": "Read", "detail": "src/ui/layout/store.ts", "state": "complete" } },
+        { "id": "t2", "kind": "tool", "event": { "id": "t2", "kind": "other", "title": "Edited", "detail": "src/ui/layout/store.ts", "state": "complete" } },
+        { "id": "approval:p1", "kind": "approval", "title": "Wants to run a command", "detail": "npm test -- layout", "status": "pending" }
+      ]
+    },
+    {
+      "type": "timelineState",
+      "sessionId": "s-refactor",
+      "subagents": {},
+      "timeline": [
+        { "id": "u1", "kind": "message", "role": "user", "text": "Move sidebar state into one store." },
+        { "id": "t1", "kind": "tool", "event": { "id": "t1", "kind": "read", "title": "Read", "detail": "src/ui/sidebar/view.ts", "state": "complete" } },
+        { "id": "t2", "kind": "tool", "event": { "id": "t2", "kind": "other", "title": "Edited", "detail": "3 files", "state": "complete" } },
+        { "id": "a1", "kind": "message", "role": "assistant", "text": "Sidebar state now lives in sidebarStore. The view only subscribes, and the old per-panel flags are gone." }
+      ]
+    },
+    {
+      "type": "timelineState",
+      "sessionId": "s-hub",
+      "subagents": {},
+      "timeline": [
+        { "id": "u1", "kind": "message", "role": "user", "text": "Rank Hub results by installs, then name." },
+        { "id": "t1", "kind": "tool", "event": { "id": "t1", "kind": "read", "title": "Read", "detail": "src/hub/search.ts", "state": "complete" } },
+        { "id": "t2", "kind": "tool", "event": { "id": "t2", "kind": "search", "title": "Searched", "detail": "\"score\" · 6 hits", "state": "complete" } },
+        { "id": "a1", "kind": "message", "role": "assistant", "text": "Done. Exact name matches still come first; everything else sorts by installs, with name as the tie-break." }
+      ]
+    }
+  ]
+}

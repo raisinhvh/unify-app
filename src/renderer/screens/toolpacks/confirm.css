@@ -1,0 +1,29 @@
+.confirm-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 8px 8px 8px 12px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-menu);
+}
+
+.confirm-message {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.confirm-bar .confirm-danger {
+  height: 28px;
+  color: var(--del);
+  border-color: color-mix(in srgb, var(--del) 45%, var(--border));
+}
+
+.confirm-bar .confirm-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--del) 12%, transparent);
+}

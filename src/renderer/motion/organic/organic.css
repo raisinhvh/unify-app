@@ -1,0 +1,187 @@
+/* Organic (human-like) motion primitives. Colours only through theme variables. */
+
+/* ---------- Retype text ---------- */
+
+.organic-retype {
+  position: relative;
+}
+
+/* While animating, the box springs its width so neighbours glide instead of jumping a character at a time.
+   Overflow stays visible so the baseline is the text's baseline (inline-block + overflow hidden would shift it). */
+.organic-retype[data-animating] {
+  display: inline-block;
+  white-space: pre;
+}
+
+.organic-retype-text {
+  position: relative;
+}
+
+/* Trailing spaces stay visible mid-typing (the caret sits after them). */
+.organic-retype[data-animating] .organic-retype-text {
+  display: inline-block;
+  white-space: pre;
+}
+
+.organic-retype-ghost {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: pre;
+  pointer-events: none;
+}
+
+/* Select-all highlight that sweeps over a deleted name. */
+.organic-retype-sweep {
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  transform-origin: left center;
+  transform: scaleX(0);
+  pointer-events: none;
+}
+
+.organic-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- Caret ---------- */
+
+.organic-caret {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  vertical-align: -0.14em;
+}
+
+.organic-caret-placed {
+  position: absolute;
+  top: 50%;
+  margin-top: -0.6em;
+  height: 1.2em;
+  vertical-align: baseline;
+}
+
+.organic-caret-bar {
+  position: absolute;
+  left: 0;
+  top: -0.06em;
+  bottom: -0.06em;
+  width: 1.5px;
+  border-radius: 1px;
+}
+
+/* ---------- Rolling number ---------- */
+
+.organic-number {
+  display: inline-flex;
+  align-items: baseline;
+  white-space: pre;
+  font-variant-numeric: tabular-nums;
+}
+
+.organic-number-column {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  /* Room for ascenders/descenders while the strip rolls; the strip cells use the same height. */
+  height: 1.25em;
+  line-height: 1.25em;
+  vertical-align: bottom;
+}
+
+.organic-number-sizer {
+  visibility: hidden;
+}
+
+.organic-number-strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.organic-number-strip > span {
+  display: block;
+  height: 1.25em;
+  line-height: 1.25em;
+}
+
+.organic-number-symbol {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  text-align: center;
+}
+
+/* ---------- Lift (moved rows) ---------- */
+
+.organic-lifted {
+  position: relative;
+  z-index: 2;
+  border-radius: var(--radius-row);
+  background: color-mix(in srgb, var(--hover) calc(var(--organic-lift, 0) * 100%), transparent);
+}
+
+.organic-lifted::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: var(--shadow-pop);
+  opacity: calc(var(--organic-lift, 0) * 0.55);
+  pointer-events: none;
+}
+
+/* ---------- Code edits ---------- */
+
+.organic-line {
+  position: relative;
+  /* Blank lines keep their height. */
+  min-height: 1lh;
+}
+
+.organic-line-text {
+  display: inline-block;
+  position: relative;
+  white-space: pre;
+}
+
+.organic-line-sweep {
+  position: absolute;
+  inset: 0;
+  background: var(--del-tint);
+  transform-origin: left center;
+  transform: scaleX(0);
+  pointer-events: none;
+}
+
+.organic-line-tint {
+  position: absolute;
+  inset: 0;
+  background: var(--add-tint);
+  pointer-events: none;
+}
+
+.organic-line-caret-track {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}

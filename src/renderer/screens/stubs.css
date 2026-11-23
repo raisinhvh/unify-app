@@ -1,0 +1,16 @@
+.stub-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 32px;
+}
+
+.stub-screen h2 {
+  margin: 0;
+  color: var(--text);
+}
+
+.stub-screen p {
+  margin: 0;
+  color: var(--text3);
+}

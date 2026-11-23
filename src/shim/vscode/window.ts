@@ -1,0 +1,239 @@
+/** window, commands, env, status bar and dialog surface. */
+import { join } from 'node:path';
+import { Disposable, EventEmitter } from './events';
+import { appendLog, nativeUi, outputChannel, onDidChangeWindowState, postToRenderer, registerWebviewViewProvider, requestUi, showDesktopNotification } from './host';
+import { Position, Range, Selection, Uri } from './uri';
+import { createTextEditor, getTextDocument, onDidSaveTextDocument, openTextDocument, TextDocument, workspace } from './workspace';
+import { settingsSnapshot, shimPaths } from './state';
+
+export enum StatusBarAlignment { Left = 1, Right = 2 }
+export enum ProgressLocation { SourceControl = 1, Window = 10, Notification = 15 }
+export enum ConfigurationTarget { Global = 1, Workspace = 2, WorkspaceFolder = 3 }
+export enum TextEditorRevealType { Default = 0, InCenter = 1, InCenterIfOutsideViewport = 2, AtTop = 3 }
+export enum ViewColumn { Active = -1, Beside = -2, One = 1, Two = 2, Three = 3 }
+
+export class TabInputText {
+  public constructor(public readonly uri: Uri) {}
+}
+
+interface StatusBarItem extends Disposable {
+  text: string;
+  tooltip?: string;
+  command?: string;
+  color?: string;
+  backgroundColor?: string;
+  show(): void;
+  hide(): void;
+}
+
+function itemFromArguments(args: unknown[]): { text: string; options: Record<string, unknown>; buttons: string[] } {
+  const options = args.length && typeof args[0] === 'object' && args[0] !== null ? args[0] as Record<string, unknown> : {};
+  const buttons = args.filter((value): value is string => typeof value === 'string');
+  return { text: typeof args[0] === 'string' ? args[0] : String(options.message ?? ''), options, buttons };
+}
+
+async function showMessage(level: 'info' | 'warning' | 'error', ...args: unknown[]): Promise<string | undefined> {
+  const { text, options, buttons } = itemFromArguments(args);
+  const detail = typeof options.detail === 'string' ? options.detail : undefined;
+  const request = await requestUi({ kind: 'message', level, message: text, detail, items: buttons });
+  if (request?.choice !== undefined) return request.choice;
+  const ui = nativeUi();
+  if (ui) return ui.showMessage(level, text, detail, buttons, !!options.modal);
+  appendLog(`${level}: ${text}${detail ? `\n${detail}` : ''}`);
+  return undefined;
+}
+
+function convertPicked<T>(picked: unknown, items: T[]): T | T[] | undefined {
+  if (Array.isArray(picked)) {
+    const chosen = picked as unknown[];
+    return items.filter(item => chosen.includes(item) || chosen.includes((item as { label?: string })?.label ?? item));
+  }
+  if (typeof picked === 'string') {
+    const match = items.find(item => {
+      const label = typeof item === 'string' ? item : (item as { label?: string })?.label;
+      return label === picked;
+    });
+    return (match ?? picked) as T;
+  }
+  return picked as T;
+}
+
+export const window = {
+  get activeTextEditor(): undefined { return undefined; },
+  get visibleTextEditors(): unknown[] { return []; },
+  get tabGroups(): { all: unknown[] } { return { all: [] }; },
+
+  showInformationMessage: (message: string, ...args: unknown[]) => showMessage('info', message, ...args),
+  showWarningMessage: (message: string, ...args: unknown[]) => showMessage('warning', message, ...args),
+  showErrorMessage: (message: string, ...args: unknown[]) => showMessage('error', message, ...args),
+
+  async showInputBox(options: Record<string, unknown> = {}): Promise<string | undefined> {
+    const answer = await requestUi({ kind: 'input', options });
+    if (answer?.value !== undefined) return answer.value;
+    return nativeUi()?.showInput(options);
+  },
+
+  async showQuickPick(itemsOrThenable: unknown, options: Record<string, unknown> = {}): Promise<unknown> {
+    const all = await Promise.resolve(itemsOrThenable as unknown[]);
+    const items = Array.isArray(all) ? all : [];
+    const labels = items.map(item => typeof item === 'string' ? item : String((item as { label?: unknown })?.label ?? ''));
+    const answer = await requestUi({ kind: 'quickPick', items: labels, options });
+    if (answer) return convertPicked(answer.choice, items);
+    return nativeUi()?.showQuickPick(items, options);
+  },
+
+  async showOpenDialog(options: Record<string, unknown> = {}): Promise<Uri[] | undefined> {
+    const answer = await requestUi({ kind: 'openDialog', options });
+    if (answer?.paths?.length) return answer.paths.map(path => Uri.file(path));
+    return nativeUi()?.showOpenDialog(options);
+  },
+
+  async showSaveDialog(): Promise<Uri | undefined> { return undefined; },
+
+  async showTextDocument(documentOrUri: TextDocument | Uri, _options?: unknown) {
+    const document = documentOrUri instanceof TextDocument
+      ? documentOrUri
+      : await openTextDocument(documentOrUri);
+    return createTextEditor(document);
+  },
+
+  async withProgress(_options: unknown, task: (progress: { report(value: unknown): void }, token: { isCancellationRequested: boolean; onCancellationRequested(): Disposable }) => PromiseLike<unknown> | unknown): Promise<unknown> {
+    const token = { isCancellationRequested: false, onCancellationRequested: () => new Disposable(() => undefined) };
+    return task({ report: () => undefined }, token);
+  },
+
+  createOutputChannel(name: string) {
+    return outputChannel(name);
+  },
+
+  createStatusBarItem(alignment?: StatusBarAlignment, priority?: number): StatusBarItem {
+    let visible = false;
+    return {
+      text: '',
+      tooltip: '',
+      command: '',
+      alignment,
+      priority,
+      show() { visible = true; },
+      hide() { visible = false; },
+      dispose() { visible = false; },
+      get visible() { return visible; },
+    } as StatusBarItem;
+  },
+
+  createTerminal(options: { name?: string; cwd?: string } = {}) {
+    const ui = nativeUi();
+    if (ui) return ui.createTerminal(options);
+    return { name: options.name ?? 'Terminal', show() { /* No terminal adapter. */ }, sendText() { /* No terminal adapter. */ }, dispose() { /* Nothing to dispose. */ } };
+  },
+
+  registerWebviewViewProvider(viewType: string, provider: { resolveWebviewView(view: unknown): void | PromiseLike<void> }, options?: unknown): Disposable {
+    return registerWebviewViewProvider(viewType, provider as never, options);
+  },
+
+  onDidChangeWindowState,
+
+  onDidChangeActiveTextEditor: new EventEmitter<unknown>().event,
+  onDidChangeVisibleTextEditors: new EventEmitter<unknown[]>().event,
+  onDidChangeTextEditorSelection: new EventEmitter<unknown>().event,
+  onDidCloseTerminal: new EventEmitter<unknown>().event,
+};
+
+export const env = {
+  get appName(): string { return 'Unify'; },
+  get appRoot(): string { return shimPaths().extensionPath; },
+  get language(): string { return 'en'; },
+  get machineId(): string { return 'unify-desktop'; },
+  get sessionId(): string { return `unify-${process.pid}`; },
+  get isNewAppInstall(): boolean { return true; },
+  get uiKind(): number { return 1; },
+  async openExternal(target: Uri | string): Promise<boolean> {
+    const uri = typeof target === 'string' ? Uri.parse(target) : target;
+    if (uri.scheme === 'file' && uri.fsPath.endsWith('settings.json')) {
+      // The customization pages write settings.json; opening it locally is the
+      // closest native equivalent of VS Code's settings editor.
+    }
+    const ui = nativeUi();
+    if (ui) return ui.openExternal(uri);
+    return false;
+  },
+  async asExternalUri(uri: Uri): Promise<Uri> { return uri; },
+  /**
+   * Native OS notification, the desktop counterpart of VS Code's
+   * `ProgressLocation.Notification` messages. Engine code calls this directly;
+   * the setting `notifications.desktop` is checked by the caller.
+   */
+  notify(title: string, body?: string): void {
+    showDesktopNotification(title, body);
+  },
+};
+
+const commands = new Map<string, (...args: unknown[]) => unknown>();
+
+export const commandRegistry = {
+  execute(name: string, ...args: unknown[]): Promise<unknown> {
+    const handler = commands.get(name);
+    if (handler) {
+      try { return Promise.resolve(handler(...args)); }
+      catch (error) { return Promise.reject(error); }
+    }
+    return executeBuiltin(name, args);
+  },
+};
+
+async function executeBuiltin(name: string, args: unknown[]): Promise<unknown> {
+  if (name === 'vscode.open' && args[0] instanceof Uri) {
+    await env.openExternal(args[0]);
+    return undefined;
+  }
+  if (name === 'vscode.diff' || name === 'vscode.changes') {
+    // The renderer's editor screen will take these later; the engine treats
+    // a missing command as a handled no-op.
+    return undefined;
+  }
+  if (name === 'workbench.action.openSettings') {
+    const target = typeof args[0] === 'string' ? args[0] : '';
+    postToRenderer({ type: 'uiNotice', kind: 'settings', key: target });
+    return undefined;
+  }
+  if (name === 'workbench.view.extension.dsh') {
+    postToRenderer({ type: 'uiNotice', kind: 'showSidebar' });
+    return undefined;
+  }
+  return undefined;
+}
+
+export const commandsApi = {
+  registerCommand(name: string, callback: (...args: unknown[]) => unknown, thisArg?: unknown): Disposable {
+    commands.set(name, thisArg ? callback.bind(thisArg) : callback);
+    return new Disposable(() => {
+      if (commands.get(name) === callback) commands.delete(name);
+    });
+  },
+  executeCommand: commandRegistry.execute,
+  getCommands(): Promise<string[]> { return Promise.resolve([...commands.keys()]); },
+};
+
+export const languages = {
+  getDiagnostics(_uri?: Uri): unknown[] { return []; },
+  createDiagnosticCollection() {
+    return { set() { /* Diagnostics are not read from the shell. */ }, delete() { /* No-op. */ }, clear() { /* No-op. */ }, dispose() { /* No-op. */ } };
+  },
+};
+
+export const authentication = {
+  async getSession(): Promise<undefined> {
+    // GitHub sync needs VS Code's auth provider. Unify reports it as
+    // unavailable rather than hanging the sync controller.
+    return undefined;
+  },
+  onDidChangeSessions: new EventEmitter<unknown>().event,
+};
+
+export function registerCommand(name: string, callback: (...args: unknown[]) => unknown): Disposable {
+  return commandsApi.registerCommand(name, callback);
+}
+
+export function executeCommand(name: string, ...args: unknown[]): Promise<unknown> {
+  return commandRegistry.execute(name, ...args);
+}

@@ -1,0 +1,46 @@
+/* DEV ONLY: frame for preview.html (Providers). Mirrors the Shell's rail | panel slot | content card. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+.pv-preview-frame {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+
+.pv-preview-slot {
+  position: relative;
+  flex: none;
+  width: var(--panel-width);
+  height: 100%;
+  overflow: hidden;
+}
+
+.pv-preview-content {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.pv-preview-card {
+  position: absolute;
+  inset: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pane);
+}
+
+.pv-preview-card > .providers-main {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}

@@ -1,0 +1,71 @@
+appId: dev.unify.app
+productName: Unify
+copyright: Copyright © 2026 raisinhvh
+asar: false
+npmRebuild: false
+
+directories:
+  output: release
+  buildResources: build
+
+# The engine spawns dist/toolpack-worker.js and dist/delegate-server.js and
+# reads media/ from the app folder, so the app is not packed into an asar.
+files:
+  - dist/**/*
+  - media/**/*
+  - package.json
+  - "!src/**/*"
+  - "!test/**/*"
+  - "!scripts/**/*"
+  - "!release/**/*"
+  - "!.shots/**/*"
+  - "!.git/**/*"
+
+win:
+  target:
+    - nsis
+    - portable
+  icon: build/icon.png
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  # Unify ships unsigned. To sign, set signAndEditExecutable back to true and
+  # provide a certificate (or the CSC_LINK / CSC_KEY_PASSWORD env vars):
+  #   certificateFile: build/certificate.pfx
+  #   certificatePassword: ${env.CSC_KEY_PASSWORD}
+  # electron-builder's own executable editing downloads winCodeSign, whose
+  # archive carries macOS symlinks that cannot be unpacked without Windows
+  # Developer Mode. scripts/after-pack.js applies the icon and version
+  # strings with rcedit instead.
+  signAndEditExecutable: false
+
+afterPack: scripts/after-pack.js
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Unify
+  uninstallDisplayName: Unify
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
+
+mac:
+  target:
+    - dmg
+  category: public.app-category.developer-tools
+  icon: build/icon.png
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+linux:
+  target:
+    - AppImage
+  category: Development
+  icon: build/icon.png
+  artifactName: ${productName}-${version}-${arch}.${ext}

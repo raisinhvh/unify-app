@@ -1,0 +1,112 @@
+.usage-meter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 40px;
+  padding: 6px 0;
+  border-radius: 10px;
+  transition: background-color 120ms ease;
+}
+
+.usage-meter:hover {
+  background: var(--hover);
+}
+
+.usage-bar {
+  display: flex;
+  overflow: hidden;
+  background: var(--border);
+}
+
+.usage-bar-slim {
+  width: 20px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.usage-bar-wide {
+  height: 6px;
+  border-radius: 3px;
+  margin: 4px 8px 8px;
+}
+
+.usage-segment {
+  height: 100%;
+  flex: none;
+}
+
+.usage-percent {
+  color: var(--text2);
+}
+
+.popover.usage-popover {
+  width: 300px;
+  padding: 8px 4px;
+}
+
+.usage-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 4px;
+}
+
+.usage-combined {
+  flex: 1;
+  color: var(--text2);
+}
+
+.usage-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.usage-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-row);
+}
+
+.usage-row:hover {
+  background: var(--hover);
+}
+
+.usage-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.usage-account {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.usage-name,
+.usage-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-detail {
+  color: var(--text3);
+}
+
+.usage-values {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.usage-empty,
+.usage-missing {
+  padding: 6px 8px;
+  color: var(--text3);
+}

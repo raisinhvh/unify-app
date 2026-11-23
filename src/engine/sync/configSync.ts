@@ -1,0 +1,582 @@
+import { createHash } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
+import { conflictName } from '../runtime/memory';
+
+/** `dsh.*` settings that travel with the config, read from and written to user settings only. */
+export const SYNCED_SETTINGS = [
+  'models', 'subagents', 'nameModel', 'reviewModel', 'summaryModel', 'deciderModel', 'explorerModel', 'smartAutoRanks', 'mcpServers', 'accessibility',
+  'checkpointHint', 'keepAliveMax', 'experimental.autoCompact', 'experimental.autoCompactTokens', 'experimental.batching', 'experimental.trimTools',
+  'features.activityRail', 'features.autoName', 'features.shareRules', 'features.editorContext', 'features.reduceMotion', 'features.reviewAgent', 'features.fileSummaries',
+  'features.smartAuto', 'features.voice', 'voice.commands',
+  'updates.check', 'updates.repository', 'runtime.mirror', 'runtime.maxWorkspaceFiles', 'runtime.maxWorkspaceBytes',
+] as const;
+
+/** `dsh.*` settings that stay on each PC because they hold paths to programs installed on it. */
+export const LOCAL_SETTINGS = ['runtime.nodePath', 'runtime.cursorAgentPath', 'runtime.claudePath', 'runtime.gitPath', 'runtime.processPriority', 'runtime.powershellSpeedups', 'runtime.rustTools', 'memory.enabled'] as const;
+
+export const GIST_FILE = 'dsh-config.json';
+export const GIST_DESCRIPTION = 'DSH-IDE config (synced by DSH-IDE; API keys and MCP secrets are not included)';
+
+/** `memory` is the global memory folder on this PC, when one is set. */
+export interface SyncRoots { dshHome: string; agentsHome: string; toolpacks: string; memory?: string }
+export interface SyncFile { data: string; encoding?: 'base64' }
+export interface ConfigBundle {
+  format: 'dsh-config';
+  version: 1;
+  settings: Record<string, unknown>;
+  /** Keyed by `dsh/AGENTS.md`, `dsh/skills/...`, `agents/skills/...` or `memory/...`. */
+  files: Record<string, SyncFile>;
+  toolpacks: Record<string, ToolpackBundle>;
+}
+/** `settings` holds the pack's declared dataDir JSON files by name, without their secret keys. */
+export interface ToolpackBundle { enabled: boolean; source: string; settings?: Record<string, Record<string, unknown>> }
+export interface AccountRef { id: string; provider: string; label: string }
+
+const MAX_FILE_BYTES = 1024 * 1024;
+const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+const MAX_FILES = 2000;
+const MAX_DEPTH = 8;
+/** Memory is notes, scripts and images, so it may be larger and deeper than rules and skills. */
+const MAX_MEMORY_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_MEMORY_BYTES = 50 * 1024 * 1024;
+const MAX_MEMORY_FILES = 5000;
+const MAX_MEMORY_DEPTH = 16;
+const SKIPPED_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.venv', 'venv', '__pycache__']);
+const PACK_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+/** Same rule as TOOLPACK_SYNC_FILE: a plain .json name directly in the pack's data folder. */
+const SETTINGS_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.json$/;
+const MAX_SETTINGS_BYTES = 256 * 1024;
+/** Values under keys like these never leave the PC, whether or not the pack lists them. */
+const SECRET_KEY = /key|token|secret|password|passwd|credential|auth|cookie|session/i;
+
+/** JSON with sorted keys and without undefined members, so equal configs hash equally. */
+export function stableJson(value: unknown): string {
+  const sort = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(entry => entry === undefined ? null : sort(entry));
+    if (!item || typeof item !== 'object') return item;
+    return Object.fromEntries(Object.keys(item).sort().filter(key => (item as Record<string, unknown>)[key] !== undefined)
+      .map(key => [key, sort((item as Record<string, unknown>)[key])]));
+  };
+  return JSON.stringify(sort(value));
+}
+
+export function hashBundle(bundle: ConfigBundle): string {
+  return createHash('sha256').update(stableJson(bundle)).digest('hex');
+}
+
+export function serializeBundle(bundle: ConfigBundle): string {
+  return JSON.stringify(JSON.parse(stableJson(bundle)), null, 2) + '\n';
+}
+
+export function parseBundle(text: string): ConfigBundle {
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { throw new Error('The GitHub config is not valid JSON.'); }
+  return validateBundle(value);
+}
+
+export function validateBundle(value: unknown): ConfigBundle {
+  const bundle = value as Partial<ConfigBundle> | null;
+  if (!bundle || bundle.format !== 'dsh-config') throw new Error('The GitHub config is not a DSH config.');
+  if (bundle.version !== 1) throw new Error(`The GitHub config uses version ${String(bundle.version)}; update DSH-IDE to read it.`);
+  const record = (item: unknown): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item);
+  if (!record(bundle.settings) || !record(bundle.files) || !record(bundle.toolpacks)) throw new Error('The GitHub config is incomplete.');
+  for (const [path, file] of Object.entries(bundle.files)) {
+    if (!record(file) || typeof file.data !== 'string' || (file.encoding !== undefined && file.encoding !== 'base64')) throw new Error(`The GitHub config has an invalid file: ${path}`);
+    syncPath({ dshHome: '/d', agentsHome: '/a', toolpacks: '/t', memory: '/m' }, path);
+  }
+  for (const [id, pack] of Object.entries(bundle.toolpacks)) {
+    if (!PACK_ID.test(id) || !record(pack) || typeof pack.source !== 'string' || typeof pack.enabled !== 'boolean') throw new Error(`The GitHub config has an invalid toolpack: ${id}`);
+    if (pack.settings !== undefined && (!record(pack.settings) || Object.entries(pack.settings).some(([file, value]) => !SETTINGS_FILE.test(file) || !record(value)))) {
+      throw new Error(`The GitHub config has invalid settings for toolpack: ${id}`);
+    }
+  }
+  return bundle as ConfigBundle;
+}
+
+/**
+ * Three-way merge of two configs that both changed since `base`, the GitHub copy as of the last sync. Each setting,
+ * file and toolpack is taken from whichever side changed it. Items both sides changed differently are conflicts and
+ * come from `prefer`.
+ */
+export function mergeBundles(base: ConfigBundle, local: ConfigBundle, remote: ConfigBundle, prefer: 'local' | 'remote' = 'remote'): { bundle: ConfigBundle; conflicts: string[] } {
+  const conflicts: string[] = [];
+  const noteConflicts: string[] = [];
+  // A memory note both PCs changed is not a conflict to settle: the GitHub version stays and this PC's is kept beside it.
+  const keepBothNotes = (files: Record<string, SyncFile>): Record<string, SyncFile> => {
+    for (const key of noteConflicts) if (Object.hasOwn(local.files, key)) files[conflictName(key)] = local.files[key];
+    for (const key of noteConflicts) if (Object.hasOwn(remote.files, key)) files[key] = remote.files[key]; else delete files[key];
+    return files;
+  };
+  const merge = <T>(label: (key: string) => string, b: Record<string, T>, l: Record<string, T>, r: Record<string, T>, notes = false): Record<string, T> => {
+    const merged: Record<string, T> = {};
+    for (const key of [...new Set([...Object.keys(b), ...Object.keys(l), ...Object.keys(r)])].sort()) {
+      const [was, mine, theirs] = [b, l, r].map(side => Object.hasOwn(side, key) ? stableJson(side[key]) : undefined);
+      let pick = was === theirs && mine !== theirs ? l : r;
+      if (was !== mine && was !== theirs && mine !== theirs) {
+        if (notes && key.startsWith('memory/')) { noteConflicts.push(key); continue; }
+        conflicts.push(label(key)); pick = prefer === 'local' ? l : r;
+      }
+      if (Object.hasOwn(pick, key)) merged[key] = pick[key];
+    }
+    return merged;
+  };
+  return {
+    bundle: {
+      format: 'dsh-config', version: 1,
+      settings: merge(key => `setting dsh.${key}`, base.settings, local.settings, remote.settings),
+      files: keepBothNotes(merge(key => key.replace(/^dsh\//, '~/.dsh/').replace(/^agents\//, '~/.agents/'), base.files, local.files, remote.files, true)),
+      toolpacks: merge(key => `toolpack ${key}`, base.toolpacks, local.toolpacks, remote.toolpacks),
+    },
+    conflicts,
+  };
+}
+
+/** Maps a bundle path to an absolute path, rejecting anything outside the synced locations. */
+export function syncPath(roots: SyncRoots, path: string): string {
+  const parts = path.split('/');
+  const bad = (): never => { throw new Error(`Refusing to sync unexpected path: ${path}`); };
+  if (parts[0] === 'memory') {
+    if (!roots.memory || parts.length < 2) bad();
+    for (const part of parts.slice(1)) if (!part || part.startsWith('.') || /[\\:*?"<>|\0]/.test(part)) bad();
+    const file = resolve(roots.memory!, ...parts.slice(1));
+    if (!file.startsWith(resolve(roots.memory!) + sep)) bad();
+    return file;
+  }
+  const root = parts[0] === 'dsh' ? roots.dshHome : parts[0] === 'agents' ? roots.agentsHome : bad();
+  const isRules = parts[0] === 'dsh' && parts.length === 2 && parts[1] === 'AGENTS.md';
+  if (!isRules && (parts[1] !== 'skills' || parts.length < 4)) bad();
+  for (const part of parts.slice(1)) {
+    if (!part || part.startsWith('.') || SKIPPED_DIRS.has(part) || /[\\:*?"<>|\0]/.test(part)) bad();
+  }
+  const file = resolve(root, ...parts.slice(1));
+  if (!file.startsWith(resolve(root) + sep)) bad();
+  return file;
+}
+
+export function encode(buffer: Buffer): SyncFile {
+  const text = buffer.toString('utf8');
+  return Buffer.from(text, 'utf8').equals(buffer) ? { data: text } : { data: buffer.toString('base64'), encoding: 'base64' };
+}
+
+export const decode = (file: SyncFile): Buffer => file.encoding === 'base64' ? Buffer.from(file.data, 'base64') : Buffer.from(file.data, 'utf8');
+
+/** Global rules and skills on this PC, keyed like `ConfigBundle.files`. */
+export async function collectFiles(roots: SyncRoots): Promise<Record<string, SyncFile>> {
+  const files: Record<string, SyncFile> = {};
+  let count = 0;
+  let bytes = 0;
+  const add = async (path: string, file: string): Promise<void> => {
+    const buffer = await fs.readFile(file);
+    if (buffer.length > MAX_FILE_BYTES) throw new Error(`${path} is larger than 1 MB, so it cannot be synced.`);
+    bytes += buffer.length;
+    if (++count > MAX_FILES || bytes > MAX_TOTAL_BYTES) throw new Error('Rules and skills are too large to sync (limit 2000 files or 20 MB).');
+    files[path] = encode(buffer);
+  };
+  const walk = async (directory: string, path: string, depth: number): Promise<void> => {
+    let entries;
+    try { entries = await fs.readdir(directory, { withFileTypes: true }); }
+    catch { return; }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.isSymbolicLink() || entry.name.startsWith('.') || SKIPPED_DIRS.has(entry.name) || /[\\:*?"<>|]/.test(entry.name)) continue;
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) { if (depth < MAX_DEPTH) await walk(full, `${path}/${entry.name}`, depth + 1); }
+      else if (entry.isFile() && depth > 0) await add(`${path}/${entry.name}`, full);
+    }
+  };
+  try {
+    if ((await fs.lstat(join(roots.dshHome, 'AGENTS.md'))).isFile()) await add('dsh/AGENTS.md', join(roots.dshHome, 'AGENTS.md'));
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  await walk(join(roots.dshHome, 'skills'), 'dsh/skills', 0);
+  await walk(join(roots.agentsHome, 'skills'), 'agents/skills', 0);
+  if (roots.memory) Object.assign(files, await collectMemory(roots.memory));
+  return files;
+}
+
+/** The global memory folder, keyed `memory/<path>`. Hidden entries (.obsidian, .trash, .git) and symlinks are left out. */
+async function collectMemory(root: string): Promise<Record<string, SyncFile>> {
+  const files: Record<string, SyncFile> = {};
+  let count = 0;
+  let bytes = 0;
+  const walk = async (directory: string, path: string, depth: number): Promise<void> => {
+    let entries;
+    try { entries = await fs.readdir(directory, { withFileTypes: true }); }
+    catch { return; }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.isSymbolicLink() || entry.name.startsWith('.') || entry.name === 'node_modules' || /[\\:*?"<>|]/.test(entry.name)) continue;
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) { if (depth < MAX_MEMORY_DEPTH) await walk(full, `${path}/${entry.name}`, depth + 1); continue; }
+      if (!entry.isFile()) continue;
+      const buffer = await fs.readFile(full);
+      if (buffer.length > MAX_MEMORY_FILE_BYTES) throw new Error(`Memory file ${path.slice('memory/'.length)}/${entry.name} is larger than 10 MB, so it cannot be synced.`);
+      bytes += buffer.length;
+      if (++count > MAX_MEMORY_FILES || bytes > MAX_MEMORY_BYTES) throw new Error('Global memory is too large to sync (limit 5000 files or 50 MB).');
+      files[`${path}/${entry.name}`] = encode(buffer);
+    }
+  };
+  await walk(root, 'memory', 0);
+  return files;
+}
+
+/** Makes this PC's global rules and skills match `files`: writes changed files and deletes ones the bundle lacks. */
+export async function applyFiles(roots: SyncRoots, files: Record<string, SyncFile>): Promise<void> {
+  const targets = Object.keys(files).map(path => [path, syncPath(roots, path)] as const);
+  const local = await collectFiles(roots);
+  for (const path of Object.keys(local)) {
+    if (Object.hasOwn(files, path)) continue;
+    const file = syncPath(roots, path);
+    await fs.rm(file, { force: true });
+    // Prune folders the deletion emptied, stopping at the skills or memory root.
+    const stop = path.startsWith('memory/') ? resolve(roots.memory!) : resolve(path.startsWith('dsh/') ? roots.dshHome : roots.agentsHome, 'skills');
+    for (let folder = dirname(file); folder.startsWith(stop + sep); folder = dirname(folder)) {
+      try { await fs.rmdir(folder); } catch { break; }
+    }
+  }
+  for (const [path, file] of targets) {
+    const data = decode(files[path]);
+    if (local[path] && decode(local[path]).equals(data)) continue;
+    await fs.mkdir(dirname(file), { recursive: true });
+    await fs.writeFile(file, data);
+  }
+}
+
+interface PackSync { files: string[]; secrets: Set<string> }
+
+/** The settings files a pack declared (recorded in meta.json by the registry). */
+async function packSync(dir: string, id: string): Promise<{ enabled: boolean; sync?: PackSync }> {
+  let meta: { enabled?: unknown; sync?: { files?: unknown; secrets?: unknown } } = {};
+  try { meta = JSON.parse(await fs.readFile(join(dir, id, 'meta.json'), 'utf8')); }
+  catch { /* missing meta means enabled, as in the registry */ }
+  const names = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  const files = names(meta.sync?.files).filter(file => SETTINGS_FILE.test(file));
+  return { enabled: meta.enabled !== false, ...(files.length ? { sync: { files, secrets: new Set(names(meta.sync?.secrets)) } } : {}) };
+}
+
+const isSecret = (sync: PackSync, key: string): boolean => sync.secrets.has(key) || SECRET_KEY.test(key);
+
+async function readSettings(file: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    const text = await fs.readFile(file, 'utf8');
+    if (Buffer.byteLength(text) > MAX_SETTINGS_BYTES) return undefined;
+    const value = JSON.parse(text) as unknown;
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  } catch { return undefined; }
+}
+
+/** Uploaded toolpack sources, their on/off state and declared settings. Other `data` files stay local. */
+export async function collectToolpacks(dir: string): Promise<ConfigBundle['toolpacks']> {
+  const packs: ConfigBundle['toolpacks'] = {};
+  let entries;
+  try { entries = await fs.readdir(dir, { withFileTypes: true }); }
+  catch { return packs; }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.') || !PACK_ID.test(entry.name)) continue;
+    try {
+      const source = await fs.readFile(join(dir, entry.name, 'pack.ts'), 'utf8');
+      const { enabled, sync } = await packSync(dir, entry.name);
+      const settings: Record<string, Record<string, unknown>> = {};
+      for (const file of sync?.files ?? []) {
+        const value = await readSettings(join(dir, entry.name, 'data', file));
+        // Secrets are left out rather than blanked, so PCs holding different secrets still hash the same.
+        if (value) settings[file] = Object.fromEntries(Object.entries(value).filter(([key]) => !isSecret(sync!, key)));
+      }
+      packs[entry.name] = { enabled, source, ...(Object.keys(settings).length ? { settings } : {}) };
+    } catch { /* not a complete toolpack */ }
+  }
+  return packs;
+}
+
+/**
+ * Writes a pack's synced settings files. Non-secret values come from the bundle; secret keys keep this
+ * PC's values (or stay unset). Only files the installed pack declares are written.
+ */
+export async function applyToolpackSettings(dir: string, id: string, settings: Record<string, Record<string, unknown>>): Promise<void> {
+  const { sync } = await packSync(dir, id);
+  if (!sync) return;
+  for (const file of sync.files) {
+    const remote = settings[file];
+    if (!remote) continue;
+    const path = join(dir, id, 'data', file);
+    const local = await readSettings(path) ?? {};
+    const next: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(remote)) if (!isSecret(sync, key)) next[key] = value;
+    for (const [key, value] of Object.entries(local)) if (isSecret(sync, key)) next[key] = value;
+    if (stableJson(next) === stableJson(local)) continue;
+    await fs.mkdir(dirname(path), { recursive: true });
+    await fs.writeFile(path, JSON.stringify(next, null, 2) + '\n');
+  }
+}
+
+type Pair = { name?: unknown; value?: unknown };
+const pairs = (value: unknown): Pair[] | undefined => Array.isArray(value) ? value.filter((item): item is Pair => !!item && typeof item === 'object') : undefined;
+
+/** Blanks MCP `env` and `headers` values, which commonly hold API keys. */
+export function stripMcpSecrets(servers: unknown): unknown {
+  if (!Array.isArray(servers)) return servers;
+  const blank = (value: unknown): unknown => {
+    const list = pairs(value);
+    if (list) return list.map(item => ({ ...item, value: '' }));
+    if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).map(key => [key, '']));
+    return value;
+  };
+  return servers.map(server => {
+    if (!server || typeof server !== 'object') return server;
+    const next = { ...(server as Record<string, unknown>) };
+    if (next.env !== undefined) next.env = blank(next.env);
+    if (next.headers !== undefined) next.headers = blank(next.headers);
+    return next;
+  });
+}
+
+/** Refills blanked MCP secrets from this PC's servers with the same name. */
+export function restoreMcpSecrets(remote: unknown, local: unknown): unknown {
+  if (!Array.isArray(remote)) return remote;
+  const locals = new Map((Array.isArray(local) ? local : []).filter(item => item && typeof item === 'object' && typeof item.name === 'string')
+    .map(item => [item.name as string, item as Record<string, unknown>]));
+  const fill = (value: unknown, previous: unknown): unknown => {
+    const list = pairs(value);
+    if (list) {
+      const old = new Map((pairs(previous) || []).map(item => [item.name, item.value]));
+      return list.map(item => item.value === '' && old.has(item.name) ? { ...item, value: old.get(item.name) } : item);
+    }
+    if (value && typeof value === 'object' && previous && typeof previous === 'object' && !Array.isArray(previous)) {
+      const old = previous as Record<string, unknown>;
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, item === '' && Object.hasOwn(old, key) ? old[key] : item]));
+    }
+    return value;
+  };
+  return remote.map(server => {
+    if (!server || typeof server !== 'object') return server;
+    const next = { ...(server as Record<string, unknown>) };
+    const previous = typeof next.name === 'string' ? locals.get(next.name) : undefined;
+    if (!previous) return next;
+    if (next.env !== undefined) next.env = fill(next.env, previous.env);
+    if (next.headers !== undefined) next.headers = fill(next.headers, previous.headers);
+    return next;
+  });
+}
+
+/**
+ * Account ids are per-PC, so models carry the account's label instead. A label this PC could not resolve
+ * is passed on unchanged, so a PC without that account never strips the binding from the others.
+ */
+export function portableModels(models: unknown, accounts: AccountRef[]): unknown {
+  if (!Array.isArray(models)) return models;
+  return models.map(model => {
+    if (!model || typeof model !== 'object') return model;
+    const { account, accountLabel, ...rest } = model as Record<string, unknown>;
+    const found = typeof account === 'string' && account !== 'default' ? accounts.find(item => item.id === account) : undefined;
+    const label = found?.label ?? (typeof accountLabel === 'string' && accountLabel ? accountLabel : undefined);
+    return label ? { ...rest, accountLabel: label } : model;
+  });
+}
+
+/**
+ * Resolves `accountLabel` to an account on this PC with the same provider and label, else the provider
+ * default. The label stays on the model so it can still be matched once that account is added here.
+ */
+export function localModels(models: unknown, accounts: AccountRef[]): unknown {
+  if (!Array.isArray(models)) return models;
+  return models.map(model => {
+    if (!model || typeof model !== 'object' || !('accountLabel' in model)) return model;
+    const { accountLabel, ...rest } = model as Record<string, unknown>;
+    const found = accounts.find(item => item.provider === rest.provider && item.label === accountLabel);
+    return { ...rest, account: found?.id || 'default', accountLabel };
+  });
+}
+
+/** Account lookups shared by API-key and OAuth registries. */
+export interface AccountSource<T extends { id: string; provider: string; label: string }> {
+  get(id: string): T | undefined;
+  list(): T[];
+  getDefault(provider: string): T | undefined;
+}
+
+/** The account a model uses: its own account, else one with its synced label, else the provider default. */
+export function accountForModel<T extends { id: string; provider: string; label: string }>(
+  accounts: AccountSource<T>, model: { provider: string; account?: string; accountLabel?: string },
+): T | undefined {
+  const bound = model.account && model.account !== 'default' ? model.account : undefined;
+  const byId = bound ? accounts.get(bound) : undefined;
+  if (byId) return byId;
+  const byLabel = model.accountLabel ? accounts.list().find(item => item.provider === model.provider && item.label === model.accountLabel) : undefined;
+  if (byLabel) return byLabel;
+  return bound ? undefined : accounts.getDefault(model.provider);
+}
+
+export interface GistInfo { id: string; url: string; updatedAt: string }
+type Fetch = typeof fetch;
+const API = 'https://api.github.com';
+
+async function github(token: string, path: string, init: RequestInit = {}, fetchImpl: Fetch = fetch): Promise<Response> {
+  return fetchImpl(`${API}${path}`, {
+    ...init,
+    headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${token}`, 'x-github-api-version': '2022-11-28', 'user-agent': 'dsh-ide', ...(init.body ? { 'content-type': 'application/json' } : {}) },
+    signal: AbortSignal.timeout(20_000),
+  });
+}
+
+async function failure(response: Response, action: string): Promise<Error> {
+  let detail = '';
+  try { detail = String(((await response.json()) as { message?: unknown }).message || ''); } catch { /* no body */ }
+  return new Error(`GitHub ${action} failed (HTTP ${response.status}${detail ? `: ${detail}` : ''}).`);
+}
+
+const info = (gist: Record<string, unknown>): GistInfo => ({ id: String(gist.id), url: String(gist.html_url), updatedAt: String(gist.updated_at) });
+
+/** Finds the signed-in user's DSH config gist, if one exists. */
+export async function findConfigGist(token: string, fetchImpl: Fetch = fetch): Promise<GistInfo | undefined> {
+  for (let page = 1; page <= 10; page++) {
+    const response = await github(token, `/gists?per_page=100&page=${page}`, {}, fetchImpl);
+    if (!response.ok) throw await failure(response, 'gist lookup');
+    const gists = await response.json() as Record<string, unknown>[];
+    const found = gists.find(gist => gist.files && typeof gist.files === 'object' && Object.hasOwn(gist.files, GIST_FILE)
+      && typeof gist.description === 'string' && gist.description.startsWith('DSH-IDE config'));
+    if (found) return info(found);
+    if (gists.length < 100) return undefined;
+  }
+  return undefined;
+}
+
+/** Reads the config from a gist. Returns undefined when the gist no longer exists. */
+export async function readConfigGist(token: string, id: string, fetchImpl: Fetch = fetch): Promise<{ gist: GistInfo; bundle: ConfigBundle } | undefined> {
+  const response = await github(token, `/gists/${encodeURIComponent(id)}`, {}, fetchImpl);
+  if (response.status === 404) return undefined;
+  if (!response.ok) throw await failure(response, 'gist download');
+  const gist = await response.json() as Record<string, unknown>;
+  const file = (gist.files as Record<string, { content?: unknown; truncated?: unknown; raw_url?: unknown }> | undefined)?.[GIST_FILE];
+  if (!file) throw new Error(`The gist has no ${GIST_FILE}.`);
+  let content = typeof file.content === 'string' ? file.content : '';
+  if (file.truncated) {
+    // Files over 1 MB are truncated in API responses; the raw URL has the full text.
+    const raw = new URL(String(file.raw_url));
+    if (raw.protocol !== 'https:' || raw.hostname !== 'gist.githubusercontent.com') throw new Error('Unexpected gist download address.');
+    const full = await fetchImpl(raw.href, { signal: AbortSignal.timeout(20_000) });
+    if (!full.ok) throw await failure(full, 'gist download');
+    content = await full.text();
+  }
+  return { gist: info(gist), bundle: parseBundle(content) };
+}
+
+/** Creates a secret gist, or updates `id`. Returns undefined when `id` no longer exists. */
+export async function writeConfigGist(token: string, id: string | undefined, bundle: ConfigBundle, fetchImpl: Fetch = fetch): Promise<GistInfo | undefined> {
+  const body = JSON.stringify({ description: GIST_DESCRIPTION, ...(id ? {} : { public: false }), files: { [GIST_FILE]: { content: serializeBundle(bundle) } } });
+  const response = await github(token, id ? `/gists/${encodeURIComponent(id)}` : '/gists', { method: id ? 'PATCH' : 'POST', body }, fetchImpl);
+  if (id && response.status === 404) return undefined;
+  if (!response.ok) throw await failure(response, 'gist upload');
+  return info(await response.json() as Record<string, unknown>);
+}
+
+/** The private repository that holds the synced config, one per GitHub account. */
+export const SYNC_REPO = 'dsh-sync';
+const MARKER = 'dsh-sync.json';
+const SETTING_KEY = /^[A-Za-z][A-Za-z0-9.]{0,80}$/;
+const README = `# DSH-IDE sync
+
+DSH-IDE keeps your config here so all your computers share it. API keys, account sign-ins and MCP secret values are never stored here.
+
+- \`settings/\`: one file per \`dsh.*\` setting
+- \`dsh/\` and \`agents/\`: global rules and skills
+- \`toolpacks/\`: toolpacks you uploaded, with their settings and on/off state
+- \`memory/\`: your global memory (notes, conventions and scripts)
+
+Every sync is a commit, so the history shows what changed and when. Edits made here directly reach DSH on its next sync.
+`;
+
+const json = (value: unknown): Buffer => Buffer.from(JSON.stringify(JSON.parse(stableJson(value)), null, 2) + '\n');
+
+/** The repository's files for a config: what a sync commits. */
+export function bundleToTree(bundle: ConfigBundle): Map<string, Buffer> {
+  const tree = new Map<string, Buffer>([[MARKER, json({ format: 'dsh-sync', version: 1 })], ['README.md', Buffer.from(README)]]);
+  for (const [key, value] of Object.entries(bundle.settings)) tree.set(`settings/${key}.json`, json(value));
+  for (const [path, file] of Object.entries(bundle.files)) tree.set(path, decode(file));
+  for (const [id, pack] of Object.entries(bundle.toolpacks)) {
+    tree.set(`toolpacks/${id}/source.ts`, Buffer.from(pack.source));
+    tree.set(`toolpacks/${id}/pack.json`, json({ enabled: pack.enabled, ...(pack.settings ? { settings: pack.settings } : {}) }));
+  }
+  return tree;
+}
+
+/** Reads a config back from the repository's files. Undefined for an empty repository; files DSH does not know are ignored. */
+export function treeToBundle(tree: Map<string, Buffer>): ConfigBundle | undefined {
+  const marker = tree.get(MARKER);
+  if (!marker) {
+    if (!tree.size) return undefined;
+    throw new Error(`The ${SYNC_REPO} repository was not made by DSH-IDE (it has no ${MARKER}).`);
+  }
+  let format: { format?: unknown; version?: unknown };
+  try { format = JSON.parse(marker.toString('utf8')); } catch { throw new Error(`${MARKER} in the sync repository is not valid JSON.`); }
+  if (format.format !== 'dsh-sync') throw new Error(`${MARKER} in the sync repository is not a DSH sync marker.`);
+  if (format.version !== 1) throw new Error(`The sync repository uses version ${String(format.version)}; update DSH-IDE to read it.`);
+  const bundle: ConfigBundle = { format: 'dsh-config', version: 1, settings: {}, files: {}, toolpacks: {} };
+  const packs = new Map<string, { source?: string; meta?: Record<string, unknown> }>();
+  const parse = (path: string, data: Buffer): unknown => {
+    try { return JSON.parse(data.toString('utf8')); } catch { throw new Error(`${path} in the sync repository is not valid JSON.`); }
+  };
+  for (const [path, data] of tree) {
+    const parts = path.split('/');
+    if (parts[0] === 'settings' && parts.length === 2 && parts[1].endsWith('.json')) {
+      const key = parts[1].slice(0, -'.json'.length);
+      if (SETTING_KEY.test(key)) bundle.settings[key] = parse(path, data);
+    } else if (parts[0] === 'dsh' || parts[0] === 'agents' || parts[0] === 'memory') {
+      // Hidden files added on GitHub directly (an .obsidian folder, say) are skipped, as DSH skips them locally.
+      if (parts.slice(1).some(part => part.startsWith('.'))) continue;
+      bundle.files[path] = encode(data);
+    } else if (parts[0] === 'toolpacks' && parts.length === 3 && (parts[2] === 'source.ts' || parts[2] === 'pack.json')) {
+      const pack = packs.get(parts[1]) || {};
+      if (parts[2] === 'source.ts') pack.source = data.toString('utf8');
+      else pack.meta = parse(path, data) as Record<string, unknown>;
+      packs.set(parts[1], pack);
+    }
+  }
+  for (const [id, pack] of packs) {
+    if (pack.source === undefined) continue;
+    const settings = pack.meta?.settings;
+    bundle.toolpacks[id] = { enabled: pack.meta?.enabled !== false, source: pack.source, ...(settings !== undefined ? { settings: settings as ToolpackBundle['settings'] } : {}) };
+  }
+  return validateBundle(bundle);
+}
+
+/** A commit message naming what changed between two configs. */
+export function describeChanges(before: ConfigBundle | undefined, after: ConfigBundle, from: string): string {
+  const empty: ConfigBundle = { format: 'dsh-config', version: 1, settings: {}, files: {}, toolpacks: {} };
+  const was = before ?? empty;
+  const changed = (label: (key: string) => string, b: Record<string, unknown>, a: Record<string, unknown>): string[] =>
+    [...new Set([...Object.keys(b), ...Object.keys(a)])].sort().filter(key => stableJson(b[key]) !== stableJson(a[key])).map(label);
+  const items = [
+    ...changed(key => `dsh.${key}`, was.settings, after.settings),
+    ...changed(key => key, was.files, after.files),
+    ...changed(key => `toolpack ${key}`, was.toolpacks, after.toolpacks),
+  ];
+  const shown = items.slice(0, 3).join(', ');
+  const summary = !items.length ? 'No changes' : items.length > 3 ? `${shown} and ${items.length - 3} more` : shown;
+  return `Sync from ${from}: ${summary}`;
+}
+
+export interface RepoInfo { fullName: string; url: string; cloneUrl: string }
+
+const repoInfo = (repo: Record<string, unknown>): RepoInfo => {
+  if (repo.private !== true) throw new Error(`${String(repo.full_name)} is public. The sync repository must be private, so DSH will not use it.`);
+  const cloneUrl = new URL(String(repo.clone_url));
+  if (cloneUrl.protocol !== 'https:' || cloneUrl.hostname !== 'github.com') throw new Error('Unexpected sync repository address.');
+  return { fullName: String(repo.full_name), url: String(repo.html_url), cloneUrl: cloneUrl.href };
+};
+
+/** The signed-in user's sync repository, if it exists. */
+export async function findSyncRepo(token: string, owner: string, fetchImpl: Fetch = fetch): Promise<RepoInfo | undefined> {
+  const response = await github(token, `/repos/${encodeURIComponent(owner)}/${SYNC_REPO}`, {}, fetchImpl);
+  if (response.status === 404) return undefined;
+  if (!response.ok) throw await failure(response, 'repository lookup');
+  return repoInfo(await response.json() as Record<string, unknown>);
+}
+
+/** Creates the private sync repository under the signed-in user. */
+export async function createSyncRepo(token: string, fetchImpl: Fetch = fetch): Promise<RepoInfo> {
+  const body = JSON.stringify({
+    name: SYNC_REPO, private: true, has_issues: false, has_projects: false, has_wiki: false, auto_init: false,
+    description: 'DSH-IDE settings, rules, skills, toolpacks and memory, synced between computers',
+  });
+  const response = await github(token, '/user/repos', { method: 'POST', body }, fetchImpl);
+  if (!response.ok) throw await failure(response, 'repository creation');
+  return repoInfo(await response.json() as Record<string, unknown>);
+}

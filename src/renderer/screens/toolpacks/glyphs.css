@@ -1,0 +1,24 @@
+.glyph {
+  flex: none;
+}
+
+.glyph-tile {
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border);
+}
+
+.glyph-tile-40 {
+  width: 40px;
+  height: 40px;
+  border-radius: 9px;
+}
+
+.glyph-tile-32 {
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+}

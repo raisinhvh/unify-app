@@ -1,0 +1,38 @@
+.toggle {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  flex: none;
+  border-radius: 8px;
+  background: var(--border);
+}
+
+.toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--border);
+}
+
+.toggle.on .toggle-track {
+  background: var(--accent);
+}
+
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--text);
+}
+
+.toggle.on .toggle-knob {
+  background: var(--on-accent);
+}

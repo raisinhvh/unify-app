@@ -1,0 +1,10 @@
+# Temporary standalone dev setup (deps move to the root package.json; see DEPENDENCIES.md)
+node_modules/
+package.json
+package-lock.json
+
+# Figma exports used as visual references
+.ref/
+
+# Screenshot and motion-audit output
+tools/out/

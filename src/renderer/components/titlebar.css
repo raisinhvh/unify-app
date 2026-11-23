@@ -1,0 +1,46 @@
+/* Drag strip across the top of the content column (the shell reserves --titlebar-height there). */
+.titlebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--titlebar-height);
+  z-index: 40;
+  -webkit-app-region: drag;
+  pointer-events: none;
+}
+
+.titlebar.mac {
+  pointer-events: auto;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  pointer-events: auto;
+}
+
+.titlebar-button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: var(--titlebar-height);
+  color: var(--text3);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.titlebar-button:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.titlebar-button.close:hover {
+  color: #fff;
+  background: var(--del);
+}

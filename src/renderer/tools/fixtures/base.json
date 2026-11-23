@@ -1,0 +1,69 @@
+{
+  "persisted": {
+    "route": "chats",
+    "panelOpen": false,
+    "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" },
+    "unread": {}
+  },
+  "messages": [
+    {
+      "type": "sessionState",
+      "activeSessionId": "s-acp",
+      "sessions": [
+        { "id": "s-acp", "name": "Fix ACP init timeout", "updatedAt": -1, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
+        { "id": "s-release", "name": "Release notes 1.1.5", "updatedAt": -4, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
+        { "id": "s-hub", "name": "Hub search ranking", "updatedAt": -12, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
+        { "id": "s-mistral", "name": "Send system role to Mistral", "updatedAt": -65, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
+        { "id": "s-assets", "name": "Package 1.1.5 release assets", "updatedAt": -4000, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
+        { "id": "s-old1", "name": "Mirror rules to Cursor", "updatedAt": -5000, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
+        { "id": "s-old2", "name": "Voice command list", "updatedAt": -6000, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
+        { "id": "s-pane", "name": "Pane layout store", "updatedAt": -2, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
+        { "id": "s-refactor", "name": "Refactor sidebar state", "updatedAt": -3, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
+        { "id": "s-drag", "name": "Drag-to-snap layouts", "updatedAt": -5, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
+        { "id": "s-effort", "name": "Composer effort picker", "updatedAt": -2900, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
+        { "id": "s-conveyor", "name": "Conveyor shop", "updatedAt": -6, "project": { "name": "roblox-tycoon", "path": "C:/Users/User/Documents/Projects/Games/roblox-tycoon" } },
+        { "id": "s-rebirth", "name": "Rebirth migration", "updatedAt": -25, "project": { "name": "roblox-tycoon", "path": "C:/Users/User/Documents/Projects/Games/roblox-tycoon" } },
+        { "id": "s-spawn", "name": "Spawn plot on join", "updatedAt": -2950, "project": { "name": "roblox-tycoon", "path": "C:/Users/User/Documents/Projects/Games/roblox-tycoon" } },
+        { "id": "s-hero", "name": "Hero section copy", "updatedAt": -13000, "project": { "name": "portfolio-site", "path": "C:/Users/User/Documents/Projects/Web/portfolio-site" } }
+      ]
+    },
+    {
+      "type": "modelState",
+      "selectedModelId": "opus-5.5",
+      "selectedEffort": "high",
+      "models": [
+        { "id": "opus-5.5", "name": "Opus 5.5", "provider": "claude-cli", "backend": "claude-opus-5-5", "effortOptions": ["low", "medium", "high", "xhigh"] },
+        { "id": "sonnet-5.5", "name": "Sonnet 5.5", "provider": "claude-cli", "backend": "claude-sonnet-5-5", "effortOptions": ["low", "medium", "high"] },
+        { "id": "gpt-5.1", "name": "GPT-5.1", "provider": "codex-cli", "backend": "gpt-5.1", "effortOptions": ["low", "medium", "high"] }
+      ]
+    },
+    {
+      "type": "accountsState",
+      "cursor": { "connected": false, "label": "Not connected" },
+      "accounts": [
+        { "id": "acc-claude", "provider": "claude-cli", "label": "Claude Max", "isDefault": true },
+        { "id": "acc-codex", "provider": "codex-cli", "label": "ChatGPT Plus", "isDefault": true }
+      ]
+    },
+    {
+      "type": "usageState",
+      "usage": {
+        "acc-claude": {
+          "status": "ready",
+          "fetchedAt": -1,
+          "plan": { "name": "Max", "monthlyUsd": 100 },
+          "metrics": [
+            { "label": "Session", "value": "38%", "usedPercent": 38, "resetsAt": 140 },
+            { "label": "Week", "value": "21%", "usedPercent": 21, "resetsAt": 5000 }
+          ]
+        },
+        "acc-codex": {
+          "status": "ready",
+          "fetchedAt": -1,
+          "plan": { "name": "Plus", "monthlyUsd": 20 },
+          "metrics": [{ "label": "5 hour", "value": "14%", "usedPercent": 14, "resetsAt": 200 }]
+        }
+      }
+    }
+  ]
+}
