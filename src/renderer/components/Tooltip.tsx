@@ -5,7 +5,8 @@
  *   <button ref={el => tooltip(el, 'Pop out')}>…</button>
  *
  * Shows after a short hover delay; moving straight to another tooltip target swaps content without waiting
- * (the surface glides to the new anchor instead of closing and reopening). Pops in, quick exit.
+ * (the surface glides to the new anchor instead of closing and reopening). Fades in on the Control spring
+ * (no scale, no travel), quick fade out.
  */
 import { createSignal, onCleanup, type JSX } from 'solid-js';
 import { Popover, type PopoverPlacement } from './Popover';
@@ -79,6 +80,7 @@ export function TooltipHost(): JSX.Element {
       open={visible()}
       onClose={() => setVisible(false)}
       placement={request()?.placement}
+      motion="fade"
       class={request()?.rich ? 'tooltip tooltip-rich' : 'tooltip'}
     >
       {(() => {

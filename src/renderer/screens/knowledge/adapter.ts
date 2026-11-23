@@ -9,7 +9,8 @@
  * Source, in order:
  *   1. `knowledgeState` from the engine (the new contract), once it has been received;
  *   2. otherwise DSH's instructions mapped onto KnowledgeItem (no memory notes, audiences = Everyone);
- *   3. otherwise (dev mock bridge, or nothing at all) the Figma "21 · Knowledge" mock.
+ *   3. only with no host bridge (vite dev, previews): the Figma "21 · Knowledge" mock.
+ * With a real host the mock is never read or written.
  */
 import { createSignal } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
@@ -84,8 +85,10 @@ export type KnowledgeReply =
 // ---------------------------------------------------------------------------------------------------------------
 // Source selection and transport
 
+/** Dev previews only: no host bridge means no engine, so the mock answers instead. */
+const useMock = !hasHostBridge();
 const [engineItems, setEngineItems] = createSignal<KnowledgeItem[] | undefined>();
-const [mockItems, setMockItems] = createStore<KnowledgeItem[]>(initialMock());
+const [mockItems, setMockItems] = createStore<KnowledgeItem[]>(useMock ? initialMock() : []);
 const pending = new Map<string, (reply: KnowledgeReply) => void>();
 let nextId = 0;
 
@@ -101,17 +104,19 @@ onHostMessage(raw => {
   }
 });
 
-if (hasHostBridge()) post({ type: 'knowledgeList' } as unknown as SidebarWebviewMessage);
+if (!useMock) post({ type: 'knowledgeList' } as unknown as SidebarWebviewMessage);
 
 type Source = 'engine' | 'instructions' | 'mock';
 
 export function source(): Source {
   if (engineItems()) return 'engine';
-  if (hasHostBridge()) return 'instructions';
+  if (!useMock) return 'instructions';
   return viewState.instructions.length ? 'instructions' : 'mock';
 }
 
-function request(body: Omit<Extract<KnowledgeRequest, { requestId: string }>, 'requestId'>, timeout = 4000): Promise<KnowledgeReply | undefined> {
+type WithoutId<T> = T extends unknown ? Omit<T, 'requestId'> : never;
+
+function request(body: WithoutId<Extract<KnowledgeRequest, { requestId: string }>>, timeout = 4000): Promise<KnowledgeReply | undefined> {
   const requestId = `knowledge:${Date.now()}:${nextId++}`;
   return new Promise(resolve => {
     const timer = window.setTimeout(() => {
@@ -197,6 +202,7 @@ export async function saveKnowledge(draft: KnowledgeDraft, content: string, file
     const existing = draft.id ? knowledgeItems().find(item => item.id === draft.id) : undefined;
     return existing ? { ...existing, ...draft, id: existing.id } : { ...draft, id: draft.id ?? `pending:${Date.now()}`, path: '' };
   }
+  if (current === 'instructions') throw new Error('Memory notes can be saved once the engine has sent the knowledge list');
   return mockSave(draft, content, file);
 }
 
@@ -214,7 +220,7 @@ export async function removeKnowledge(id: string): Promise<void> {
 }
 
 export function setAudiences(id: string, audiences: Audience[]): void {
-  if (source() === 'engine') {
+  if (source() !== 'mock') {
     // Optimistic: the engine answers with a fresh knowledgeState.
     setEngineItems(items => items?.map(item => (item.id === id ? { ...item, audiences } : item)));
     post({ type: 'setKnowledgeAudience', id, audiences } as unknown as SidebarWebviewMessage);
@@ -237,6 +243,24 @@ export async function importSkillFolder(scope: KnowledgeScope, name: string, fil
   const item = mockSave(draft, skill?.content ?? `# ${name}\n`, undefined, files.map(file => file.path));
   for (const file of files) mockContent.set(contentKey(item.id, file.path === 'SKILL.md' ? undefined : file.path), file.content);
   return item;
+}
+
+/**
+ * Reverts the last change an agent made to an item. The engine does not handle this yet
+ * (protocol-requests.md › undoKnowledgeChange); it answers with a fresh knowledgeState once it does.
+ */
+export function undoKnowledgeChange(item: KnowledgeItem): void {
+  if (source() !== 'mock') {
+    post({ type: 'undoKnowledgeChange', id: item.id } as unknown as SidebarWebviewMessage);
+    return;
+  }
+  const index = mockItems.findIndex(entry => entry.id === item.id);
+  if (index >= 0) {
+    setMockItems(index, produce(entry => {
+      entry.updatedBy = entry.createdBy;
+      entry.updatedAt = entry.createdAt;
+    }));
+  }
 }
 
 export function openKnowledgeExternally(item: KnowledgeItem, file?: string): void {
@@ -271,7 +295,7 @@ function contentKey(id: string, file?: string): string {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Mock (Figma 306:2710). Dev and fallback only.
+// Mock (Figma 306:2710). Only when there is no host bridge (`useMock`).
 
 const mockContent = new Map<string, string>();
 
@@ -290,13 +314,13 @@ function mockSave(draft: KnowledgeDraft, content: string, file?: string, files?:
       item.updatedBy = 'you';
     }));
   } else {
-    // organic: a new item's name should type into its row.
+    // A new item types its name into its tree row (KnowledgePanel's OrganicList).
     setMockItems(items => [
       ...items,
       {
         ...draft,
         id,
-        path: `~/.dsh/${draft.kind}s/${draft.name}`,
+        path: `~/.unify/${draft.kind}s/${draft.name}`,
         files: draft.kind === 'skill' ? files ?? ['SKILL.md'] : undefined,
         createdBy: 'you',
         createdAt: now,
@@ -319,7 +343,7 @@ function initialMock(): KnowledgeItem[] {
     kind: 'rule',
     scope: 'global',
     name,
-    path: `~/.dsh/rules/${name}.md`,
+    path: `~/.unify/rules/${name}.md`,
     audiences: index === 6 ? ['main'] : index === 4 ? ['subagents'] : ['everyone'],
     createdBy: 'you',
     createdAt: now - (40 + index) * day,
@@ -332,7 +356,7 @@ function initialMock(): KnowledgeItem[] {
     kind: 'skill',
     scope: 'global',
     name,
-    path: `~/.dsh/skills/${name}`,
+    path: `~/.unify/skills/${name}`,
     description,
     files,
     audiences: ['everyone'],
@@ -349,7 +373,7 @@ function initialMock(): KnowledgeItem[] {
     scope: 'global',
     name,
     folder,
-    path: `~/.dsh/memory/${folder}/${name.toLowerCase().replace(/\s+/g, '-')}.md`,
+    path: `~/.unify/memory/${folder}/${name.toLowerCase().replace(/\s+/g, '-')}.md`,
     audiences: ['everyone'],
     createdBy: index % 2 ? 'Sol' : 'you',
     createdAt: now - (10 + index) * day,
@@ -437,7 +461,7 @@ mockContent.set(
 
 mockContent.set(
   'memory-tools-3',
-  `Run \`.dsh/tools/sidebar-preview.mjs\` to render the sidebar without VS Code.
+  `Run \`tools/sidebar-preview.mjs\` to render the sidebar without VS Code.
 
 ## Notes
 

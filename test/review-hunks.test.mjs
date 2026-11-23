@@ -92,10 +92,10 @@ test("pairs only unambiguous exact renames", () => {
   ]), []);
 });
 
-test("includes .dsh/skills but excludes other .dsh paths in the mirror scope", () => {
-  assert.equal(mirrorPathExcluded(".dsh/skills/foo/SKILL.md"), false);
-  assert.equal(mirrorPathExcluded(".dsh/cache/session.json"), true);
-  assert.equal(mirrorPathExcluded(".dsh/state.json"), true);
+test("includes .unify/skills but excludes other .unify paths in the mirror scope", () => {
+  assert.equal(mirrorPathExcluded(".unify/skills/foo/SKILL.md"), false);
+  assert.equal(mirrorPathExcluded(".unify/cache/session.json"), true);
+  assert.equal(mirrorPathExcluded(".unify/state.json"), true);
   assert.equal(mirrorPathExcluded("node_modules/pkg/index.js"), true);
 });
 

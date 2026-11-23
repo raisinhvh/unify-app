@@ -74,7 +74,7 @@ test('Codex usage reads ChatGPT quota windows with the account headers', async (
     assert.equal(calls[0].init.headers.originator, 'codex_cli_rs');
     assert.match(calls[0].init.headers.Authorization, /^Bearer /);
     assert.equal(usage.status, 'ready');
-    assert.deepEqual(usage.metrics.map(metric => metric.label), ['5-hour', 'Weekly', 'Extra · 1h']);
+    assert.deepEqual(usage.metrics.map(metric => metric.label), ['5-hour', 'Weekly', '1h limit for Extra']);
     assert.equal(usage.metrics[0].usedPercent, 25);
     assert.equal(usage.metrics[0].resetsAt, 1730947200000);
     assert.equal(usage.metrics[1].resetsAt, undefined);

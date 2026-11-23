@@ -5,28 +5,36 @@
  *   search   folds open under the header; matches file paths across the workspace (adapter.findFiles)
  *   tree     the workspace as folders and files with guide lines; folders load when first opened
  *
- * Files an agent changed show +N −M on their row. Click opens the file in a tab; the selected row is the
- * active tab. Built for the Shell's side-panel slot (`.side-panel`), like ChatsPanel.
+ * Files an agent changed show +N −M on their row (rolling counters). Click opens the file in a tab; the selected
+ * row is the active tab. Built for the Shell's side-panel slot (`.side-panel`), like ChatsPanel.
+ *
+ * Organic motion (motion.organic.*): a file that appears types its name in, a deleted one gets a select-all sweep
+ * before its row collapses, and a rename (one entry leaves and one arrives in the same refresh) backspaces and
+ * retypes the name while the row glides to its new place.
  */
-import { createEffect, createSignal, onMount, Show, type JSX } from 'solid-js';
+import { createEffect, createMemo, createSignal, on, onMount, Show, untrack, type Accessor, type JSX } from 'solid-js';
 import { Icon, IconButton, Menu, TreeFolder, TreeItem, type MenuEntry } from '../../components';
 import { AnimatedList, Collapse } from '../../motion';
+import { OrganicList, RetypeText, RollingNumber, type OrganicRow } from '../../motion/organic';
 import { findFiles, openExternally, type FileEdit, type FileEntry } from './adapter';
 import { activePath, collapseAllDirs, editFor, listings, loadDir, openDirs, openFile, refreshTree, setDirOpen } from './state';
 import './files.css';
 
 /** "+18 −4" in add/del colours. Shared with tabs and the breadcrumb. */
 export function FileDelta(props: { edit: FileEdit | undefined }): JSX.Element {
-  // organic: when an agent edits again, these numbers should roll like an odometer (motion.organic.counters).
   return (
     <Show when={props.edit}>
       {edit => (
         <span class="files-delta">
           <Show when={edit().additions > 0}>
-            <span class="files-add">+{edit().additions}</span>
+            <span class="files-add">
+              <RollingNumber value={`+${edit().additions}`} data-motion="files-additions" />
+            </span>
           </Show>
           <Show when={edit().deletions > 0}>
-            <span class="files-del">−{edit().deletions}</span>
+            <span class="files-del">
+              <RollingNumber value={`−${edit().deletions}`} data-motion="files-deletions" />
+            </span>
           </Show>
         </span>
       )}
@@ -34,14 +42,29 @@ export function FileDelta(props: { edit: FileEdit | undefined }): JSX.Element {
   );
 }
 
-function FileRow(props: { entry: FileEntry }): JSX.Element {
+/** The row's name: types in when created, retypes on rename, sweeps out when deleted. */
+function EntryName(props: { name: string; row: OrganicRow; typeIn: boolean }): JSX.Element {
+  // Every listing refresh rebuilds the keyed entries; only a real name change may reach RetypeText (each retype
+  // claims one of the few organic slots, so spurious ones would make a new row's type-in land instantly).
+  const name = createMemo(() => props.name);
+  return (
+    <RetypeText
+      value={name()}
+      typeOnMount={props.typeIn}
+      deleting={props.row.leaving()}
+      onDeleted={props.row.swept}
+      data-motion="files-tree-name"
+    />
+  );
+}
+
+function FileRow(props: { entry: FileEntry; row: OrganicRow; typeIn: boolean }): JSX.Element {
   const edit = () => editFor(props.entry.path, props.entry.edited);
-  // organic: a file the agent creates should type its name in; a rename backspaces and retypes it.
   return (
     <TreeItem
       class="files-file"
       leading={<Icon name="file" size={14} />}
-      label={props.entry.name}
+      label={<EntryName name={props.entry.name} row={props.row} typeIn={props.typeIn} />}
       trailing={edit() ? <FileDelta edit={edit()} /> : undefined}
       selected={activePath() === props.entry.path}
       title={props.entry.path}
@@ -50,13 +73,13 @@ function FileRow(props: { entry: FileEntry }): JSX.Element {
   );
 }
 
-function DirRow(props: { entry: FileEntry }): JSX.Element {
+function DirRow(props: { entry: FileEntry; row: OrganicRow; typeIn: boolean }): JSX.Element {
   const open = () => openDirs().includes(props.entry.path);
   return (
     <TreeFolder
       class="files-dir"
       icon="folder"
-      label={props.entry.name}
+      label={<EntryName name={props.entry.name} row={props.row} typeIn={props.typeIn} />}
       open={open()}
       onToggle={next => setDirOpen(props.entry.path, next)}
     >
@@ -65,18 +88,63 @@ function DirRow(props: { entry: FileEntry }): JSX.Element {
   );
 }
 
+interface KeyedEntry {
+  /** Stable row key: survives a rename, so the name retypes instead of the row being replaced. */
+  id: string;
+  entry: FileEntry;
+}
+
+/**
+ * Gives each entry a key that outlives a rename. A refresh where exactly one entry of a kind leaves and one of
+ * the same kind arrives is read as a rename: the new path inherits the old key.
+ */
+function stableEntries(entries: Accessor<readonly FileEntry[]>): Accessor<KeyedEntry[]> {
+  const idByPath = new Map<string, string>();
+  // A plain copy: the listing is a store array that reconcile mutates in place.
+  let previous: Pick<FileEntry, 'path' | 'kind'>[] = [];
+  return createMemo(() => {
+    const list = entries();
+    const present = new Set(list.map(entry => entry.path));
+    const known = new Set(previous.map(entry => entry.path));
+    const removed = previous.filter(entry => !present.has(entry.path));
+    const added = list.filter(entry => !known.has(entry.path));    if (previous.length && removed.length === 1 && added.length === 1 && removed[0].kind === added[0].kind) {
+      const inherited = idByPath.get(removed[0].path);
+      if (inherited) idByPath.set(added[0].path, inherited);
+    }
+    for (const entry of removed) idByPath.delete(entry.path);
+    previous = list.map(entry => ({ path: entry.path, kind: entry.kind }));
+    return list.map(entry => {
+      let id = idByPath.get(entry.path);
+      if (!id) {
+        id = entry.path;
+        idByPath.set(entry.path, id);
+      }
+      return { id, entry };
+    });
+  });
+}
+
 function DirChildren(props: { path: string }): JSX.Element {
-  onMount(() => void loadDir(props.path));
-  const entries = () => listings[props.path] ?? [];
-  // organic: rows the agent deletes should get a select-all sweep before AnimatedList collapses them.
+  createEffect(on(() => props.path, path => void loadDir(path)));
+  const entries = stableEntries(() => listings[props.path] ?? []);
+  // Rows in the first listing are placed; only entries that arrive in a later refresh type their names in.
+  const [primed, setPrimed] = createSignal(false);
+  createEffect(() => {
+    if (listings[props.path] && !untrack(primed)) queueMicrotask(() => setPrimed(true));
+  });
   return (
-    <AnimatedList each={entries()} key={entry => entry.path}>
-      {entry => (
-        <Show when={entry().kind === 'dir'} fallback={<FileRow entry={entry()} />}>
-          <DirRow entry={entry()} />
-        </Show>
-      )}
-    </AnimatedList>
+    <OrganicList each={entries()} key={item => item.id}>
+      {(item, row) => {
+        const typeIn = row.created && untrack(primed);        return (
+          <Show
+            when={item().entry.kind === 'dir'}
+            fallback={<FileRow entry={item().entry} row={row} typeIn={typeIn} />}
+          >
+            <DirRow entry={item().entry} row={row} typeIn={typeIn} />
+          </Show>
+        );
+      }}
+    </OrganicList>
   );
 }
 

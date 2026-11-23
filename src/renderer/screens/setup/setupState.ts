@@ -114,12 +114,13 @@ export { fixFailed, setFixFailed };
 
 /* Extras */
 
-export type ExtraId = 'theme' | 'toolpacks' | 'knowledge';
+export type ExtraId = 'theme';
 export type ExtraChoice = 'pending' | 'skipped' | 'busy' | 'done' | 'error';
 
-const [extras, setExtras] = createSignal<Record<ExtraId, ExtraChoice>>(
-  readPersisted('setupExtras', { theme: 'pending', toolpacks: 'pending', knowledge: 'pending' }),
-);
+const [extras, setExtras] = createSignal<Record<ExtraId, ExtraChoice>>({
+  theme: 'pending',
+  ...readPersisted<Partial<Record<ExtraId, ExtraChoice>>>('setupExtras', {}),
+});
 export { extras };
 
 export function setExtra(id: ExtraId, choice: ExtraChoice): void {

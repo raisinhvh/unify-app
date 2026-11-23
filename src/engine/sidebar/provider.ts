@@ -11,9 +11,9 @@ import {
 
 export type SidebarMessageHandler = (message: SidebarWebviewMessage) => void | Promise<void>;
 
-/** Host side of the DSH sidebar. Runtime integration is supplied via onMessage. */
-export class DshSidebarProvider implements vscode.WebviewViewProvider {
-  public static readonly viewType = 'dsh.sidebar';
+/** Host side of the Unify sidebar. Runtime integration is supplied via onMessage. */
+export class UnifySidebarProvider implements vscode.WebviewViewProvider {
+  public static readonly viewType = 'unify.sidebar';
   private view?: vscode.WebviewView;
   private state: SidebarViewState = initialSidebarState();
   private readonly disposables: vscode.Disposable[] = [];
@@ -62,6 +62,16 @@ export class DshSidebarProvider implements vscode.WebviewViewProvider {
 
   public setPage(page: SidebarViewState['page']): void { this.state.page = page; }
 
+  /** Unify power status, read from the engine's shutdown controller on reload and on every change. */
+  public setShutdown(status: { armed: boolean; phase: string; secondsLeft?: number }): void {
+    this.state.shutdown = { ...status };
+  }
+
+  /** Unify GitHub sign-in, so a view resolved later boots with the current account. */
+  public setGithub(github: { signedIn: boolean; login?: string; source?: 'gh' | 'token'; error?: string }): void {
+    this.state.github = { ...github };
+  }
+
   private reduce(message: SidebarHostMessage): void {
     switch (message.type) {
       case 'timelineState':
@@ -90,6 +100,11 @@ export class DshSidebarProvider implements vscode.WebviewViewProvider {
       case 'unifyFeaturesState': this.state.unifyFeatures = { ...message.features }; break;
       case 'jobState': if (message.job) this.state.jobs[message.sessionId] = message.job; else delete this.state.jobs[message.sessionId]; break;
       case 'syncState': this.state.sync = message.sync; break;
+      case 'shutdownArmed': this.state.shutdown = { armed: message.armed, phase: message.armed ? 'waiting' : 'disarmed' }; break;
+      case 'shutdownCountdown': this.state.shutdown = { armed: true, phase: 'countdown', secondsLeft: message.secondsLeft }; break;
+      case 'shutdownCancelled': this.state.shutdown = { armed: false, phase: 'disarmed' }; break;
+      case 'shutdownWaiting': this.state.shutdown = { armed: true, phase: 'waiting' }; break;
+      case 'shutdownFailed': this.state.shutdown = { armed: false, phase: 'disarmed' }; break;
       case 'approvalState': this.state.approvalMode = message.mode; break;
       case 'showPage': this.state.page = message.page; break;
       case 'userMessage': {
@@ -162,11 +177,29 @@ export class DshSidebarProvider implements vscode.WebviewViewProvider {
         if (message.files) agent.files = message.files;
         if (message.state) agent.state = message.state;
         if (message.delegated) agent.delegated = true;
-        if (message.text) {
+        if (message.profile) agent.profile = message.profile;
+        if (message.effort) agent.effort = message.effort;
+        if (message.speed) agent.speed = message.speed;
+        if (message.sentToParent) agent.sentToParent = message.sentToParent;
+        if (message.text || message.media?.length) {
           const id = message.messageId || `message:${agent.messages.length}`;
+          const text = message.text || '';
           const entry = agent.messages.find(item => item.id === id);
-          if (entry) entry.text += message.text;
-          else agent.messages.push({ id, role: message.role || 'assistant', text: message.text, ...(message.tool ? { tool: message.tool } : {}) });
+          if (entry) {
+            entry.text += text;
+            if (message.media?.length) {
+              // Repeated tool_call_update events can report the same image again; the file URL is the hash.
+              const known = new Set((entry.media || []).map(item => item.file));
+              const fresh = message.media.filter(item => !known.has(item.file));
+              if (fresh.length) entry.media = [...(entry.media || []), ...fresh];
+            }
+          } else {
+            agent.messages.push({
+              id, role: message.role || 'assistant', text,
+              ...(message.tool ? { tool: message.tool } : {}),
+              ...(message.media?.length ? { media: message.media } : {}),
+            });
+          }
         }
         const timeline = this.state.timeline[message.sessionId] ||= [];
         if (!timeline.some(item => item.kind === 'subagent' && item.agentId === message.agentId)) timeline.push({ id: `subagent:${message.agentId}`, kind: 'subagent', agentId: message.agentId });
@@ -200,7 +233,7 @@ export class DshSidebarProvider implements vscode.WebviewViewProvider {
 }
 
 /** Descriptive alias for hosts that prefer the VS Code API terminology. */
-export { DshSidebarProvider as WebviewViewProvider };
+export { UnifySidebarProvider as WebviewViewProvider };
 
 export { getSidebarHtml, initialSidebarState } from './view';
 export type { SidebarHostMessage, SidebarWebviewMessage, SidebarViewState } from './view';

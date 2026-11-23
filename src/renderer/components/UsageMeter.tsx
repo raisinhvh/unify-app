@@ -5,6 +5,7 @@
 import { createSignal, For, Index, Show, type JSX } from 'solid-js';
 import { post } from '../bridge';
 import { createSpring, pressable } from '../motion';
+import { RollingNumber } from '../motion/organic';
 import { clampPercent, resetColor, resetIn, usageSummary } from '../store/usage';
 import { providerNames } from '../store/providers';
 import { IconButton } from './Button';
@@ -44,12 +45,16 @@ export function UsageMeter(): JSX.Element {
         onClick={() => setOpen(!open())}
       >
         <StackedBar class="usage-bar-slim" />
-        <span class="usage-percent type-caption">{summary().entries.length ? `${summary().combined}%` : '–'}</span>
+        <span class="usage-percent type-caption">
+          <RollingNumber value={summary().entries.length ? `${summary().combined}%` : '–'} data-motion="rail-usage" />
+        </span>
       </button>
       <Popover anchor={anchor()} open={open()} onClose={() => setOpen(false)} placement="right-end" offset={10} class="usage-popover">
         <div class="usage-header">
           <span class="type-heading">Usage</span>
-          <span class="usage-combined">{summary().combined}%</span>
+          <span class="usage-combined">
+            <RollingNumber value={`${summary().combined}%`} />
+          </span>
           <IconButton icon="refresh" label="Refresh usage" size="small" onClick={() => post({ type: 'refreshUsage' })} />
         </div>
         <StackedBar class="usage-bar-wide" />
@@ -65,11 +70,15 @@ export function UsageMeter(): JSX.Element {
                   <span class="usage-account">
                     <span class="usage-name">{entry.account.label}</span>
                     <span class="usage-detail type-caption">
-                      {providerNames[entry.account.provider] || entry.account.provider} · {entry.binding.label}
+                      {providerNames[entry.account.provider] || entry.account.provider}
+                      {/* Spacing alone separates the provider from the limit (no separator glyph). */}
+                      <span style={{ 'margin-left': '0.75em' }}>{entry.binding.label}</span>
                     </span>
                   </span>
                   <span class="usage-values">
-                    <span class="usage-used">{Math.round(entry.used)}%</span>
+                    <span class="usage-used">
+                      <RollingNumber value={`${Math.round(entry.used)}%`} />
+                    </span>
                     <Show when={resetIn(entry.binding.resetsAt)}>
                       {text => (
                         <span class="usage-reset type-caption" style={{ color: resetColor(entry.binding.resetsAt!) }}>

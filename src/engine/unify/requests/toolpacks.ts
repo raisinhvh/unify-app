@@ -2,7 +2,7 @@
  * Toolpacks screen settings that the sidebar protocol does not carry: per-tool switches and per-group
  * permission policies.
  *
- * Values live in `~/.dsh/unify/toolpacks.json`. The extension is expected to read them with the helpers
+ * Values live in `~/.unify/unify/toolpacks.json`. The extension is expected to read them with the helpers
  * below when it builds `toolpacksState` and when it offers tools to an agent; this module deliberately does
  * not post a `toolpacksState` of its own, because it cannot see a local pack's runtime tools and a partial
  * list would drop them from the screen.

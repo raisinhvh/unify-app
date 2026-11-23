@@ -9,6 +9,7 @@ import { setAppReducedMotion } from './motion';
 import { Shell } from './shell';
 import { pruneChats } from './shell/layout';
 import { connectStore, viewState } from './store';
+import { startNotifySound } from './store/notifySound';
 import { installTheme } from './theme';
 
 function App(): JSX.Element {
@@ -36,8 +37,10 @@ export function startApp(root: HTMLElement): void {
   installTheme();
   const disconnect = render(() => <App />, root);
   const stopListening = connectStore();
+  const stopNotifySound = startNotifySound();
   import.meta.hot?.dispose(() => {
     stopListening();
+    stopNotifySound();
     disconnect();
   });
 }

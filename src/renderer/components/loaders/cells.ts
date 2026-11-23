@@ -2,9 +2,10 @@
  * Loader cell model.
  *
  * Every loader is a pure function of time that returns the cells to draw in a 16×16 box. A cell is a small
- * rectangle with a stable `key`, a tone (0 = dim wood, 1 = bright wood) and optional opacity/outline.
- * Because loaders are data, two loaders that share cell keys can morph into each other: the shared cells
- * spring from where they were to where the new loader wants them (see LoaderMorph.tsx).
+ * rectangle with a stable `key`, a tone (0 = dim wood, 1 = bright wood) and optional opacity/outline/ink/angle.
+ * Because loaders are data, any two loaders morph into each other cell to cell (see morph.ts): cells with the
+ * same key pair first, the rest pair by nearest position, and spare cells merge into (or split out of) their
+ * nearest neighbour, so every cell on screen travels somewhere instead of vanishing.
  *
  * Keys shared on purpose: the 3×3 grids (Sift, Develop) use g0..g8, Quad uses g0, g2, g8, g6 for its corners,
  * Split's four squares reuse the same g keys, and line loaders (Lay, Press, Checks) use l0..l3.
@@ -22,6 +23,10 @@ export interface LoaderCell {
   /** Drawn as a 1px outline instead of filled. */
   outline?: boolean;
   radius?: number;
+  /** 0 = wood (tone), 1 = the quiet text colour (--loader-ink). Status glyphs like the done check use 1. */
+  ink?: number;
+  /** Rotation in degrees about the cell's centre (the done check's two strokes). */
+  angle?: number;
 }
 
 export type LoaderFrame = (seconds: number) => LoaderCell[];

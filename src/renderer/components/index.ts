@@ -9,7 +9,7 @@
  *   Tooltip / TooltipHost  tooltip(el, content) ref helper; one host in App
  *   Toggle                 flat switch on the Control spring
  *   TreeFolder, TreeItem   file-system tree with guide lines, chevron spring, Collapse
- *   Rail, UsageMeter       left navigation rail
+ *   UsageMeter             rail usage meter (the rail itself is shell/NavRail)
  *   TitleBar               frameless window controls
  *   loaders/               15 action loaders with morphing
  */
@@ -22,7 +22,8 @@ export { Select, type SelectOption, type SelectProps } from './Select';
 export { tooltip, TooltipHost, type TooltipOptions } from './Tooltip';
 export { Toggle, type ToggleProps } from './Toggle';
 export { TreeFolder, TreeItem, type TreeFolderProps, type TreeItemProps } from './Tree';
-export { Rail, type RailItem, type RailProps } from './Rail';
 export { UsageMeter } from './UsageMeter';
+export { ProviderGlyph, providerGlyph, providerGlyphs, type ProviderGlyphName, type ProviderGlyphProps } from './ProviderGlyph';
+export { ModelPicker, type ModelPickerProps, type ModelPickerVariant } from './ModelPicker';
 export { TitleBar } from './TitleBar';
 export * from './loaders';

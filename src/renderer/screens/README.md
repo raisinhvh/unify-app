@@ -1,16 +1,27 @@
 # Screens
 
-One folder per route. `chats/` is built; every other route is a **stub** (`stubs.tsx`).
+One folder per route. `screens/index.tsx` maps each route to its screen.
 
-| Route | Status | Figma |
-| --- | --- | --- |
-| chats (Home + panes + Chats panel) | built | 10, 10b, 11, 11b, 12, 13, 14 |
-| files, knowledge, toolpacks, hub, providers, settings, setup | stub | find the frame by name on the Unify page |
+| Route | Folder | Entry | Figma |
+| --- | --- | --- | --- |
+| chats (Home, panes, Chats panel) | `chats/` | `Home`, `ChatPane`, `ChatsPanel` (drawn by the Shell) | 10, 10b, 11, 11b, 12, 13, 14 |
+| files | `files/` | `FilesScreen` (+ `FilesPanel` for the side panel) | 20 |
+| knowledge | `knowledge/` | `KnowledgeScreen` (+ `KnowledgePanel`) | 21 |
+| toolpacks | `toolpacks/` | `ToolpacksScreen` | 22 |
+| hub | `hub/` | `HubScreen` | 23 |
+| providers | `providers/` | `ProvidersScreen` (+ `ProvidersPanel`) | 24, 24b, 24c |
+| settings | `settings/` | `SettingsScreen` (+ `SettingsPanel`); rows come from `settings/catalog.ts` | 25, 25b |
+| setup | `setup/` | `SetupWizard` (drawn by the Shell over Home while `shouldShowSetup()`) | 26a–26f |
+
+A new feature toggle in `store/features.ts` shows up in Settings by itself (`settings/catalog.ts`).
+
+Screenshot fixtures (`tools/fixtures/base.json`) persist `setupComplete: true`, so captures open on Home instead of
+the setup wizard. Drop it from a fixture to capture the wizard.
 
 ## Add a screen
 
 1. Make `screens/<route>/<Name>Screen.tsx` (+ a `<name>.css` it imports). Export one component.
-2. In `screens/index.tsx`, point the route at it: `files: () => <FilesScreen />`. Remove its stub entry.
+2. In `screens/index.tsx`, point the route at it: `files: () => <FilesScreen />`.
 3. A new route also needs its id in `router.ts` (`RouteId`, `routeIds`) and, if it has a rail button,
    an entry in `railRoutes` (order matches Figma Rail 306:785).
 
@@ -40,6 +51,5 @@ backdrop stay underneath; never draw your own backdrop.
 
 - `@` file mentions and `/` slash commands in the composer (no protocol for them yet).
 - The job bar above the composer (`viewState.jobs`).
-- "Always allow" on approval rows.
 - Attach menu entries "Folder as context" and "Screenshot".
 - Pop-out of a pane into its own window (button is there, disabled).

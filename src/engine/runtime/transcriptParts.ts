@@ -4,14 +4,14 @@ import { ChatMessage, formatMessages, HANDOFF_OPENING, MAX_MESSAGE_CHARS } from 
 
 /**
  * Experimental, with auto compaction: a new session does not get one summary of everything before it. The earlier
- * messages are split by topic into parts, each saved as a file under .dsh/transcripts/<chat>/ with a short summary.
+ * messages are split by topic into parts, each saved as a file under .unify/transcripts/<chat>/ with a short summary.
  * Every part's summary opens the new session, and the agent reads a part's file when it needs the detail.
  */
 
 /** Messages from..to-1 of the chat's transcript, with the summary the agent always sees. */
 export interface TranscriptPart { from: number; to: number; title: string; summary: string }
 
-export const PARTS_DIR = '.dsh/transcripts';
+export const PARTS_DIR = '.unify/transcripts';
 
 /** Characters of conversation per summarizing call, per message inside it, and per part a call aims for. */
 const MAX_WINDOW_CHARS = 120_000;

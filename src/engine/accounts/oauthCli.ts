@@ -15,8 +15,8 @@ export interface OAuthCliAccount {
   directory: string;
 }
 
-const KEY = 'dsh.oauthCliAccounts.v1';
-const DEFAULTS = 'dsh.oauthCliDefaults.v1';
+const KEY = 'unify.oauthCliAccounts.v1';
+const DEFAULTS = 'unify.oauthCliDefaults.v1';
 const detectedCommands = new Map<string, string>();
 
 export function setDetectedCliCommand(provider: string, command: string): void {
@@ -25,7 +25,8 @@ export function setDetectedCliCommand(provider: string, command: string): void {
 
 /** The Claude Code CLI command. ChatGPT (Codex) accounts run natively and need no CLI. */
 export function cliCommand(provider: 'claude-cli'): string {
-  const setting = vscode.workspace.getConfiguration('dsh').get<string>('runtime.claudePath')?.trim();
+  const section = vscode.workspace.getConfiguration('unify');
+  const setting = vscode.workspace.getConfiguration('unify').get<string>('runtime.claudePath')?.trim();
   if (setting) return setting;
   const detected = detectedCommands.get(provider);
   if (detected) return detected;
@@ -71,7 +72,7 @@ function execute(account: OAuthCliAccount, args: string[], timeoutMs: number): P
 
 /**
  * OAuth credentials live in one isolated directory per account: Claude Code's config directory, or the ChatGPT
- * (Codex) auth.json that DSH signs in to natively.
+ * (Codex) auth.json that Unify signs in to natively.
  */
 export class OAuthCliAccounts {
   constructor(private readonly context: vscode.ExtensionContext) {}

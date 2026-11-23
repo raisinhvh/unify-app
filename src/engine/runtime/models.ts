@@ -1,6 +1,6 @@
 export interface AgentModel { value: string; name: string }
 
-/** pi-ai's openai-codex catalog: the models a ChatGPT (Codex) subscription can run through DSH. */
+/** pi-ai's openai-codex catalog: the models a ChatGPT (Codex) subscription can run through the agent runtime. */
 export const CODEX_MODELS = ['gpt-5.5', 'gpt-5.3-codex-spark', 'gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra', 'gpt-6-luna', 'gpt-6-sol'];
 export const DEFAULT_CODEX_MODEL = 'gpt-6-sol';
 
@@ -21,7 +21,7 @@ export function speedBackend(model: { provider: string; backend: string; speedOp
   const tier = speedTier(speed);
   if (['openai', 'anthropic', 'openrouter', 'opencode-go', 'mistral', 'self-hosted', 'codex-cli'].includes(model.provider) && tier && tier !== 'default' &&
       (backend === model.backend || backend === `${model.backend}-${tier}`)) {
-    throw new Error(`${model.provider} ${speed} is a request setting, not a model ID. The bundled DSH API adapter does not expose speed tiers. Choose None or configure a route to a separate available model.`);
+    throw new Error(`${model.provider} ${speed} is a request setting, not a model ID. The bundled agent-runtime API adapter does not expose speed tiers. Choose None or configure a route to a separate available model.`);
   }
   return backend;
 }

@@ -1,5 +1,5 @@
 /**
- * The `vscode` module the DSH engine is compiled against inside Unify.
+ * The `vscode` module the engine is compiled against inside Unify.
  *
  * This is deliberately a facade over Electron: the engine keeps its VS Code
  * code path, while main supplies paths, secrets, dialogs and the window.
@@ -7,15 +7,15 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Disposable, EventEmitter } from './events';
-import { importVsCodeData, EXTENSION_ID } from './importer';
 import {
   appendLog, configureBridge, configureOutput, configureUi, configureWebview, currentWebviewHtml,
   dispatchWebviewMessage, postSetupStatus, resolveWebviewView, setupStatus,
 } from './host';
-import { setSetupStatus } from './setup';
+import { setSetupStatus, type SetupStatus } from './setup';
 import { JsonMemento, configurePaths, configureSecrets, configureSettings, SecretStorageLike, ShimPaths, workspaceStatePath } from './state';
 import { configureWorkspace, setWorkspaceTrusted } from './workspace';
 import { Uri } from './uri';
+import { applyEditorState } from './editor';
 
 export * from './events';
 export * from './uri';
@@ -24,8 +24,10 @@ export * from './window';
 export * from './state';
 export * from './host';
 export { SqliteTableReader, readVsCodeState } from './sqlite';
-export { importVsCodeData, loadImportRecord, markSetupComplete, detectVsCodeUserDir } from './importer';
-export type { SetupStatus, MissingCredential } from './importer';
+export type { SetupStatus, MissingCredential } from './setup';
+
+/** The extension id the engine sees; the app itself is not installed in VS Code. */
+const EXTENSION_ID = 'unify.unify-ide';
 
 export interface ExtensionPackage {
   id: string;
@@ -67,7 +69,7 @@ export interface InitializeOptions {
 
 let context: ExtensionContext | undefined;
 
-/** First-run import of VS Code's extension storage, done before activate(). */
+/** First-run setup defaults, done before activate(). */
 export function prepareUnify(options: InitializeOptions): { context: ExtensionContext; setup: ReturnType<typeof setupStatus> } {
   const paths: ShimPaths = {
     extensionPath: options.extensionPath,
@@ -84,11 +86,20 @@ export function prepareUnify(options: InitializeOptions): { context: ExtensionCo
   configureWorkspace({ projectPath: options.projectPath, workspaceMemento: undefined });
 
   const globalMemento = new JsonMemento(join(options.stateRoot, 'state.json'));
-  // The project-specific memento is selected before the import so workspace
-  // state and the engine read the same file.
   const projectMemento = new JsonMemento(workspaceStatePath(options.projectPath));
-  const imported = importVsCodeData({ paths, globalMemento, workspaceMemento: projectMemento, projectPath: options.projectPath });
-  setSetupStatus(imported.setup);
+  const setup: SetupStatus = {
+    needsSetup: false,
+    firstRun: true,
+    importedAccounts: 0,
+    importedOAuthAccounts: 0,
+    importedSettings: 0,
+    importedWorkspace: false,
+    missing: [],
+    notes: [],
+    dataRoot: options.stateRoot,
+    sources: [],
+  };
+  setSetupStatus(setup);
 
   const extensionUri = Uri.file(options.extensionPath);
   context = {
@@ -115,8 +126,8 @@ export function prepareUnify(options: InitializeOptions): { context: ExtensionCo
     asAbsolutePath: (relativePath: string) => join(options.extensionPath, relativePath),
     extensionMode: 1,
   };
-  appendLog(`Unify initialized (${EXTENSION_ID}); state=${options.stateRoot} project=${options.projectPath ?? 'none'} imported=${imported.record.globalState}`);
-  return { context, setup: imported.setup };
+  appendLog(`Unify initialized (${EXTENSION_ID}); state=${options.stateRoot} project=${options.projectPath ?? 'none'}`);
+  return { context, setup };
 }
 
 /**
@@ -150,12 +161,19 @@ export async function bootWebview(options: {
 }): Promise<string | undefined> {
   configureBridge({ post: options.post, requestUi: options.requestUi as never });
   configureWebview({ cspSource: options.cspSource, asWebviewUri: options.asWebviewUri });
-  const resolved = await resolveWebviewView('dsh.sidebar');
+  const resolved = await resolveWebviewView('unify.sidebar');
   postSetupStatus();
   return resolved?.html;
 }
 
 export function receiveRendererMessage(message: unknown): boolean {
+  const candidate = message as { type?: unknown } | undefined;
+  if (candidate?.type === 'editorState') {
+    applyEditorState(message as never);
+    return true;
+  }
+  // GitHub set/sign-out/refresh are handled by the engine's sidebar message handler; forwarding the
+  // same message here as well used to store or clear the token twice.
   return dispatchWebviewMessage(message);
 }
 

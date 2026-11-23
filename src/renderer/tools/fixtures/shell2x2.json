@@ -19,7 +19,7 @@
         { "id": "u1", "kind": "message", "role": "user", "text": "ACP init hangs ~30s on cold start. Find out why." },
         { "id": "a1", "kind": "message", "role": "assistant", "text": "The client sends initialize before the stdio transport is attached, so the first request is dropped and only the 30s retry recovers it." },
         { "id": "t1", "kind": "tool", "event": { "id": "t1", "kind": "read", "title": "Read", "detail": "src/runtime/acp.ts", "state": "complete" } },
-        { "id": "t2", "kind": "tool", "event": { "id": "t2", "kind": "search", "title": "Searched", "detail": "\"initialize\" · 4 hits", "state": "complete" } },
+        { "id": "t2", "kind": "tool", "event": { "id": "t2", "kind": "search", "title": "Searched", "detail": "\"initialize\", 4 hits", "state": "complete" } },
         { "id": "t3", "kind": "tool", "event": { "id": "t3", "kind": "other", "title": "Editing", "detail": "src/runtime/acp.ts", "state": "running" } }
       ]
     },
@@ -53,7 +53,7 @@
       "timeline": [
         { "id": "u1", "kind": "message", "role": "user", "text": "Rank Hub results by installs, then name." },
         { "id": "t1", "kind": "tool", "event": { "id": "t1", "kind": "read", "title": "Read", "detail": "src/hub/search.ts", "state": "complete" } },
-        { "id": "t2", "kind": "tool", "event": { "id": "t2", "kind": "search", "title": "Searched", "detail": "\"score\" · 6 hits", "state": "complete" } },
+        { "id": "t2", "kind": "tool", "event": { "id": "t2", "kind": "search", "title": "Searched", "detail": "\"score\", 6 hits", "state": "complete" } },
         { "id": "a1", "kind": "message", "role": "assistant", "text": "Done. Exact name matches still come first; everything else sorts by installs, with name as the tie-break." }
       ]
     }

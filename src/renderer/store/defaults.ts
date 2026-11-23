@@ -33,6 +33,7 @@ export function defaultViewState(): SidebarViewState {
     toolpacks: [],
     features: defaultFeatures(),
     unifyFeatures: {},
+    shutdown: { armed: false, phase: 'idle' },
     nameModel: {},
     reviewModel: {},
     summaryModel: {},

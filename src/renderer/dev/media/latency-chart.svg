@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600">
+  <rect width="960" height="600" fill="#ffffff"/>
+  <text x="56" y="56" font-family="Segoe UI, sans-serif" font-size="22" fill="#2b2622">p95 latency, ms</text>
+  <g stroke="#ebe5dc" stroke-width="1">
+    <path d="M56 120 H912"/><path d="M56 220 H912"/><path d="M56 320 H912"/><path d="M56 420 H912"/><path d="M56 520 H912"/>
+  </g>
+  <g font-family="Segoe UI, sans-serif" font-size="13" fill="#8a8178">
+    <text x="20" y="124">400</text><text x="20" y="224">300</text><text x="20" y="324">200</text><text x="20" y="424">100</text><text x="36" y="524">0</text>
+  </g>
+  <path d="M56 400 L160 380 L264 390 L368 330 L472 300 L576 210 L680 240 L784 180 L912 160" fill="none" stroke="#2f6fb5" stroke-width="3"/>
+  <path d="M56 460 L160 450 L264 455 L368 440 L472 430 L576 420 L680 425 L784 410 L912 405" fill="none" stroke="#c0763f" stroke-width="3"/>
+  <circle cx="912" cy="160" r="5" fill="#2f6fb5"/><circle cx="912" cy="405" r="5" fill="#c0763f"/>
+</svg>

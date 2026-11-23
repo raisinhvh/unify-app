@@ -22,6 +22,7 @@ export const ENGINE_FEATURE_DEFAULTS = {
   'agents.maxParallel': 4,
   'agents.imagesToParent': true,
   'agents.explorerRanges': true,
+  'agents.stuckCommandMinutes': 5,
   'tools.rangeEdits': true,
   'chats.showYourWork': true,
   'chat.friendlyInternalRows': true,

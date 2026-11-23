@@ -3,14 +3,14 @@
  *
  * The engine modules are bundled with esbuild into `test/.tmp` (never outside the repo) and imported as an ES
  * module. Every store is pointed at a temporary home and workspace, so nothing reads or writes the real
- * `~/.dsh`. `AGENTS_HOME` is redirected for the same reason (skills live under `~/.agents`).
+ * `~/.unify`. `AGENTS_HOME` is redirected for the same reason (skills live under `~/.agents`).
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -28,15 +28,27 @@ await build({
 });
 const { handleUnifyRequest, disposeUnifyRequestWatchers } = await import(pathToFileURL(bundleFile).href);
 
+const knowledgeBundleFile = join(tempRoot, 'knowledge.mjs');
+await build({
+  entryPoints: [join(here, '../src/engine/unify/requests/knowledge.ts')],
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  target: 'node20',
+  outfile: knowledgeBundleFile,
+  external: ['esbuild'],
+});
+const { openKnowledge } = await import(pathToFileURL(knowledgeBundleFile).href);
+
 const home = join(tempRoot, 'home');
-const dshHome = join(home, '.dsh');
-const unifyRoot = join(dshHome, 'unify');
+const unifyHome = join(home, '.unify');
+const unifyRoot = join(unifyHome, 'unify');
 const workspace = join(home, 'project');
 const agentsHome = join(home, '.agents');
 const previousAgentsHome = process.env.AGENTS_HOME;
 process.env.AGENTS_HOME = agentsHome;
 
-const context = { workspaceRoot: workspace, dshHome, unifyRoot, version: '9.9.9' };
+const context = { workspaceRoot: workspace, unifyHome, unifyRoot, version: '9.9.9' };
 
 async function send(message) {
   const replies = [];
@@ -51,27 +63,25 @@ async function seed() {
   await mkdir(unifyRoot, { recursive: true });
   await writeFile(join(workspace, 'src/a.ts'), 'export const a = 1;\n', 'utf8');
   await writeFile(join(workspace, 'README.md'), '# Project\n', 'utf8');
-  await writeFile(join(dshHome, 'AGENTS.md'), '# Rules\n\n## Existing Rule\n\nKeep this.\n\n## Second Rule\n\nAlso keep this.\n', 'utf8');
-  await mkdir(join(dshHome, 'toolpacks/legacy'), { recursive: true });
-  await writeFile(join(dshHome, 'toolpacks/legacy/pack.ts'), 'export default { name: "legacy" };\n', 'utf8');
-  await mkdir(join(dshHome, 'skills/foo'), { recursive: true });
-  await writeFile(join(dshHome, 'skills/foo/SKILL.md'), '---\nname: foo\ndescription: A demo skill\n---\n# Foo\n', 'utf8');
+  await writeFile(join(unifyHome, 'AGENTS.md'), '# Rules\n\n## Existing Rule\n\nKeep this.\n\n## Second Rule\n\nAlso keep this.\n', 'utf8');
+  await mkdir(join(unifyHome, 'skills/foo'), { recursive: true });
+  await writeFile(join(unifyHome, 'skills/foo/SKILL.md'), '---\nname: foo\ndescription: A demo skill\n---\n# Foo\n', 'utf8');
   await mkdir(join(agentsHome, 'skills/bar'), { recursive: true });
   await writeFile(join(agentsHome, 'skills/bar/SKILL.md'), '---\nname: bar\ndescription: Another skill\n---\n# Bar\n', 'utf8');
-  await mkdir(join(dshHome, 'memory/workflow'), { recursive: true });
-  await writeFile(join(dshHome, 'memory/workflow/release.md'), '# Release flow\n\nTag, then push.\n', 'utf8');
-  await writeFile(join(dshHome, 'memory/top.md'), '# Top note\n\nBody.\n', 'utf8');
+  await mkdir(join(unifyHome, 'memory/workflow'), { recursive: true });
+  await writeFile(join(unifyHome, 'memory/workflow/release.md'), '# Release flow\n\nTag, then push.\n', 'utf8');
+  await writeFile(join(unifyHome, 'memory/top.md'), '# Top note\n\nBody.\n', 'utf8');
   const accountDir = join(tempRoot, 'accounts/claude');
   await mkdir(accountDir, { recursive: true });
   await writeFile(join(accountDir, 'auth.json'), '{"token":"x"}\n', 'utf8');
   await writeFile(join(accountDir, '.claude.json'), '{"signedIn":true}\n', 'utf8');
-  await writeFile(join(dshHome, 'unify/state.json'), JSON.stringify({
-    'dsh.oauthCliAccounts.v1': [{ id: 'acc1', provider: 'claude-cli', label: 'Claude', email: 'a@example.com', directory: accountDir }],
-    'dsh.accounts.v1': [{ id: 'api1', provider: 'self-hosted', label: 'Server', metadata: { baseURL: 'http://localhost:1234' } }],
-    'dsh.oauthCliDefaults.v1': { 'claude-cli': 'acc1' },
+  await writeFile(join(unifyHome, 'unify/state.json'), JSON.stringify({
+    'unify.oauthCliAccounts.v1': [{ id: 'acc1', provider: 'claude-cli', label: 'Claude', email: 'a@example.com', directory: accountDir }],
+    'unify.accounts.v1': [{ id: 'api1', provider: 'self-hosted', label: 'Server', metadata: { baseURL: 'http://localhost:1234' } }],
+    'unify.oauthCliDefaults.v1': { 'claude-cli': 'acc1' },
   }, null, 2), 'utf8');
-  await writeFile(join(dshHome, 'unify/settings.json'), JSON.stringify({
-    'dsh.models': [{ name: 'Claude Default', provider: 'claude-cli', enabled: true }],
+  await writeFile(join(unifyHome, 'unify/settings.json'), JSON.stringify({
+    'unify.models': [{ name: 'Claude Default', provider: 'claude-cli', enabled: true }],
   }, null, 2), 'utf8');
   return { accountDir };
 }
@@ -124,7 +134,7 @@ test('knowledge: rules, memory, audiences, skill import and removal', async () =
   const list = await send({ type: 'knowledgeList' });
   const items = ofType(list.replies, 'knowledgeState')[0].items;
   assert.ok(items.some(item => item.id === 'rule:global:existing-rule' && item.kind === 'rule'));
-  assert.ok(items.some(item => item.id === 'skill:dsh:skills/foo/SKILL.md' && item.kind === 'skill'));
+  assert.ok(items.some(item => item.id === 'skill:unify:skills/foo/SKILL.md' && item.kind === 'skill'));
   assert.ok(items.some(item => item.kind === 'memory' && item.folder === 'workflow'));
 
   const saveRule = await send({
@@ -136,7 +146,7 @@ test('knowledge: rules, memory, audiences, skill import and removal', async () =
   const rule = ofType(saveRule.replies, 'knowledgeSaved')[0].item;
   assert.equal(rule.id, 'rule:global:batch-commands');
   assert.deepEqual(rule.audiences, ['main']);
-  assert.match(await readFile(join(dshHome, 'AGENTS.md'), 'utf8'), /## Batch commands/);
+  assert.match(await readFile(join(unifyHome, 'AGENTS.md'), 'utf8'), /## Batch commands/);
 
   const read = await send({ type: 'readKnowledge', requestId: 'k2', id: 'rule:global:batch-commands' });
   assert.equal(ofType(read.replies, 'knowledgeContent')[0].content, 'Run independent commands together.');
@@ -171,10 +181,66 @@ test('knowledge: rules, memory, audiences, skill import and removal', async () =
 
   const removed = await send({ type: 'removeKnowledge', requestId: 'k5', id: 'rule:global:batch-commands' });
   assert.equal(ofType(removed.replies, 'knowledgeRemoved')[0].id, 'rule:global:batch-commands');
-  assert.doesNotMatch(await readFile(join(dshHome, 'AGENTS.md'), 'utf8'), /Batch commands/);
+  assert.doesNotMatch(await readFile(join(unifyHome, 'AGENTS.md'), 'utf8'), /Batch commands/);
 
   const bad = await send({ type: 'readKnowledge', requestId: 'k6', id: 'skill:agents:../../escape/SKILL.md' });
   assert.match(ofType(bad.replies, 'knowledgeError')[0].message, /no longer exists/);
+});
+
+test('knowledge: skill ids are validated for open/remove and undo only restores stored versions', async () => {
+  const openPaths = { workspaceRoot: workspace, unifyHome: unifyHome, agentsHome };
+  const opened = [];
+  const launch = target => opened.push(target);
+
+  await openKnowledge(openPaths, 'skill:unify:skills/foo/SKILL.md', undefined, launch);
+  assert.deepEqual(opened, [join(unifyHome, 'skills/foo')], 'a known skill opens its folder');
+  await assert.rejects(
+    openKnowledge(openPaths, 'skill:unify:../../..', undefined, launch),
+    /no longer exists/,
+  );
+  await assert.rejects(
+    openKnowledge(openPaths, 'skill:unify:skills/foo/SKILL.md', '../../outside', launch),
+    /Invalid file path/,
+  );
+  assert.deepEqual(opened, [join(unifyHome, 'skills/foo')], 'crafted ids never launch a path');
+
+  // The skills root itself is not a skill folder, even if a SKILL.md sits directly in it.
+  const rootSkill = join(agentsHome, 'skills/SKILL.md');
+  await writeFile(rootSkill, '---\nname: skills\n---\n# Root\n', 'utf8');
+  try {
+    const removed = await send({ type: 'removeKnowledge', id: 'skill:agents:skills/SKILL.md' });
+    assert.match(ofType(removed.replies, 'knowledgeError')[0].message, /outside the skills folders/);
+    assert.ok(existsSync(rootSkill), 'the skills root was not removed');
+    assert.ok(existsSync(join(agentsHome, 'skills/bar/SKILL.md')));
+  } finally {
+    await rm(rootSkill, { force: true });
+  }
+
+  const skillFile = join(agentsHome, 'skills/bar/SKILL.md');
+  const outsideFile = join(tempRoot, 'outside-undo.txt');
+  await writeFile(outsideFile, 'untouched\n', 'utf8');
+  const storeFile = join(unifyHome, 'unify/knowledge.json');
+  const store = JSON.parse(await readFile(storeFile, 'utf8'));
+  store.versions = {
+    [resolve(outsideFile)]: [{ at: Date.now(), by: 'agent', content: 'hijacked\n' }],
+    [resolve(skillFile)]: [{ at: Date.now(), by: 'agent', content: '---\nname: bar\n---\n# Bar restored\n' }],
+  };
+  await writeFile(storeFile, JSON.stringify(store, null, 2), 'utf8');
+
+  const escaped = await send({ type: 'undoKnowledgeChange', id: 'skill:unify:../../outside-undo.txt' });
+  assert.match(ofType(escaped.replies, 'knowledgeError')[0].message, /no longer exists/);
+  assert.equal(await readFile(outsideFile, 'utf8'), 'untouched\n');
+
+  const outsideMemory = await send({ type: 'undoKnowledgeChange', id: 'memory:global:../../outside-undo.txt' });
+  assert.match(ofType(outsideMemory.replies, 'knowledgeError')[0].message, /Invalid file path/);
+  assert.equal(await readFile(outsideFile, 'utf8'), 'untouched\n');
+
+  const missing = await send({ type: 'undoKnowledgeChange', id: 'skill:unify:skills/foo/SKILL.md' });
+  assert.match(ofType(missing.replies, 'knowledgeError')[0].message, /Nothing to undo/);
+
+  const restored = await send({ type: 'undoKnowledgeChange', id: 'skill:agents:skills/bar/SKILL.md' });
+  assert.equal(ofType(restored.replies, 'knowledgeState').length, 1);
+  assert.match(await readFile(skillFile, 'utf8'), /Bar restored/);
 });
 
 test('providers: labels, default model, model toggle and OAuth sign-out', async () => {
@@ -182,17 +248,17 @@ test('providers: labels, default model, model toggle and OAuth sign-out', async 
   const renamed = ofType(rename.replies, 'accountsState')[0].accounts.find(account => account.id === 'acc1');
   assert.equal(renamed.label, 'Work');
 
-  const state = JSON.parse(await readFile(join(dshHome, 'unify/state.json'), 'utf8'));
-  assert.equal(state['dsh.oauthCliAccounts.v1'][0].label, 'Work');
+  const state = JSON.parse(await readFile(join(unifyHome, 'unify/state.json'), 'utf8'));
+  assert.equal(state['unify.oauthCliAccounts.v1'][0].label, 'Work');
 
   const defaultModel = await send({ type: 'setAccountDefaultModel', accountId: 'acc1', modelId: 'Claude Default' });
   assert.equal(ofType(defaultModel.replies, 'accountsState')[0].accounts.find(account => account.id === 'acc1').defaultModel, 'Claude Default');
 
   const toggle = await send({ type: 'setModelEnabled', modelId: 'Claude Default', enabled: false });
   assert.deepEqual(toggle.replies, []);
-  const settings = JSON.parse(await readFile(join(dshHome, 'unify/settings.json'), 'utf8'));
-  assert.equal(settings['dsh.models'][0].enabled, false);
-  const providerStore = JSON.parse(await readFile(join(dshHome, 'unify/providers.json'), 'utf8'));
+  const settings = JSON.parse(await readFile(join(unifyHome, 'unify/settings.json'), 'utf8'));
+  assert.equal(settings['unify.models'][0].enabled, false);
+  const providerStore = JSON.parse(await readFile(join(unifyHome, 'unify/providers.json'), 'utf8'));
   assert.equal(providerStore.modelEnabled['Claude Default'], false);
 
   assert.ok(existsSync(join(seeded.accountDir, 'auth.json')));
@@ -211,7 +277,7 @@ test('toolpacks: per-tool switches and group policies are persisted', async () =
   assert.equal(tool.handled, true);
   const permission = await send({ type: 'toolpackPermission', id: 'spreadsheets', group: 'write', policy: 'off' });
   assert.equal(permission.handled, true);
-  const store = JSON.parse(await readFile(join(dshHome, 'unify/toolpacks.json'), 'utf8'));
+  const store = JSON.parse(await readFile(join(unifyHome, 'unify/toolpacks.json'), 'utf8'));
   assert.equal(store.packs.spreadsheets.tools.read_sheet, false);
   assert.equal(store.packs.spreadsheets.permissions.write, 'off');
 
@@ -220,34 +286,17 @@ test('toolpacks: per-tool switches and group policies are persisted', async () =
   assert.equal(ofType(invalid.replies, 'filesError').length, 0);
 });
 
-test('setup: tool check, DSH import scan/import, complete flag and default project', async () => {
+test('setup: tool check, complete flag and default project', async () => {
   const tools = await send({ type: 'checkTools' });
   const list = ofType(tools.replies, 'toolsState')[0].tools;
   assert.deepEqual(list.map(tool => tool.id), ['git', 'node', 'claude']);
   assert.equal(list.find(tool => tool.id === 'node').state, 'found');
 
-  const scan = await send({ type: 'scanDshImports' });
-  const result = ofType(scan.replies, 'dshImportState')[0].scan;
-  assert.deepEqual(result.toolpacks, ['legacy']);
-  assert.equal(result.rules, 2);
-  assert.equal(result.skills, 3);
-  assert.equal(result.memoryNotes, 3);
-
-  const imported = await send({ type: 'importFromDsh', what: 'toolpacks' });
-  assert.equal(ofType(imported.replies, 'dshImportResult')[0].count, 1);
-  assert.ok(existsSync(join(dshHome, 'unify/storage/toolpacks/legacy/pack.ts')));
-
-  const again = await send({ type: 'importFromDsh', what: 'toolpacks' });
-  assert.equal(ofType(again.replies, 'dshImportResult')[0].count, 0);
-
-  const knowledge = await send({ type: 'importFromDsh', what: 'knowledge' });
-  assert.equal(ofType(knowledge.replies, 'dshImportResult')[0].count, 8);
-
   const initial = await send({ type: 'getSetupState' });
   assert.equal(ofType(initial.replies, 'setupState')[0].complete, false);
 
   const project = { name: 'Demo', path: workspace };
-  const complete = await send({ type: 'setupComplete', summary: { accounts: ['Claude'], project, tools: ['git', 'node'], theme: 'graphite', toolpacks: 'imported', knowledge: 'imported' } });
+  const complete = await send({ type: 'setupComplete', summary: { accounts: ['Claude'], project, tools: ['git', 'node'], theme: 'graphite' } });
   const done = ofType(complete.replies, 'setupState')[0];
   assert.equal(done.complete, true);
   assert.deepEqual(done.defaultProject, project);
@@ -265,7 +314,7 @@ test('settings and unknown messages', async () => {
   const app = ofType(info.replies, 'appInfo')[0].info;
   assert.equal(app.version, '9.9.9');
   assert.equal(app.channel, 'stable');
-  assert.equal(app.dataFolder, dshHome);
+  assert.equal(app.dataFolder, unifyHome);
   assert.deepEqual(app.update, { state: 'idle' });
 
   const check = await send({ type: 'checkForUpdates' });

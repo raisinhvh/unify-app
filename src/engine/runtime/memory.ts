@@ -6,23 +6,23 @@ import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'nod
  * Memory: the user's knowledge vaults (Markdown notes, conventions, scripts), presented to agents as ordinary
  * folders in the working copy so every runtime can search, read and edit them with its own tools.
  *
- * Global memory lives in ~/.dsh/memory. Each turn it is reconciled with a copy at GLOBAL_MEMORY_DIR in the working
+ * Global memory lives in `unifyHome()/memory`. Each turn it is reconciled with a copy at GLOBAL_MEMORY_DIR in the working
  * copy: changes made on either side since the last sync are carried to the other, so notes an agent writes reach
- * the real folder and every other project. DSH's review skips .dsh/, so these edits are not proposals.
+ * the real folder and every other project. Unify's review skips .unify/, so these edits are not proposals.
  * The project's memory (REPO_MEMORY_DIR) is ordinary project content and is reviewed like code.
  */
-export const GLOBAL_MEMORY_DIR = '.dsh/global-memory';
+export const GLOBAL_MEMORY_DIR = '.unify/global-memory';
 /** The project's own memory, ordinary project content. */
-export const REPO_MEMORY_DIR = '.dsh/memory';
-const MANIFEST = '.dsh/global-memory.json';
+export const REPO_MEMORY_DIR = '.unify/memory';
+const MANIFEST = '.unify/global-memory.json';
 const SKIP = new Set(['.git', '.obsidian', '.trash', 'node_modules', '.DS_Store', 'Thumbs.db']);
 export const MAX_MEMORY_FILES = 5000;
 export const MAX_MEMORY_BYTES = 50 * 1024 * 1024;
 const INDEX_FILES = ['INDEX.md', 'index.md', 'README.md', 'Home.md', '_index.md'];
 
-/** Where global memory lives on this PC: beside DSH's global rules and skills, shared by every editor that runs DSH. */
-export function globalMemoryFolder(dshHome: string): string {
-  return join(dshHome, 'memory');
+/** Where global memory lives on this PC: beside Unify's global rules and skills. */
+export function globalMemoryFolder(unifyHome: string): string {
+  return join(unifyHome, 'memory');
 }
 
 /** Whether a working-copy-relative path lies in the global copy or the project's memory. */

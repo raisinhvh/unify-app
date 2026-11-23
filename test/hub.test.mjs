@@ -15,8 +15,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const tempRoot = join(here, '.tmp', `hub-${process.pid}-${Date.now()}`);
-const dshHome = join(tempRoot, 'home/.dsh');
-const unifyRoot = join(dshHome, 'unify');
+const unifyHome = join(tempRoot, 'home/.unify');
+const unifyRoot = join(unifyHome, 'unify');
 const workspace = join(tempRoot, 'project');
 const toolpacksDir = join(unifyRoot, 'storage/toolpacks');
 await mkdir(tempRoot, { recursive: true });
@@ -42,9 +42,9 @@ await build({
   external: ['esbuild'],
 });
 const { handleUnifyRequest } = await import(pathToFileURL(requestsFile).href);
-const { createHubRegistry } = await import(pathToFileURL(hubFile).href);
+const { createHubRegistry, installHubPack } = await import(pathToFileURL(hubFile).href);
 
-const context = { workspaceRoot: workspace, dshHome, unifyRoot, version: '0.1.0-test' };
+const context = { workspaceRoot: workspace, unifyHome, unifyRoot, version: '0.1.0-test' };
 
 async function send(message) {
   const replies = [];
@@ -77,7 +77,7 @@ test('local registry serves the fixture catalogue and pack detail', async () => 
   assert.equal(await registry.detail('missing-pack'), undefined);
 });
 
-test('hubBrowse answers with the catalogue and hubPublish explains the gap', async () => {
+test('hubBrowse answers with the catalogue and publish requires approved GitHub login', async () => {
   const browse = await send({ type: 'hubBrowse' });
   assert.equal(browse.handled, true);
   const hub = ofType(browse.replies, 'hubState')[0].hub;
@@ -85,14 +85,59 @@ test('hubBrowse answers with the catalogue and hubPublish explains the gap', asy
   assert.equal(hub.error, undefined);
 
   const publish = await send({ type: 'hubPublish' });
-  const published = ofType(publish.replies, 'hubState')[0].hub;
-  assert.match(published.error, /Publishing is not available yet/);
+  assert.deepEqual(ofType(publish.replies, 'hubPublishResult')[0], {
+    type: 'hubPublishResult', ok: false, message: 'Sign in to GitHub to publish.',
+  });
+  context.getGithubAuth = async () => ({ login: 'not-approved', token: 'secret' });
+  try {
+    const unlisted = await send({ type: 'hubPublish' });
+    assert.deepEqual(ofType(unlisted.replies, 'hubPublishResult')[0], {
+      type: 'hubPublishResult', ok: false, message: 'Publishing is limited to approved accounts.',
+    });
+    context.getGithubAuth = async () => ({ login: 'RAISINHVH', token: 'secret' });
+    const approved = await send({ type: 'hubPublish' });
+    assert.deepEqual(ofType(approved.replies, 'hubPublishResult')[0], {
+      type: 'hubPublishResult', ok: false,
+      message: 'Publishing is not wired yet: the Hub repository takes packs through a pull request.',
+    });
+  } finally {
+    delete context.getGithubAuth;
+  }
 });
 
-test('hubInstall downloads, compiles, runs the install script and records the pack', async () => {
-  const install = await send({ type: 'hubInstall', id: 'spreadsheets', target: 'this' });
-  assert.equal(install.handled, true);
-  const progress = ofType(install.replies, 'hubInstallProgress');
+test('installHubPack returns the script without consent and runs it only when allowed', async () => {
+  const registry = createHubRegistry();
+  const firstReplies = [];
+  const blocked = await installHubPack({
+    registry,
+    id: 'spreadsheets',
+    toolpacksDir,
+    reply: message => firstReplies.push(message),
+  });
+  assert.deepEqual(
+    { ok: blocked.ok, needsScriptConsent: blocked.needsScriptConsent, scriptName: blocked.scriptName },
+    { ok: false, needsScriptConsent: true, scriptName: 'install.js' },
+  );
+  assert.match(blocked.scriptText, /install-ran\.txt/);
+  assert.equal(blocked.error, undefined);
+  assert.equal(existsSync(join(toolpacksDir, 'spreadsheets')), false, 'nothing was installed');
+  assert.ok(!firstReplies.some(step => step.state === 'done'));
+  assert.equal(firstReplies.at(-1).state, 'installing');
+
+  const replies = [];
+  let recorded;
+  const installed = await installHubPack({
+    registry,
+    id: 'spreadsheets',
+    toolpacksDir,
+    reply: message => replies.push(message),
+    target: 'this',
+    allowScript: true,
+    onInstalled: pack => { recorded = pack; },
+  });
+  assert.equal(installed.ok, true);
+  assert.equal(installed.needsScriptConsent, undefined);
+  const progress = replies.filter(message => message.type === 'hubInstallProgress');
   assert.equal(progress[0].state, 'downloading');
   assert.ok(progress.some(step => step.state === 'installing'));
   assert.equal(progress.at(-1).state, 'done');
@@ -106,22 +151,27 @@ test('hubInstall downloads, compiles, runs the install script and records the pa
   const meta = JSON.parse(await readFile(join(folder, 'meta.json'), 'utf8'));
   assert.equal(meta.enabled, true);
   assert.equal(meta.hubId, 'spreadsheets');
+  assert.equal(recorded.id, 'spreadsheets');
+  assert.equal(recorded.syncedDevices, 1);
 
   const require = createRequire(import.meta.url);
   const pack = require(join(folder, 'pack.js'));
   assert.equal(pack.default.name, 'spreadsheets');
   assert.ok(Array.isArray(pack.default.tools) && pack.default.tools.length === 12);
   assert.ok(pack.default.tools.every(tool => typeof tool.run === 'function'));
-
-  const store = JSON.parse(await readFile(join(unifyRoot, 'toolpacks.json'), 'utf8'));
-  assert.equal(store.installed.spreadsheets.source, 'hub');
-  assert.equal(store.installed.spreadsheets.syncedDevices, 1);
-  assert.equal(store.syncTargets.spreadsheets, 'this');
 });
 
 test('hubInstall maps hyphenated ids to valid toolpack ids and keeps the enabled flag', async () => {
-  const install = await send({ type: 'hubInstall', id: 'roblox-studio', target: 'all' });
-  assert.equal(ofType(install.replies, 'hubInstallProgress').at(-1).state, 'done');
+  const registry = createHubRegistry();
+  const install = await installHubPack({
+    registry,
+    id: 'roblox-studio',
+    toolpacksDir,
+    reply: () => undefined,
+    target: 'all',
+    allowScript: true,
+  });
+  assert.equal(install.ok, true);
   const folder = join(toolpacksDir, 'roblox_studio');
   assert.ok(existsSync(join(folder, 'pack.js')));
   const meta = JSON.parse(await readFile(join(folder, 'meta.json'), 'utf8'));
@@ -131,15 +181,86 @@ test('hubInstall maps hyphenated ids to valid toolpack ids and keeps the enabled
   assert.equal(pack.default.name, 'roblox_studio');
   assert.ok(pack.default.tools.some(tool => tool.name === 'tree'));
 
-  const store = JSON.parse(await readFile(join(unifyRoot, 'toolpacks.json'), 'utf8'));
-  assert.equal(store.installed['roblox-studio'].syncedDevices, 2);
-  assert.equal(store.syncTargets['roblox-studio'], 'all');
-
-  await writeFile(join(folder, 'meta.json'), JSON.stringify({ description: meta.description, enabled: false }), 'utf8');
-  const reinstall = await send({ type: 'hubInstall', id: 'roblox-studio', target: 'all' });
-  assert.equal(ofType(reinstall.replies, 'hubInstallProgress').at(-1).state, 'done');
+  await writeFile(join(folder, 'meta.json'), JSON.stringify({
+    description: meta.description,
+    enabled: false,
+    hubId: 'roblox-studio',
+  }), 'utf8');
+  const reinstall = await installHubPack({
+    registry,
+    id: 'roblox-studio',
+    toolpacksDir,
+    reply: () => undefined,
+    target: 'all',
+    allowScript: true,
+  });
+  assert.equal(reinstall.ok, true);
   const kept = JSON.parse(await readFile(join(folder, 'meta.json'), 'utf8'));
   assert.equal(kept.enabled, false);
+  assert.equal(reinstall.pack.syncedDevices, 2);
+});
+
+test('installHubPack throws on an empty id instead of writing the toolpacks folder itself', async () => {
+  await assert.rejects(
+    installHubPack({ registry: createHubRegistry(), id: '', toolpacksDir, reply: () => undefined }),
+    /empty id/,
+  );
+});
+
+test('installHubPack refuses to replace a folder that belongs to a different Hub pack', async () => {
+  const folder = join(toolpacksDir, 'screen_recorder');
+  await mkdir(folder, { recursive: true });
+  const originalMeta = `${JSON.stringify({ description: 'not ours', enabled: true, hubId: 'another-pack' })}\n`;
+  await writeFile(join(folder, 'meta.json'), originalMeta, 'utf8');
+  await writeFile(join(folder, 'keep.txt'), 'do not delete', 'utf8');
+
+  const install = await installHubPack({
+    registry: createHubRegistry(),
+    id: 'screen-recorder',
+    toolpacksDir,
+    reply: () => undefined,
+    target: 'this',
+    allowScript: true,
+  });
+  assert.equal(install.ok, false);
+  assert.match(install.error, /belongs to Hub pack "another-pack"/);
+  assert.equal(await readFile(join(folder, 'meta.json'), 'utf8'), originalMeta);
+  assert.equal(await readFile(join(folder, 'keep.txt'), 'utf8'), 'do not delete');
+});
+
+test('hubInstall forwards allowScript and posts hubInstallResult for consent, success and failure', async () => {
+  const blocked = await send({ type: 'hubInstall', id: 'containers', target: 'all', requestId: 'h1' });
+  const consent = ofType(blocked.replies, 'hubInstallResult')[0];
+  assert.equal(consent.type, 'hubInstallResult');
+  assert.equal(consent.requestId, 'h1');
+  assert.deepEqual(
+    { ok: consent.ok, id: consent.id, needsScriptConsent: consent.needsScriptConsent, scriptName: consent.scriptName },
+    { ok: false, id: 'containers', needsScriptConsent: true, scriptName: 'install.js' },
+  );
+  assert.match(consent.scriptText, /install-ran\.txt/);
+  assert.equal(existsSync(join(toolpacksDir, 'containers')), false, 'nothing was installed without consent');
+
+  const retried = await send({ type: 'hubInstall', id: 'containers', target: 'this', requestId: 'h2', allowScript: true });
+  const installed = ofType(retried.replies, 'hubInstallResult')[0];
+  assert.equal(installed.type, 'hubInstallResult');
+  assert.equal(installed.requestId, 'h2');
+  assert.equal(installed.ok, true);
+  assert.equal(installed.pack.id, 'containers');
+  assert.equal(installed.pack.syncedDevices, 1);
+  assert.ok(existsSync(join(toolpacksDir, 'containers/install-ran.txt')), 'allowScript ran the script');
+
+  const failed = await send({ type: 'hubInstall', id: 'not-in-the-hub', target: 'all', requestId: 'h3' });
+  const error = ofType(failed.replies, 'hubInstallResult')[0];
+  assert.equal(error.type, 'hubInstallResult');
+  assert.equal(error.requestId, 'h3');
+  assert.equal(error.ok, false);
+  assert.match(error.error, /no pack/);
+
+  const empty = await send({ type: 'hubInstall', id: '', target: 'all', requestId: 'h4' });
+  const choose = ofType(empty.replies, 'hubInstallResult')[0];
+  assert.equal(choose.requestId, 'h4');
+  assert.equal(choose.ok, false);
+  assert.match(choose.error, /Choose a pack/);
 });
 
 test('hubInstall of an unknown pack fails with an error progress and writes nothing', async () => {

@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { conflictName } from '../runtime/memory';
 
-/** `dsh.*` settings that travel with the config, read from and written to user settings only. */
+/** `unify.*` settings that travel with the config, read from and written to user settings only. */
 export const SYNCED_SETTINGS = [
   'models', 'subagents', 'nameModel', 'reviewModel', 'summaryModel', 'deciderModel', 'explorerModel', 'smartAutoRanks', 'mcpServers', 'accessibility',
   'checkpointHint', 'keepAliveMax', 'experimental.autoCompact', 'experimental.autoCompactTokens', 'experimental.batching', 'experimental.trimTools',
@@ -12,20 +12,26 @@ export const SYNCED_SETTINGS = [
   'updates.check', 'updates.repository', 'runtime.mirror', 'runtime.maxWorkspaceFiles', 'runtime.maxWorkspaceBytes',
 ] as const;
 
-/** `dsh.*` settings that stay on each PC because they hold paths to programs installed on it. */
+/** `unify.*` settings that stay on each PC because they hold paths to programs installed on it. */
 export const LOCAL_SETTINGS = ['runtime.nodePath', 'runtime.cursorAgentPath', 'runtime.claudePath', 'runtime.gitPath', 'runtime.processPriority', 'runtime.powershellSpeedups', 'runtime.rustTools', 'memory.enabled'] as const;
 
-export const GIST_FILE = 'dsh-config.json';
-export const GIST_DESCRIPTION = 'DSH-IDE config (synced by DSH-IDE; API keys and MCP secrets are not included)';
+export const GIST_FILE = 'unify-config.json';
+export const GIST_DESCRIPTION = 'Unify config (synced by Unify; API keys and MCP secrets are not included)';
 
 /** `memory` is the global memory folder on this PC, when one is set. */
-export interface SyncRoots { dshHome: string; agentsHome: string; toolpacks: string; memory?: string }
+export interface SyncRoots {
+  /** Unify's data home: the same folder as `unifyHome()`. */
+  unifyHome?: string;
+  agentsHome: string;
+  toolpacks: string;
+  memory?: string;
+}
 export interface SyncFile { data: string; encoding?: 'base64' }
 export interface ConfigBundle {
-  format: 'dsh-config';
+  format: 'unify-config';
   version: 1;
   settings: Record<string, unknown>;
-  /** Keyed by `dsh/AGENTS.md`, `dsh/skills/...`, `agents/skills/...` or `memory/...`. */
+  /** Keyed by `unify/AGENTS.md`, `unify/skills/...`, `agents/skills/...` or `memory/...`. */
   files: Record<string, SyncFile>;
   toolpacks: Record<string, ToolpackBundle>;
 }
@@ -77,14 +83,17 @@ export function parseBundle(text: string): ConfigBundle {
 
 export function validateBundle(value: unknown): ConfigBundle {
   const bundle = value as Partial<ConfigBundle> | null;
-  if (!bundle || bundle.format !== 'dsh-config') throw new Error('The GitHub config is not a DSH config.');
-  if (bundle.version !== 1) throw new Error(`The GitHub config uses version ${String(bundle.version)}; update DSH-IDE to read it.`);
+  if (!bundle || bundle.format !== 'unify-config') throw new Error('The GitHub config is not a Unify config.');
+  if (bundle.version !== 1) throw new Error(`The GitHub config uses version ${String(bundle.version)}; update Unify to read it.`);
   const record = (item: unknown): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item);
   if (!record(bundle.settings) || !record(bundle.files) || !record(bundle.toolpacks)) throw new Error('The GitHub config is incomplete.');
+  const files: Record<string, SyncFile> = {};
   for (const [path, file] of Object.entries(bundle.files)) {
     if (!record(file) || typeof file.data !== 'string' || (file.encoding !== undefined && file.encoding !== 'base64')) throw new Error(`The GitHub config has an invalid file: ${path}`);
-    syncPath({ dshHome: '/d', agentsHome: '/a', toolpacks: '/t', memory: '/m' }, path);
+    syncPath({ unifyHome: '/d', agentsHome: '/a', toolpacks: '/t', memory: '/m' }, path);
+    files[path] = file as SyncFile;
   }
+  bundle.files = files;
   for (const [id, pack] of Object.entries(bundle.toolpacks)) {
     if (!PACK_ID.test(id) || !record(pack) || typeof pack.source !== 'string' || typeof pack.enabled !== 'boolean') throw new Error(`The GitHub config has an invalid toolpack: ${id}`);
     if (pack.settings !== undefined && (!record(pack.settings) || Object.entries(pack.settings).some(([file, value]) => !SETTINGS_FILE.test(file) || !record(value)))) {
@@ -123,14 +132,20 @@ export function mergeBundles(base: ConfigBundle, local: ConfigBundle, remote: Co
   };
   return {
     bundle: {
-      format: 'dsh-config', version: 1,
-      settings: merge(key => `setting dsh.${key}`, base.settings, local.settings, remote.settings),
-      files: keepBothNotes(merge(key => key.replace(/^dsh\//, '~/.dsh/').replace(/^agents\//, '~/.agents/'), base.files, local.files, remote.files, true)),
+      format: 'unify-config', version: 1,
+      settings: merge(key => `setting unify.${key}`, base.settings, local.settings, remote.settings),
+      files: keepBothNotes(merge(key => key.replace(/^unify\//, '~/.unify/').replace(/^agents\//, '~/.agents/'), base.files, local.files, remote.files, true)),
       toolpacks: merge(key => `toolpack ${key}`, base.toolpacks, local.toolpacks, remote.toolpacks),
     },
     conflicts,
   };
 }
+
+const homeOf = (roots: SyncRoots): string => {
+  const home = roots.unifyHome;
+  if (!home) throw new Error('The sync roots have no data home.');
+  return home;
+};
 
 /** Maps a bundle path to an absolute path, rejecting anything outside the synced locations. */
 export function syncPath(roots: SyncRoots, path: string): string {
@@ -143,8 +158,8 @@ export function syncPath(roots: SyncRoots, path: string): string {
     if (!file.startsWith(resolve(roots.memory!) + sep)) bad();
     return file;
   }
-  const root = parts[0] === 'dsh' ? roots.dshHome : parts[0] === 'agents' ? roots.agentsHome : bad();
-  const isRules = parts[0] === 'dsh' && parts.length === 2 && parts[1] === 'AGENTS.md';
+  const root = parts[0] === 'unify' ? homeOf(roots) : parts[0] === 'agents' ? roots.agentsHome : bad();
+  const isRules = parts[0] === 'unify' && parts.length === 2 && parts[1] === 'AGENTS.md';
   if (!isRules && (parts[1] !== 'skills' || parts.length < 4)) bad();
   for (const part of parts.slice(1)) {
     if (!part || part.startsWith('.') || SKIPPED_DIRS.has(part) || /[\\:*?"<>|\0]/.test(part)) bad();
@@ -167,6 +182,8 @@ export async function collectFiles(roots: SyncRoots): Promise<Record<string, Syn
   let count = 0;
   let bytes = 0;
   const add = async (path: string, file: string): Promise<void> => {
+    // The current home is read first, so an old copy never replaces a file Unify has.
+    if (Object.hasOwn(files, path)) return;
     const buffer = await fs.readFile(file);
     if (buffer.length > MAX_FILE_BYTES) throw new Error(`${path} is larger than 1 MB, so it cannot be synced.`);
     bytes += buffer.length;
@@ -184,10 +201,14 @@ export async function collectFiles(roots: SyncRoots): Promise<Record<string, Syn
       else if (entry.isFile() && depth > 0) await add(`${path}/${entry.name}`, full);
     }
   };
+  const home = homeOf(roots);
+  const rules = join(home, 'AGENTS.md');
   try {
-    if ((await fs.lstat(join(roots.dshHome, 'AGENTS.md'))).isFile()) await add('dsh/AGENTS.md', join(roots.dshHome, 'AGENTS.md'));
-  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  await walk(join(roots.dshHome, 'skills'), 'dsh/skills', 0);
+    if ((await fs.lstat(rules)).isFile()) await add('unify/AGENTS.md', rules);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  await walk(join(home, 'skills'), 'unify/skills', 0);
   await walk(join(roots.agentsHome, 'skills'), 'agents/skills', 0);
   if (roots.memory) Object.assign(files, await collectMemory(roots.memory));
   return files;
@@ -227,7 +248,7 @@ export async function applyFiles(roots: SyncRoots, files: Record<string, SyncFil
     const file = syncPath(roots, path);
     await fs.rm(file, { force: true });
     // Prune folders the deletion emptied, stopping at the skills or memory root.
-    const stop = path.startsWith('memory/') ? resolve(roots.memory!) : resolve(path.startsWith('dsh/') ? roots.dshHome : roots.agentsHome, 'skills');
+    const stop = path.startsWith('memory/') ? resolve(roots.memory!) : resolve(path.startsWith('unify/') ? homeOf(roots) : roots.agentsHome, 'skills');
     for (let folder = dirname(file); folder.startsWith(stop + sep); folder = dirname(folder)) {
       try { await fs.rmdir(folder); } catch { break; }
     }
@@ -411,7 +432,7 @@ const API = 'https://api.github.com';
 async function github(token: string, path: string, init: RequestInit = {}, fetchImpl: Fetch = fetch): Promise<Response> {
   return fetchImpl(`${API}${path}`, {
     ...init,
-    headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${token}`, 'x-github-api-version': '2022-11-28', 'user-agent': 'dsh-ide', ...(init.body ? { 'content-type': 'application/json' } : {}) },
+    headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${token}`, 'x-github-api-version': '2022-11-28', 'user-agent': 'unify', ...(init.body ? { 'content-type': 'application/json' } : {}) },
     signal: AbortSignal.timeout(20_000),
   });
 }
@@ -424,14 +445,14 @@ async function failure(response: Response, action: string): Promise<Error> {
 
 const info = (gist: Record<string, unknown>): GistInfo => ({ id: String(gist.id), url: String(gist.html_url), updatedAt: String(gist.updated_at) });
 
-/** Finds the signed-in user's DSH config gist, if one exists. */
+/** Finds the signed-in user's Unify config gist, if one exists. */
 export async function findConfigGist(token: string, fetchImpl: Fetch = fetch): Promise<GistInfo | undefined> {
   for (let page = 1; page <= 10; page++) {
     const response = await github(token, `/gists?per_page=100&page=${page}`, {}, fetchImpl);
     if (!response.ok) throw await failure(response, 'gist lookup');
     const gists = await response.json() as Record<string, unknown>[];
     const found = gists.find(gist => gist.files && typeof gist.files === 'object' && Object.hasOwn(gist.files, GIST_FILE)
-      && typeof gist.description === 'string' && gist.description.startsWith('DSH-IDE config'));
+      && typeof gist.description === 'string' && gist.description.startsWith('Unify config'));
     if (found) return info(found);
     if (gists.length < 100) return undefined;
   }
@@ -468,26 +489,26 @@ export async function writeConfigGist(token: string, id: string | undefined, bun
 }
 
 /** The private repository that holds the synced config, one per GitHub account. */
-export const SYNC_REPO = 'dsh-sync';
-const MARKER = 'dsh-sync.json';
+export const SYNC_REPO = 'unify-sync';
+const MARKER = 'unify-sync.json';
 const SETTING_KEY = /^[A-Za-z][A-Za-z0-9.]{0,80}$/;
-const README = `# DSH-IDE sync
+const README = `# Unify sync
 
-DSH-IDE keeps your config here so all your computers share it. API keys, account sign-ins and MCP secret values are never stored here.
+Unify keeps your config here so all your computers share it. API keys, account sign-ins and MCP secret values are never stored here.
 
-- \`settings/\`: one file per \`dsh.*\` setting
-- \`dsh/\` and \`agents/\`: global rules and skills
+- \`settings/\`: one file per \`unify.*\` setting
+- \`unify/\` and \`agents/\`: global rules and skills
 - \`toolpacks/\`: toolpacks you uploaded, with their settings and on/off state
 - \`memory/\`: your global memory (notes, conventions and scripts)
 
-Every sync is a commit, so the history shows what changed and when. Edits made here directly reach DSH on its next sync.
+Every sync is a commit, so the history shows what changed and when. Edits made here directly reach Unify on its next sync.
 `;
 
 const json = (value: unknown): Buffer => Buffer.from(JSON.stringify(JSON.parse(stableJson(value)), null, 2) + '\n');
 
 /** The repository's files for a config: what a sync commits. */
 export function bundleToTree(bundle: ConfigBundle): Map<string, Buffer> {
-  const tree = new Map<string, Buffer>([[MARKER, json({ format: 'dsh-sync', version: 1 })], ['README.md', Buffer.from(README)]]);
+  const tree = new Map<string, Buffer>([[MARKER, json({ format: 'unify-sync', version: 1 })], ['README.md', Buffer.from(README)]]);
   for (const [key, value] of Object.entries(bundle.settings)) tree.set(`settings/${key}.json`, json(value));
   for (const [path, file] of Object.entries(bundle.files)) tree.set(path, decode(file));
   for (const [id, pack] of Object.entries(bundle.toolpacks)) {
@@ -497,18 +518,18 @@ export function bundleToTree(bundle: ConfigBundle): Map<string, Buffer> {
   return tree;
 }
 
-/** Reads a config back from the repository's files. Undefined for an empty repository; files DSH does not know are ignored. */
+/** Reads a config back from the repository's files. Undefined for an empty repository; files Unify does not know are ignored. */
 export function treeToBundle(tree: Map<string, Buffer>): ConfigBundle | undefined {
   const marker = tree.get(MARKER);
   if (!marker) {
     if (!tree.size) return undefined;
-    throw new Error(`The ${SYNC_REPO} repository was not made by DSH-IDE (it has no ${MARKER}).`);
+    throw new Error(`The ${SYNC_REPO} repository was not made by Unify (it has no ${MARKER}).`);
   }
   let format: { format?: unknown; version?: unknown };
   try { format = JSON.parse(marker.toString('utf8')); } catch { throw new Error(`${MARKER} in the sync repository is not valid JSON.`); }
-  if (format.format !== 'dsh-sync') throw new Error(`${MARKER} in the sync repository is not a DSH sync marker.`);
-  if (format.version !== 1) throw new Error(`The sync repository uses version ${String(format.version)}; update DSH-IDE to read it.`);
-  const bundle: ConfigBundle = { format: 'dsh-config', version: 1, settings: {}, files: {}, toolpacks: {} };
+  if (format.format !== 'unify-sync') throw new Error(`${MARKER} in the sync repository is not a Unify sync marker.`);
+  if (format.version !== 1) throw new Error(`The sync repository uses version ${String(format.version)}; update Unify to read it.`);
+  const bundle: ConfigBundle = { format: 'unify-config', version: 1, settings: {}, files: {}, toolpacks: {} };
   const packs = new Map<string, { source?: string; meta?: Record<string, unknown> }>();
   const parse = (path: string, data: Buffer): unknown => {
     try { return JSON.parse(data.toString('utf8')); } catch { throw new Error(`${path} in the sync repository is not valid JSON.`); }
@@ -518,8 +539,8 @@ export function treeToBundle(tree: Map<string, Buffer>): ConfigBundle | undefine
     if (parts[0] === 'settings' && parts.length === 2 && parts[1].endsWith('.json')) {
       const key = parts[1].slice(0, -'.json'.length);
       if (SETTING_KEY.test(key)) bundle.settings[key] = parse(path, data);
-    } else if (parts[0] === 'dsh' || parts[0] === 'agents' || parts[0] === 'memory') {
-      // Hidden files added on GitHub directly (an .obsidian folder, say) are skipped, as DSH skips them locally.
+    } else if (parts[0] === 'unify' || parts[0] === 'agents' || parts[0] === 'memory') {
+      // Hidden files added on GitHub directly (an .obsidian folder, say) are skipped, as Unify skips them locally.
       if (parts.slice(1).some(part => part.startsWith('.'))) continue;
       bundle.files[path] = encode(data);
     } else if (parts[0] === 'toolpacks' && parts.length === 3 && (parts[2] === 'source.ts' || parts[2] === 'pack.json')) {
@@ -539,12 +560,12 @@ export function treeToBundle(tree: Map<string, Buffer>): ConfigBundle | undefine
 
 /** A commit message naming what changed between two configs. */
 export function describeChanges(before: ConfigBundle | undefined, after: ConfigBundle, from: string): string {
-  const empty: ConfigBundle = { format: 'dsh-config', version: 1, settings: {}, files: {}, toolpacks: {} };
+  const empty: ConfigBundle = { format: 'unify-config', version: 1, settings: {}, files: {}, toolpacks: {} };
   const was = before ?? empty;
   const changed = (label: (key: string) => string, b: Record<string, unknown>, a: Record<string, unknown>): string[] =>
     [...new Set([...Object.keys(b), ...Object.keys(a)])].sort().filter(key => stableJson(b[key]) !== stableJson(a[key])).map(label);
   const items = [
-    ...changed(key => `dsh.${key}`, was.settings, after.settings),
+    ...changed(key => `unify.${key}`, was.settings, after.settings),
     ...changed(key => key, was.files, after.files),
     ...changed(key => `toolpack ${key}`, was.toolpacks, after.toolpacks),
   ];
@@ -556,7 +577,7 @@ export function describeChanges(before: ConfigBundle | undefined, after: ConfigB
 export interface RepoInfo { fullName: string; url: string; cloneUrl: string }
 
 const repoInfo = (repo: Record<string, unknown>): RepoInfo => {
-  if (repo.private !== true) throw new Error(`${String(repo.full_name)} is public. The sync repository must be private, so DSH will not use it.`);
+  if (repo.private !== true) throw new Error(`${String(repo.full_name)} is public. The sync repository must be private, so Unify will not use it.`);
   const cloneUrl = new URL(String(repo.clone_url));
   if (cloneUrl.protocol !== 'https:' || cloneUrl.hostname !== 'github.com') throw new Error('Unexpected sync repository address.');
   return { fullName: String(repo.full_name), url: String(repo.html_url), cloneUrl: cloneUrl.href };
@@ -574,7 +595,7 @@ export async function findSyncRepo(token: string, owner: string, fetchImpl: Fetc
 export async function createSyncRepo(token: string, fetchImpl: Fetch = fetch): Promise<RepoInfo> {
   const body = JSON.stringify({
     name: SYNC_REPO, private: true, has_issues: false, has_projects: false, has_wiki: false, auto_init: false,
-    description: 'DSH-IDE settings, rules, skills, toolpacks and memory, synced between computers',
+    description: 'Unify settings, rules, skills, toolpacks and memory, synced between computers',
   });
   const response = await github(token, '/user/repos', { method: 'POST', body }, fetchImpl);
   if (!response.ok) throw await failure(response, 'repository creation');

@@ -529,3 +529,174 @@
 .subagent-back:hover {
   color: var(--text);
 }
+
+.subagent-entry .subagent-row {
+  box-sizing: border-box;
+  width: calc(100% + 8px);
+}
+
+/* Tool rows that open (internal calls) */
+.tool-entry {
+  min-width: 0;
+}
+
+.tool-row-button {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border-radius: 4px;
+  text-align: left;
+}
+
+.tool-row-button .tool-row {
+  cursor: pointer;
+}
+
+.tool-row-button:hover .tool-batch-chevron {
+  color: var(--text);
+}
+
+.tool-internal .tool-row-detail {
+  color: var(--text3);
+}
+
+/* Padding, not margin, around content inside a Collapse: its measured height must include the gap. */
+.tool-raw-slot {
+  padding: 2px 0 4px 0;
+}
+
+.tool-raw {
+  margin: 0 0 0 5px;
+  padding: 2px 0 2px 14px;
+  color: var(--text2);
+  border-left: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Images a tool call gave the agent: prints under the row, past the glyph. */
+.tool-media {
+  padding: 4px 0 2px 20px;
+}
+
+/* A subagent's images, under its row */
+.subagent-strip {
+  padding: 2px 0 4px 20px;
+}
+
+.subagent-strip-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.subagent-strip-label {
+  flex: none;
+  color: var(--text3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Explorer runs: a lookup row with the ranges it found */
+.explorer-tokens {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
+
+.explorer-ranges-slot {
+  padding: 4px 0 2px 0;
+}
+
+.explorer-ranges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 0 0 0 5px;
+  padding: 2px 0 2px 14px;
+  border-left: 1px solid var(--border);
+}
+
+.range-chip {
+  height: 20px;
+  padding: 0 6px;
+  color: var(--text2);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.range-chip:hover {
+  color: var(--text);
+  border-color: var(--text3);
+}
+
+.range-tip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.range-tip-why {
+  color: var(--text2);
+}
+
+/* Agent → agent messages: quiet rows */
+.agent-message {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 2px 0 2px 16px;
+  border-left: 1px solid var(--border);
+  text-align: left;
+  cursor: default;
+}
+
+.agent-message-truncated {
+  cursor: pointer;
+}
+
+.agent-message-route {
+  display: flex;
+  gap: 6px;
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.agent-message-arrow {
+  color: var(--text3);
+}
+
+.agent-message-clip {
+  overflow: hidden;
+}
+
+.agent-message-text {
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-message-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.agent-message-truncated:hover .agent-message-text {
+  color: var(--text);
+}

@@ -10,7 +10,7 @@
   white-space: nowrap;
   /* Resting fill is the hover colour at alpha 0, so hover fades in its own hue (no dark flash from transparent black). */
   background-color: rgb(from var(--hover) r g b / 0);
-  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
+  transition: background-color 140ms ease-out, color 140ms ease-out, opacity 140ms ease-out;
 }
 
 .button:disabled {
@@ -89,7 +89,7 @@
   border-radius: var(--radius-control);
   color: var(--text2);
   background-color: rgb(from var(--hover) r g b / 0);
-  transition: background-color 120ms ease, color 120ms ease;
+  transition: background-color 140ms ease-out, color 140ms ease-out, opacity 140ms ease-out;
 }
 
 .icon-button:hover:not(:disabled),
@@ -122,4 +122,52 @@
   width: 40px;
   height: 40px;
   border-radius: 10px;
+}
+
+/*
+ * Press feedback: the fill darkens the instant the pointer goes down (no transition while :active) and eases back
+ * on release with the resting transition above. The scale half lives in motion/press.
+ */
+.button:active:not(:disabled),
+.icon-button:active:not(:disabled) {
+  transition-duration: 0ms;
+}
+
+.button-text:active:not(:disabled),
+.button-secondary:active:not(:disabled),
+.button-row:active:not(:disabled),
+.icon-button:active:not(:disabled) {
+  background-color: color-mix(in srgb, var(--hover), var(--text) 7%);
+}
+
+.button-primary:active:not(:disabled) {
+  /* Toward black, not --bg: on light themes the accent is dark and mixing toward the background would lighten it. */
+  background-color: color-mix(in srgb, var(--accent) 82%, #000);
+}
+
+.button-ghost:active:not(:disabled) {
+  color: var(--text);
+}
+
+/* Select's label: Select.tsx springs its width when the value changes; the text inside keeps its natural width. */
+.select-label {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+/* While the width springs, text past the edge feathers out instead of being cut. */
+.select-label.resizing {
+  mask-image: linear-gradient(to right, #000 calc(100% - 8px), transparent);
+}
+
+.select-label > span {
+  display: inline-block;
+}
+
+/* A text button that owns an open menu (Select, pickers) keeps its hover fill while the menu is up. */
+.button-text[aria-expanded='true'] {
+  color: var(--text);
+  background-color: var(--hover);
 }

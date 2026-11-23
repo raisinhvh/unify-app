@@ -1,0 +1,755 @@
+/* Toolpack Hub (Figma 23 · Toolpack Hub 306:3998). */
+
+.hub-screen {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface);
+}
+
+.hub-screen-panel {
+  position: relative;
+  flex: none;
+  width: var(--panel-width);
+  height: 100%;
+}
+
+.hub-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+}
+
+.hub {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.hub-spacer {
+  flex: 1;
+}
+
+.hub-count {
+  color: var(--text3);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------- segmented */
+
+.hub .segmented {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.hub .segmented-fill {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  background: var(--raised);
+  border-radius: calc(var(--radius-control) - 2px);
+  pointer-events: none;
+}
+
+.hub .segmented-option {
+  position: relative;
+  height: 24px;
+  padding: 0 10px;
+  color: var(--text3);
+  font-size: 12px;
+  white-space: nowrap;
+  transition: color 140ms ease;
+}
+
+.hub .segmented-option:hover {
+  color: var(--text2);
+}
+
+.hub .segmented-option.selected {
+  color: var(--text);
+}
+
+.hub .hub-sort {
+  padding: 0;
+  border-color: transparent;
+}
+
+.hub .hub-sort .segmented-fill {
+  top: 0;
+  bottom: 0;
+}
+
+.hub .hub-sort .segmented-option {
+  height: 24px;
+  padding: 0 8px;
+}
+
+/* ---------------------------------------------------------------- top */
+
+.hub-top {
+  flex: none;
+  padding: 24px 32px 20px;
+}
+
+.hub-crumbs-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 28px;
+}
+
+.hub-crumbs {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text3);
+  white-space: nowrap;
+}
+
+.hub-crumb-link {
+  flex: none;
+  padding: 0;
+  color: var(--text3);
+  font: inherit;
+  transition: color 120ms ease;
+}
+
+.hub-crumb-link:hover {
+  color: var(--text2);
+}
+
+.hub-crumb-sep {
+  flex: none;
+}
+
+.hub-crumb-current {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text2);
+}
+
+.hub-publish {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.hub-publish-message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text3);
+}
+
+.hub-publish-message.ok {
+  color: var(--text2);
+}
+
+.hub-publish-link {
+  flex: none;
+  color: var(--text2);
+}
+
+.hub-upload {
+  flex: none;
+  height: 28px;
+}
+
+.hub-signin {
+  flex: none;
+  height: 28px;
+  padding: 0 4px;
+  color: var(--text3);
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 3px;
+  transition: color 120ms ease;
+}
+
+.hub-signin:hover {
+  color: var(--text);
+}
+
+.hub-title {
+  margin: 12px 0 0;
+}
+
+.hub-subtitle {
+  margin: 4px 0 0;
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.hub-search-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.hub-search {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 12px;
+  color: var(--text3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  transition: border-color 140ms ease;
+}
+
+.hub-search:focus-within {
+  border-color: var(--text3);
+}
+
+.hub-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.hub-search input::placeholder {
+  color: var(--text3);
+}
+
+.hub-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.hub-install-to {
+  flex: none;
+  color: var(--text3);
+}
+
+.hub-featured {
+  padding-top: 24px;
+}
+
+.hub-section-label {
+  margin: 0 0 12px;
+  color: var(--text3);
+}
+
+.hub-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.hub-card {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 20px;
+  border-left: 1px solid var(--border);
+}
+
+.hub-card:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.hub-card-main {
+  display: flex;
+  flex: 1;
+  gap: 12px;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+}
+
+.hub-card-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.hub-card-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 32px;
+}
+
+.hub-card.picked .hub-card-name {
+  text-decoration: underline;
+  text-decoration-color: var(--text3);
+  text-underline-offset: 4px;
+}
+
+.hub-card-description {
+  display: -webkit-box;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 18px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.hub-card .hub-meta {
+  margin-top: 6px;
+}
+
+.hub-card-action {
+  flex: none;
+}
+
+/* ---------------------------------------------------------------- meta + install state */
+
+.hub-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  column-gap: 12px;
+  min-width: 0;
+  color: var(--text3);
+  white-space: nowrap;
+}
+
+.hub-install {
+  height: 28px;
+}
+
+.hub-installed,
+.hub-installing,
+.hub-failed {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  color: var(--text3);
+  white-space: nowrap;
+}
+
+.hub-percent {
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
+
+.hub-installing {
+  color: var(--text2);
+}
+
+.hub-progress {
+  position: absolute;
+  right: 0;
+  bottom: 2px;
+  left: 0;
+  height: 2px;
+  overflow: hidden;
+  background: var(--border);
+  border-radius: 1px;
+}
+
+.hub-progress-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform-origin: left center;
+}
+
+.hub-failed {
+  color: var(--del);
+}
+
+.hub-failed .hub-retry {
+  height: 24px;
+  padding: 0 6px;
+}
+
+/* ---------------------------------------------------------------- list + detail */
+
+.hub-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+.hub-list {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 20px 32px 20px;
+  scrollbar-width: thin;
+}
+
+.hub-list-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin: 0 12px 8px;
+}
+
+.hub-list-title {
+  margin: 0;
+}
+
+.hub-sort-label {
+  color: var(--text3);
+}
+
+.hub-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 0 12px;
+  border-radius: var(--radius-menu);
+  transition: background-color 120ms ease;
+}
+
+.hub-row:hover,
+.hub-row.picked {
+  background: var(--hover);
+}
+
+.hub-row-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 0;
+  color: inherit;
+  text-align: left;
+}
+
+.hub-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.hub-row-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.hub-row-name {
+  flex: none;
+  color: var(--text);
+  font-weight: var(--weight-label);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.hub-row-title .hub-meta {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.hub-row-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.hub-row-action {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  min-width: 96px;
+}
+
+.hub-empty-list {
+  margin: 12px;
+  color: var(--text3);
+}
+
+.hub-detail {
+  flex: none;
+  width: 340px;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  scrollbar-width: thin;
+}
+
+.hub-detail-body {
+  padding: 24px 24px 32px;
+}
+
+.hub-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.hub-detail-heading {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.hub-detail-title {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hub-detail-description {
+  margin: 16px 0 16px;
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.hub-detail-install {
+  width: 100%;
+  height: 32px;
+  justify-content: center;
+}
+
+.hub-detail-progress {
+  display: flex;
+  align-items: center;
+  height: 32px;
+}
+
+.hub-detail-progress .hub-installing {
+  width: 100%;
+}
+
+.hub-detail .confirm-bar {
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.hub-detail .confirm-message {
+  flex-basis: 100%;
+  white-space: normal;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.hub-detail .confirm-bar .button-text {
+  margin-left: auto;
+}
+
+.hub-detail-target {
+  margin: 8px 0 0;
+  color: var(--text3);
+}
+
+.hub-facts {
+  margin-top: 20px;
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.hub-fact {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 26px;
+}
+
+.hub-fact > span:first-child {
+  flex: none;
+  width: 80px;
+  color: var(--text3);
+}
+
+.hub-fact > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.hub-tools {
+  display: flex;
+  flex-direction: column;
+  padding-top: 16px;
+}
+
+.hub-tools-title {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: var(--text2);
+}
+
+.hub-tool {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  line-height: 22px;
+}
+
+.hub-more {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 0;
+  color: var(--text3);
+  transition: color 120ms ease;
+}
+
+.hub-more:hover {
+  color: var(--text);
+}
+
+/* ---------------------------------------------------------------- states */
+
+.hub-state {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 460px;
+  margin: 96px 40px 0;
+}
+
+.hub-state h1 {
+  margin: 0;
+}
+
+.hub-state-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* ---------------------------------------------------------------- install script consent (Providers dialog frame) */
+
+.hub-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.hub-dialog {
+  display: flex;
+  flex-direction: column;
+  width: 560px;
+  max-width: 100%;
+  max-height: calc(100vh - 48px);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-pop);
+}
+
+.hub-dialog-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.hub-dialog-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.hub-dialog-close {
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+
+.hub-dialog-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 16px;
+}
+
+.hub-script-lede {
+  flex: none;
+  margin: 0;
+  color: var(--text2);
+}
+
+.hub-script-lede strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.hub-script-name {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.hub-script {
+  flex: 1;
+  min-height: 120px;
+  max-height: 360px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow-y: auto;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 18px;
+  /* Wrapped, not scrolled sideways: the end of a long line is part of what the user agrees to. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.hub-dialog-footer {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}

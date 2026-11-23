@@ -1,23 +1,16 @@
-import type { ExtensionRelease } from './extensionUpdate';
-
-export interface DshOffer { current: string; latest: string }
-export interface UpdateOffer { extension?: ExtensionRelease; dsh?: DshOffer }
+export interface AgentRuntimeOffer { current: string; latest: string }
+export interface UpdateOffer { agentRuntime?: AgentRuntimeOffer }
 export interface UpdatePlan {
-  /** A DSH update is out and a newer plugin release exists, so the plugin must update before DSH-IDE is usable. */
-  required: boolean;
-  extension?: ExtensionRelease;
-  dsh?: DshOffer;
+  agentRuntime?: AgentRuntimeOffer;
 }
 
-/** One decision for both updaters. Returns undefined when there is nothing to offer. */
+/** One decision for the agent runtime updater. Returns undefined when there is nothing to offer. */
 export function planUpdates(
   offer: UpdateOffer,
-  options: { promptOptional: boolean; skippedDsh?: string },
+  options: { promptOptional: boolean; skippedAgentRuntime?: string },
 ): UpdatePlan | undefined {
-  const { extension, dsh } = offer;
-  if (dsh && extension) return { required: true, extension, dsh };
+  const { agentRuntime } = offer;
   if (!options.promptOptional) return undefined;
-  if (extension) return { required: false, extension };
-  if (dsh && dsh.latest !== options.skippedDsh) return { required: false, dsh };
+  if (agentRuntime && agentRuntime.latest !== options.skippedAgentRuntime) return { agentRuntime };
   return undefined;
 }

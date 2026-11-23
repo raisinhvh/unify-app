@@ -29,7 +29,7 @@ export type SidebarPage = 'chat' | 'accounts' | 'models' | 'subagents' | 'instru
 export interface SidebarSync {
   connected: boolean;
   account?: string;
-  /** The private dsh-sync repository: owner/name and its GitHub page. */
+  /** The private unify-sync repository: owner/name and its GitHub page. */
   repo?: string;
   repoUrl?: string;
   auto: boolean;
@@ -40,7 +40,7 @@ export interface SidebarSync {
   conflict?: string[];
 }
 
-/** Display preferences from the Accessibility page. Reduce motion stays a feature switch (`dsh.features.reduceMotion`). */
+/** Display preferences from the Accessibility page. Reduce motion stays a feature switch (`unify.features.reduceMotion`). */
 export interface SidebarAccessibility {
   textScale: number;
   lineSpacing: 'normal' | 'relaxed' | 'loose';
@@ -88,7 +88,7 @@ export function accessibilityStyle(value: SidebarAccessibility): { vars: Record<
 export type SidebarFeatureKey = 'activityRail' | 'autoName' | 'shareRules' | 'editorContext' | 'reduceMotion' | 'updateChecks' | 'mirror' | 'reviewAgent' | 'fileSummaries' | 'smartAuto'
   | 'autoCompact' | 'batching' | 'trimTools' | 'voice' | 'rustTools' | 'powershellSpeedups';
 export type SidebarFeatures = Record<SidebarFeatureKey, boolean>;
-/** CPU priority for agent harnesses and the commands they run (dsh.runtime.processPriority). */
+/** CPU priority for agent harnesses and the commands they run (unify.runtime.processPriority). */
 export type SidebarProcessPriority = 'normal' | 'aboveNormal' | 'high';
 export const PROCESS_PRIORITIES: readonly SidebarProcessPriority[] = ['normal', 'aboveNormal', 'high'];
 export const normalizeProcessPriority = (value: unknown): SidebarProcessPriority =>
@@ -136,7 +136,7 @@ type SidebarWebviewPayload =
   | { type: 'saveSubagent'; originalName?: string; profile: SidebarSubagentProfile }
   | { type: 'removeSubagent'; name: string }
   | { type: 'setFeature'; key: SidebarFeatureKey; enabled: boolean }
-  /** Unify feature values (see engine/unify/settings.ts); distinct from DSH's own `setFeature`. */
+  /** Unify feature values (see engine/unify/settings.ts); distinct from sidebar `setFeature`. */
   | { type: 'setUnifyFeature'; id: string; value: boolean | number | string }
   | { type: 'saveNameModel'; nameModel: SidebarNameModel }
   | { type: 'saveReviewModel'; reviewModel: SidebarNameModel }
@@ -252,7 +252,16 @@ export interface SidebarSession {
 }
 
 /** A file an agent sent into the chat; `file` is relative to the sidebar's media base. */
-export interface SidebarMedia { name: string; mimeType: string; file: string }
+export interface SidebarMedia {
+  name: string;
+  mimeType: string;
+  file: string;
+  /** Media store sha256, when the file is stored in the media cache. */
+  hash?: string;
+  /** Image pixel size, when the media is an image with known dimensions. */
+  width?: number;
+  height?: number;
+}
 export type SidebarMediaStatus = 'pending' | 'failed';
 
 export interface SidebarModel {
@@ -264,6 +273,8 @@ export interface SidebarModel {
   enabled?: boolean;
   speedOptions?: { label: string; backend: string }[];
   effortOptions?: string[];
+  /** Context size in tokens, when the model registry knows it. */
+  contextWindow?: number;
 }
 
 export interface SidebarUsageMetric { label: string; value: string; usedPercent?: number; resetsAt?: number }
@@ -338,7 +349,7 @@ export interface SidebarSubagent {
   prompt?: string;
   files?: string[];
   state: 'running' | 'complete' | 'error' | 'cancelled';
-  /** Started with delegate_task: DSH reports its final state, and it can outlive its parent's turn, so cancelling that turn does not mark it cancelled. */
+  /** Started with delegate_task: Unify reports its final state, and it can outlive its parent's turn, so cancelling that turn does not mark it cancelled. */
   delegated?: boolean;
   messages: { id: string; role: 'assistant' | 'tool'; text: string; tool?: SidebarSubagentTool; media?: SidebarMedia[] }[];
   /** Unify: the delegate profile name. 'explorer' renders as an inline "Explored" row (no tab, strip, roster badge or subagent count). */
@@ -349,6 +360,10 @@ export interface SidebarSubagent {
   tokens?: number;
   /** Unify (docs/contracts/media.md): images the subagent sent to its parent, in order. */
   sentToParent?: SidebarMedia[];
+  /** Unify: reasoning effort of the profile, shown as its own chip next to the plain model name. */
+  effort?: string;
+  /** Unify: speed tier of the profile (e.g. 'fast'), shown as its own chip. */
+  speed?: string;
 }
 
 export interface SidebarDiff {
@@ -372,7 +387,7 @@ export type SidebarTimelineItem =
    * Its box appears with status pending while the image is made, and the same entry is updated when it is ready or failed.
    */
   | { id: string; kind: 'media'; caption?: string; items: SidebarMedia[]; generated?: boolean; status?: SidebarMediaStatus }
-  /** A short line from DSH itself, such as the model Smart Auto picked. */
+  /** A short line from Unify itself, such as the model Smart Auto picked. */
   | { id: string; kind: 'note'; icon?: string; text: string }
   /** Unify: an agent-to-agent message that involves this chat's agents ("who → who"). Shown behind agents.messaging.showInChat. */
   | { id: string; kind: 'agentMessage'; message: AgentMessage };
@@ -389,6 +404,8 @@ type SidebarHostPayload =
   | { type: 'usageState'; usage: Record<string, SidebarAccountUsage> }
   | { type: 'accountSaved' }
   | { type: 'dependencyState'; providers: SidebarDependency[] }
+  /** GitHub sign-in changed; same shape as `viewState.github`, so an open pane updates live. */
+  | { type: 'githubState'; github: NonNullable<SidebarViewState['github']> }
   | { type: 'approvalState'; mode: ApprovalMode }
   /** Every Unify feature value (engine defaults included) after a change from any window. */
   | { type: 'unifyFeaturesState'; features: Record<string, boolean | number | string> }
@@ -476,7 +493,7 @@ export interface SidebarViewState {
   toolpacks: SidebarToolpack[];
   toolpackError?: string;
   features: SidebarFeatures;
-  /** Unify feature values by id (engine/unify/settings.ts), separate from DSH's `features`. */
+  /** Unify feature values by id (engine/unify/settings.ts), separate from sidebar `features`. */
   unifyFeatures: Record<string, boolean | number | string>;
   /** Unify power status for the title-bar indicator after a reload (shutdownController.getStatus()). */
   shutdown?: { armed: boolean; phase: string; secondsLeft?: number };
@@ -545,7 +562,7 @@ export function getSidebarHtml(
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data: ${webview.cspSource}; media-src ${webview.cspSource}; font-src ${webview.cspSource};">
 <style nonce="${nonce}">@font-face{font-family:'Material Symbols Rounded';font-style:normal;font-weight:100 700;src:url('${escapeHtml(assets.font)}') format('woff2')}:root{${rootVars}}</style>
 <link rel="stylesheet" href="${escapeHtml(assets.stylesheet)}">
-<title>DeepSeek Harness</title></head><body${bodyClasses ? ` class="${bodyClasses}"` : ''}>
+<title>Unify</title></head><body${bodyClasses ? ` class="${bodyClasses}"` : ''}>
 <header class="topbar">
   <div class="brand" id="view-title">Chats</div>
   <div class="top-actions">
@@ -589,7 +606,7 @@ export function getSidebarHtml(
     <label>Account name<input id="account-name" maxlength="80" autocomplete="off" required placeholder="Personal or work"></label>
     <label>Email <span class="optional">optional</span><input id="account-email" type="email" autocomplete="off" placeholder="name@example.com"></label>
     <label id="account-key-field">API key<input id="account-key" type="password" autocomplete="off" required placeholder="Paste an API key"></label>
-    <label id="account-base-url-field" hidden>Base URL<input id="account-base-url" type="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:8787/v1"><span class="helper">OpenAI-compatible endpoint, e.g. your dsh-gpu-manager gateway. The key is stored in VS Code SecretStorage; the URL is not secret.</span></label>
+    <label id="account-base-url-field" hidden>Base URL<input id="account-base-url" type="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:8787/v1"><span class="helper">OpenAI-compatible endpoint, e.g. your local GPU gateway. The key is stored in secure storage; the URL is not secret.</span></label>
     <div class="form-actions"><button type="button" class="text-button" id="account-cancel">Cancel</button><button type="submit" class="primary-button" id="account-submit">Save account</button></div>
   </form>
 </section>
@@ -655,7 +672,7 @@ export function getSidebarHtml(
 </section>
 <section id="customize-page" class="page settings-page" hidden>
   <div class="page-heading"><button class="icon-button back" data-page="chat" title="Back to chat" aria-label="Back to chat"><span class="symbol">arrow_back</span></button><div><h1>Customize</h1></div></div>
-  <p class="helper">Turn DSH features on or off. Changes are saved to your user settings and apply right away.</p>
+  <p class="helper">Turn Unify features on or off. Changes are saved to your user settings and apply right away.</p>
   <div id="feature-list" class="scroll-content feature-list"></div>
 </section>
 <section id="accessibility-page" class="page settings-page" hidden>
@@ -670,7 +687,7 @@ export function getSidebarHtml(
 </section>
 <section id="sync-page" class="page settings-page" hidden>
   <div class="page-heading"><button class="icon-button back" data-page="chat" title="Back to chat" aria-label="Back to chat"><span class="symbol">arrow_back</span></button><div><h1>Sync</h1></div></div>
-  <p class="helper">Keep your global rules, skills, toolpacks, models, subagents, MCP servers and Customize and Accessibility choices and your global memory in a private GitHub repository (dsh-sync), so your other PCs share them. Every sync is a commit, so the history shows what changed. Git is needed; DSH offers to install it. API keys, account sign-ins and MCP env and header values stay on this PC.</p>
+  <p class="helper">Keep your global rules, skills, toolpacks, models, subagents, MCP servers and Customize and Accessibility choices and your global memory in a private GitHub repository (unify-sync), so your other PCs share them. Every sync is a commit, so the history shows what changed. Git is needed; Unify offers to install it. API keys, account sign-ins and MCP env and header values stay on this PC.</p>
   <div id="sync-list" class="scroll-content feature-list"></div>
 </section>
 <script nonce="${nonce}" type="application/json" id="boot-state">${boot}</script>

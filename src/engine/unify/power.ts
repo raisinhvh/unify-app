@@ -101,10 +101,8 @@ const SHUTDOWN_FEATURE = 'power.shutdownWhenIdle';
 /** Primary command first, then the fallback. */
 export function shutdownCommandsFor(platform: NodeJS.Platform): ShutdownCommand[] {
   if (platform === 'win32') {
-    return [
-      { file: 'shutdown', args: ['/s', '/t', '0'] },
-      { file: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', 'Stop-Computer -Force'] },
-    ];
+    const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
+    return [{ file: `${systemRoot}\\System32\\shutdown.exe`, args: ['/s', '/t', '0'] }];
   }
   if (platform === 'darwin') {
     return [
@@ -169,6 +167,8 @@ export function createShutdownController(dependencies: ShutdownControllerDepende
   let pendingTimer: unknown;
   let notifiedWaitingOnUser = false;
   let disposed = false;
+  /** The user cancelled while `fire` was saving state; checked again before the OS command. */
+  let cancelled = false;
 
   function clearPendingTimer(): void {
     if (pendingTimer === undefined) return;
@@ -180,6 +180,7 @@ export function createShutdownController(dependencies: ShutdownControllerDepende
     if (phase !== 'disarmed') return;
     phase = 'waiting';
     notifiedWaitingOnUser = false;
+    cancelled = false;
     dependencies.post({ type: 'shutdownArmed', armed: true });
     evaluate();
   }
@@ -273,11 +274,12 @@ export function createShutdownController(dependencies: ShutdownControllerDepende
     try {
       await dependencies.saveState();
     } catch (error) {
+      if (cancelled) return;
       reportFailure(`Could not save state before shutting down: ${describeError(error)}`);
       turnSwitchOff();
       return;
     }
-    if (disposed || phase !== 'shuttingDown') return;
+    if (cancelled || disposed || phase !== 'shuttingDown') return;
     if (!isIdle(dependencies.getActivity())) {
       returnToWaiting();
       evaluate();
@@ -318,7 +320,9 @@ export function createShutdownController(dependencies: ShutdownControllerDepende
 
   return {
     cancelShutdown(): void {
-      if (phase === 'disarmed' || phase === 'shuttingDown') return;
+      if (phase === 'disarmed') return;
+      // The switch can be turned off while `fire` is saving state; `fire` checks the flag again afterwards.
+      cancelled = true;
       clearPendingTimer();
       dependencies.post({ type: 'shutdownCancelled' });
       turnSwitchOff();

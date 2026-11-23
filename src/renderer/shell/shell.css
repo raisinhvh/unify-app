@@ -67,7 +67,7 @@
 
 .content-screen {
   position: absolute;
-  inset: var(--titlebar-height) 8px 8px 8px;
+  inset: calc(var(--titlebar-height) + 40px * var(--notice-progress, 0)) 8px 8px 8px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-pane);
@@ -77,7 +77,7 @@
 /* Panes */
 .pane-grid {
   position: absolute;
-  inset: var(--titlebar-height) 0 0 0;
+  inset: calc(var(--titlebar-height) + 32px * var(--notice-progress, 0)) 0 0 0;
   pointer-events: none;
 }
 
@@ -231,4 +231,95 @@ body.dragging-pane * {
 
 .layout-tile.hovered .layout-tile-name {
   color: var(--text);
+}
+
+/* Setup wizard layer (over Home, under the title bar and notices). Presence fades it in and out. */
+.shell-setup {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+}
+
+/* App chrome that fades away while setup covers the window (--shell-chrome springs 1 → 0 in Shell.tsx). */
+.app .nav-rail,
+.shell-chrome {
+  opacity: var(--shell-chrome, 1);
+}
+
+/* "Shut down when done" row at the foot of the usage popover (ShutdownArmRow). */
+.shutdown-arm-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 11px;
+  padding: 6px 8px;
+  border-radius: var(--radius-row);
+  cursor: pointer;
+  user-select: none;
+  /* Release: the fill fades and the row settles back with a soft overshoot-free ease. */
+  transition:
+    background-color 180ms cubic-bezier(0.25, 0.1, 0.25, 1),
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* The hairline sits above the row so the hover fill keeps its rounded corners. */
+.shutdown-arm-row::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+@media (hover: hover) {
+  .shutdown-arm-row:hover {
+    background-color: var(--hover);
+  }
+}
+
+/* Press: eases in quickly rather than snapping, then the release transition above takes over. */
+.shutdown-arm-row:active {
+  background-color: color-mix(in srgb, var(--hover), var(--text) 7%);
+  transform: scale(0.985);
+  transition-duration: 90ms, 140ms;
+  transition-timing-function: ease-out, cubic-bezier(0.3, 0, 0.2, 1);
+}
+
+/* Pressing the switch itself shouldn't also squeeze the row. */
+.shutdown-arm-row:has(button:active) {
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shutdown-arm-row,
+  .shutdown-arm-row:active {
+    transform: none;
+    transition: background-color 120ms linear;
+  }
+}
+
+.shutdown-arm-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.shutdown-arm-label,
+.shutdown-arm-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shutdown-arm-status {
+  color: var(--text3);
+}
+
+.shutdown-arm-status.warn {
+  color: var(--warn);
 }

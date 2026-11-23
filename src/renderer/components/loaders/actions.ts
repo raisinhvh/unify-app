@@ -113,7 +113,10 @@ export function chatAction(sessionId: string): AgentAction | undefined {
     if (entry.kind === 'tool' && entry.event.state === 'running') return toolAction(entry.event);
     if (entry.kind === 'subagent') {
       const agent = viewState.subagents[sessionId]?.[entry.agentId];
-      if (agent?.state === 'running') return agent.delegated ? 'delegating' : 'spawning';
+      if (agent?.state !== 'running') continue;
+      // An explorer run is a lookup, not delegated work: it shows the same loader as a search tool.
+      if (agent.profile === 'explorer') return 'finding';
+      return agent.delegated ? 'delegating' : 'spawning';
     }
   }
   if (run.label) return toolAction({ kind: 'other', title: run.label });

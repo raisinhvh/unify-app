@@ -9,15 +9,15 @@ export interface ShimPaths {
   stateRoot: string;
   globalStoragePath: string;
   projectPath?: string;
-  /** Folder DSH's sidebar media is copied into (globalStorage/media). */
+  /** Folder the sidebar media is copied into (globalStorage/media). */
   mediaPath: string;
 }
 
 let paths: ShimPaths = {
   extensionPath: process.cwd(),
-  stateRoot: join(process.env.USERPROFILE || process.env.HOME || process.cwd(), '.dsh', 'unify'),
-  globalStoragePath: join(process.env.USERPROFILE || process.env.HOME || process.cwd(), '.dsh', 'unify', 'storage'),
-  mediaPath: join(process.env.USERPROFILE || process.env.HOME || process.cwd(), '.dsh', 'unify', 'storage', 'media'),
+  stateRoot: join(process.env.USERPROFILE || process.env.HOME || process.cwd(), '.unify'),
+  globalStoragePath: join(process.env.USERPROFILE || process.env.HOME || process.cwd(), '.unify', 'storage'),
+  mediaPath: join(process.env.USERPROFILE || process.env.HOME || process.cwd(), '.unify', 'storage', 'media'),
 };
 
 export function configurePaths(next: ShimPaths): void {

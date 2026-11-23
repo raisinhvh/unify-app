@@ -69,7 +69,7 @@ export async function readCodexUsage(account: OAuthCliAccount): Promise<AccountU
         : key === 'primary_window' ? 'Usage' : 'Additional usage';
       const resetsAt = window.reset_at;
       metrics.push({
-        label: `${name === 'codex' ? '' : `${name} · `}${duration}`,
+        label: name === 'codex' ? duration : `${duration} limit for ${name}`,
         value: `${used}% used`,
         usedPercent: used,
         ...(typeof resetsAt === 'number' && Number.isFinite(resetsAt) && resetsAt > 0 ? { resetsAt: Math.round(resetsAt * 1000) } : {}),

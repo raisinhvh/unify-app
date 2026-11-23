@@ -1,0 +1,63 @@
+/**
+ * A small print of an image: flat, hairline-edged, 4px corners. Height comes from the `size` (row 40px, strip 32px);
+ * the width follows the image's shape up to a cap, cropped to cover.
+ *
+ * `hidden` keeps its box but hides the picture: the expanded copy or the viewer is standing in for it.
+ */
+import { Show, type JSX } from 'solid-js';
+import { pressable } from '../../motion';
+import { Icon } from '../Icon';
+import { isImage, thumbSource, type MediaItem } from './media';
+import './media.css';
+
+export interface MediaThumbProps {
+  media: MediaItem;
+  size?: 'row' | 'strip';
+  /** This thumbnail's image is expanded somewhere else right now. */
+  active?: boolean;
+  hidden?: boolean;
+  label?: string;
+  onSelect: (element: HTMLButtonElement) => void;
+  ref?: (element: HTMLButtonElement) => void;
+}
+
+export function MediaThumb(props: MediaThumbProps): JSX.Element {
+  let button!: HTMLButtonElement;
+  return (
+    <button
+      type="button"
+      class={`media-print media-print-${props.size ?? 'row'}`}
+      classList={{
+        'media-print-active': !!props.active,
+        'media-print-hidden': !!props.hidden,
+      }}
+      aria-label={props.label ?? props.media.name}
+      aria-pressed={props.active ? 'true' : 'false'}
+      title={props.media.name}
+      ref={element => {
+        button = element;
+        pressable(element, 0.94);
+        props.ref?.(element);
+      }}
+      onClick={event => {
+        event.stopPropagation();
+        props.onSelect(button);
+      }}
+    >
+      <Show
+        when={isImage(props.media)}
+        fallback={
+          <span class="media-print-file">
+            <Icon name="file" size={12} />
+          </span>
+        }
+      >
+        <img
+          src={thumbSource(props.media)}
+          alt={props.media.name}
+          draggable={false}
+        />
+      </Show>
+    </button>
+  );
+}

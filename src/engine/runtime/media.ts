@@ -28,4 +28,11 @@ export const SEND_MEDIA_TOOL: DelegateToolInfo = {
   },
 };
 
-export const MEDIA_INSTRUCTIONS = `DSH media: ${SEND_MEDIA} shows a file (screenshot, render, video, audio, other) in the chat.`;
+export const MEDIA_INSTRUCTIONS = `Unify media: ${SEND_MEDIA} shows a file (screenshot, render, video, audio, other) in the chat.`;
+
+/**
+ * TODO 2e ("show your work, no duplicate visuals"), added to the agent prompt only while
+ * `chats.showYourWork` is on. Duplicate tracking itself is always on (see
+ * `src/engine/unify/media/shown.ts`); this text just tells the agent to use images well.
+ */
+export const SHOW_YOUR_WORK_INSTRUCTIONS = `Show your work visually when it helps: ${SEND_MEDIA} screenshots of UI changes, renders, before/after pairs, and images of assets you generated. Stay text-only only when there is nothing to look at. Never send an image the user has already seen in this chat; refer to it instead ("the screenshot above").`;

@@ -1,12 +1,12 @@
 /**
- * Pack and provider glyphs, copied from the Figma vectors (16px grid, 1.25 stroke, round caps).
- * Shared by the Toolpacks, Hub and Providers screens.
+ * Pack glyphs, copied from the Figma vectors (16px grid, 1.25 stroke, round caps). Shared by the Toolpacks and Hub
+ * screens. Provider names ('anthropic', 'openai', ...) draw the shared provider logos from components/ProviderGlyph.
  *
- *   <Glyph name="roblox" />            a pack glyph
- *   <Glyph name={providerGlyph(id)} /> a provider glyph; unknown names fall back to `fallback`
+ *   <Glyph name="roblox" />     a pack glyph
+ *   <Glyph name="anthropic" />  a provider logo; unknown names fall back to `fallback`
  */
-import { Show, type JSX } from 'solid-js';
-import { Icon, type IconName } from '../../components';
+import { Match, Switch, type JSX } from 'solid-js';
+import { Icon, ProviderGlyph, providerGlyphs, type IconName, type ProviderGlyphName } from '../../components';
 import './glyphs.css';
 
 const rect = (x: number, y: number, width: number, height: number, radius: number) =>
@@ -15,14 +15,6 @@ const circle = (x: number, y: number, radius: number) => `<circle cx="${x}" cy="
 const ellipse = (x: number, y: number, radiusX: number, radiusY: number) =>
   `<ellipse cx="${x}" cy="${y}" rx="${radiusX}" ry="${radiusY}"/>`;
 const path = (offset: string, data: string) => `<path transform="translate(${offset})" d="${data}"/>`;
-
-/** Mistral's block "M": filled 2.4px cells on a 5×5 grid. */
-const mistralCells: [number, number][] = [
-  [0, 0], [4, 0], [0, 1], [1, 1], [3, 1], [4, 1], [0, 2], [2, 2], [4, 2], [0, 3], [4, 3], [0, 4], [4, 4],
-];
-const mistral = mistralCells
-  .map(([column, row]) => `<rect x="${2 + column * 2.4}" y="${2 + row * 2.4}" width="2.4" height="2.4" fill="currentColor" stroke="none"/>`)
-  .join('');
 
 export const glyphs = {
   // Packs
@@ -48,38 +40,18 @@ export const glyphs = {
   containers: rect(2.5, 2.25, 11, 3.25, 0.75) + rect(2.5, 6.38, 11, 3.25, 0.75) + rect(2.5, 10.5, 11, 3.25, 0.75),
   /** The Hub folder: a 2×2 grid. */
   hub: rect(2, 2, 12, 12, 1.5) + '<path d="M8 2V14M2 8H14"/>',
-
-  // Providers
-  anthropic: path('3 2.5', 'M0 11L5 0L10 11') + path('5.4 9.5', 'M0 0L5.2 0'),
-  openai:
-    path('2.59 1.75', 'M5.41 0L10.82 3.13L10.82 9.38L5.41 12.5L0 9.38L0 3.13Z') +
-    path('5 5.4', 'M6 2.6L4.5 5.2L1.5 5.2L0 2.6L1.5 0L4.5 0Z') +
-    path('5.29 3.31', 'M5.71 4.69L8.12 4.69M1.21 7.29L.01 9.38M1.21 2.09L0 0'),
-  mistral,
-  gemini: path(
-    '1.75 1.75',
-    'M6.25 0C6.65 3.45 9.05 5.85 12.5 6.25C9.05 6.65 6.65 9.05 6.25 12.5C5.85 9.05 3.45 6.65 0 6.25C3.45 5.85 5.85 3.45 6.25 0Z',
-  ),
-  selfhosted: rect(2.25, 2.75, 11.5, 4.5, 1.25) + rect(2.25, 8.75, 11.5, 4.5, 1.25) + '<path d="M9.35 5h1M9.35 11h1"/>',
-  cursor: path('2.5 1.75', 'M5.5 0L11 3.15L11 9.35L5.5 12.5L0 9.35L0 3.15Z') + path('2.5 4.9', 'M0 0L11 6.2'),
-  opencode: rect(2.75, 1.75, 10.5, 12.5, 1.25) + rect(5.5, 7, 5, 4.5, 0.5),
 } as const;
 
-export type GlyphName = keyof typeof glyphs;
+export type PackGlyphName = keyof typeof glyphs;
 
-export const isGlyphName = (name: string | undefined): name is GlyphName => !!name && name in glyphs;
+/** A pack glyph, or a provider logo (drawn by components/ProviderGlyph, the one logo source). */
+export type GlyphName = PackGlyphName | ProviderGlyphName;
 
-/** Engine provider id -> glyph. */
-const providerGlyphs: Record<string, GlyphName> = {
-  'claude-cli': 'anthropic',
-  'codex-cli': 'openai',
-  'cursor-acp': 'cursor',
-  'opencode-go': 'opencode',
-  mistral: 'mistral',
-  'self-hosted': 'selfhosted',
-};
+const isPackGlyphName = (name: string | undefined): name is PackGlyphName => !!name && name in glyphs;
 
-export const providerGlyph = (provider: string): GlyphName | undefined => providerGlyphs[provider];
+const isProviderGlyphName = (name: string | undefined): name is ProviderGlyphName => !!name && name in providerGlyphs;
+
+export const isGlyphName = (name: string | undefined): name is GlyphName => isPackGlyphName(name) || isProviderGlyphName(name);
 
 /** Best guess at a pack glyph from its id when the engine sends no `icon`. */
 const packHints: [RegExp, GlyphName][] = [
@@ -114,27 +86,30 @@ export interface GlyphProps {
 }
 
 export function Glyph(props: GlyphProps): JSX.Element {
+  const glyphClass = () => (props.class ? `glyph ${props.class}` : 'glyph');
   return (
-    <Show
-      when={isGlyphName(props.name) ? props.name : undefined}
-      fallback={<Icon name={props.fallback ?? 'toolpacks'} size={props.size} class={props.class ? `glyph ${props.class}` : 'glyph'} />}
-    >
-      {name => (
-        <svg
-          class={props.class ? `icon glyph ${props.class}` : 'icon glyph'}
-          width={props.size ?? 16}
-          height={props.size ?? 16}
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.25"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-          innerHTML={glyphs[name()]}
-        />
-      )}
-    </Show>
+    <Switch fallback={<Icon name={props.fallback ?? 'toolpacks'} size={props.size} class={glyphClass()} />}>
+      <Match when={isPackGlyphName(props.name) ? props.name : undefined}>
+        {name => (
+          <svg
+            class={`icon ${glyphClass()}`}
+            width={props.size ?? 16}
+            height={props.size ?? 16}
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.25"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+            innerHTML={glyphs[name()]}
+          />
+        )}
+      </Match>
+      <Match when={isProviderGlyphName(props.name) ? props.name : undefined}>
+        {name => <ProviderGlyph provider={name()} size={props.size} class={glyphClass()} />}
+      </Match>
+    </Switch>
   );
 }
 

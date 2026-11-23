@@ -1,21 +1,25 @@
 /**
  * GitHub Hub registry for the public `raisinhvh/unify-hub` repository.
  *
- * This is the production source the app can opt into, but nothing here runs by default and no code in this
- * module has ever created, published to or written to the repository. It only reads:
- *   - `index.json` on the `main` branch for the catalogue,
+ * This is the production source the app can opt into, but nothing here runs by default. It only reads:
+ *   - `index.json` and `publishers.json` on the `main` branch,
  *   - release and pack files through the public GitHub APIs for detail and download.
+ *
+ * `publish` does not upload anything yet; it only checks the signed-in login against `publishers.json`.
  *
  * Every request has a timeout and responses are validated before reaching the screen. A bad registry shows an
  * error state instead of breaking the Hub.
  */
 import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
-import { HubCategory, HubDevice, HubPack, HubPackDetail, HubRegistry, HubState } from './types';
+import type { GithubAuth } from '../unify/github';
+import { publishResultFor } from './publishing';
+import { HubCategory, HubDevice, HubPack, HubPackDetail, HubPublishResult, HubRegistry, HubState } from './types';
 
 export const HUB_REPOSITORY = 'raisinhvh/unify-hub';
 export const HUB_BRANCH = 'main';
 export const HUB_INDEX_URL = `https://raw.githubusercontent.com/${HUB_REPOSITORY}/${HUB_BRANCH}/index.json`;
+export const HUB_PUBLISHERS_URL = `https://raw.githubusercontent.com/${HUB_REPOSITORY}/${HUB_BRANCH}/publishers.json`;
 const HUB_API = `https://api.github.com/repos/${HUB_REPOSITORY}`;
 const REQUEST_TIMEOUT = 15_000;
 
@@ -25,6 +29,10 @@ interface RemoteIndex {
   featured?: unknown;
   authors?: unknown;
   devices?: unknown;
+}
+
+interface RemotePublishers {
+  publishers?: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -133,6 +141,24 @@ export class GithubHubRegistry implements HubRegistry {
         // Install scripts are optional.
       }
     }
+  }
+
+  /** Reads the approved logins and applies the shared publishing rule. */
+  public async publish(auth: GithubAuth | undefined): Promise<HubPublishResult> {
+    if (!auth) return publishResultFor(auth, []);
+    let publishers: string[];
+    try {
+      const file = JSON.parse(await fetchText(HUB_PUBLISHERS_URL)) as RemotePublishers;
+      publishers = Array.isArray(file.publishers)
+        ? file.publishers.filter((login): login is string => typeof login === 'string')
+        : [];
+    } catch (error) {
+      return {
+        ok: false,
+        message: `Could not read the approved accounts: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    return publishResultFor(auth, publishers);
   }
 
   /** Release metadata for one pack, for a future "what's new" view. Never used for publishing. */

@@ -19,7 +19,7 @@ import { AnimatedList } from '../AnimatedList';
 import { useSpring } from '../createSpring';
 import { Caret, type CaretPhase } from './Caret';
 import { isOnScreen, organicMode } from './enabled';
-import { claimOrganicSlot } from './scheduler';
+import { claimOrganicSlot, type OrganicTicket } from './scheduler';
 import { createSweptList } from './sweptList';
 import './organic.css';
 
@@ -63,20 +63,31 @@ interface LineHandle {
 /** Collects lines that change in the same tick into one group. */
 function createBatcher(gap: number, budget: number) {
   let pending: LineHandle[] = [];
+  let heldTicket: OrganicTicket | undefined;
+  let releaseTimer: number | undefined;
+  const releaseHeld = () => {
+    window.clearTimeout(releaseTimer);
+    releaseTimer = undefined;
+    heldTicket?.release();
+    heldTicket = undefined;
+  };
   const flush = () => {
     const group = pending;
     pending = [];
     group.sort((first, second) => (first.element.compareDocumentPosition(second.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+    releaseHeld();
     const visible = group.some(handle => isOnScreen(handle.element));
     const ticket = visible ? claimOrganicSlot() : undefined;
     if (!ticket) {
       for (const handle of group) handle.land();
       return;
     }
+    heldTicket = ticket;
     const step = group.length > 1 ? Math.min(gap, budget / (group.length - 1)) : 0;
     group.forEach((handle, index) => handle.start(ticket.delay + index * step, index === group.length - 1));
-    window.setTimeout(() => ticket.release(), ticket.delay + group.length * step + 200);
+    releaseTimer = window.setTimeout(releaseHeld, ticket.delay + group.length * step + 200);
   };
+  onCleanup(releaseHeld);
   return (handle: LineHandle) => {
     if (!pending.length) queueMicrotask(flush);
     pending.push(handle);

@@ -2,11 +2,11 @@ import { KEEP_IMAGES } from './imageTrim';
 
 /**
  * Mid-turn compaction, the same for every provider. Once a running turn's conversation passes the auto compaction
- * threshold DSH asks the agent to save a checkpoint and stop. The work then continues in a fresh session from that
+ * threshold Unify asks the agent to save a checkpoint and stop. The work then continues in a fresh session from that
  * checkpoint, without waiting for the user's next message. Main chats save it with the checkpoint tool; subagents,
- * which may have no DSH tools, reply with it.
+ * which may have no Unify tools, reply with it.
  *
- * Claude Code (stdin) and Codex (turn/steer) take the request into the running turn. ACP has no way to do that, so DSH
+ * Claude Code (stdin) and Codex (turn/steer) take the request into the running turn. ACP has no way to do that, so Unify
  * stops the prompt there and sends the request as the session's next prompt.
  */
 export interface CompactWatch {
@@ -20,8 +20,8 @@ export interface CompactWatch {
   followUp?: string;
 }
 
-/** Opens a request sent as a new prompt after DSH stopped the running one. */
-export const PAUSED_NOTE = 'DSH stopped your last step to send this; if it was cut off, finish or redo it first. ';
+/** Opens a request sent as a new prompt after Unify stopped the running one. */
+export const PAUSED_NOTE = 'Unify stopped your last step to send this; if it was cut off, finish or redo it first. ';
 
 /** A running turn: Claude Code and Codex take a message into it; an ACP prompt can only be stopped. */
 export type TurnChannel = { say(text: string): boolean } | { interrupt(): boolean };
@@ -69,20 +69,20 @@ const SUMMARY_CONTENTS = `what is done, the decisions and why, the current state
 /** The message that asks a main-chat agent to checkpoint. */
 export function chatCompactRequest(tokens: number, urge: boolean): string {
   const size = `about ${Math.round(tokens / 1000)}k tokens`;
-  if (urge) return `DSH: context is ${size}. Call checkpoint now, then end your turn with one short line. DSH continues the task automatically.`;
-  return `DSH: this turn's context is ${size}, past the auto compaction limit. Finish the step you are on without starting a new one, then call checkpoint. `
+  if (urge) return `Unify: context is ${size}. Call checkpoint now, then end your turn with one short line. Unify continues the task automatically.`;
+  return `Unify: this turn's context is ${size}, past the auto compaction limit. Finish the step you are on without starting a new one, then call checkpoint. `
     + `Its summary is all the next session gets: ${SUMMARY_CONTENTS}. Then end your turn with one short line. `
-    + 'DSH continues the task in a fresh session automatically; do not ask the user anything. '
+    + 'Unify continues the task in a fresh session automatically; do not ask the user anything. '
     + 'If the whole task is already finished, skip the checkpoint and give your final answer as usual.';
 }
 
 /** The message that asks a subagent to reply with a checkpoint. */
 export function subagentCompactRequest(tokens: number, urge: boolean): string {
   const size = `about ${Math.round(tokens / 1000)}k tokens`;
-  if (urge) return `DSH: context is ${size}. Stop now and reply with only your checkpoint, starting with the line "${CHECKPOINT_MARKER}".`;
-  return `DSH: your context is ${size}, past the auto compaction limit. Finish the step you are on without starting a new one, then stop and reply with only a checkpoint for yourself, `
+  if (urge) return `Unify: context is ${size}. Stop now and reply with only your checkpoint, starting with the line "${CHECKPOINT_MARKER}".`;
+  return `Unify: your context is ${size}, past the auto compaction limit. Finish the step you are on without starting a new one, then stop and reply with only a checkpoint for yourself, `
     + `starting with the line "${CHECKPOINT_MARKER}". Besides your original task it is all your next session gets: ${SUMMARY_CONTENTS}. `
-    + 'DSH then continues the task in a fresh session automatically. '
+    + 'Unify then continues the task in a fresh session automatically. '
     + `If the whole task is already finished, do not write a checkpoint: reply with your final report as usual, without the word ${CHECKPOINT_MARKER}.`;
 }
 
@@ -96,9 +96,9 @@ export function subagentCheckpoint(replySinceAsked: string): string | undefined 
 
 /** The opening of a subagent's next session: the original task and its checkpoint. */
 export function subagentResumeTask(task: string, checkpoint: string, segment: number): string {
-  return `${task}\n\n---\nYou already worked on this task. DSH ended that session (part ${segment}) to save context; your checkpoint from it:\n\n${checkpoint}\n\n`
+  return `${task}\n\n---\nYou already worked on this task. Unify ended that session (part ${segment}) to save context; your checkpoint from it:\n\n${checkpoint}\n\n`
     + 'Continue from the checkpoint. Do not redo finished work; check the working copy when unsure what is already there.';
 }
 
 /** The internal message that continues a main chat after a mid-turn checkpoint. */
-export const CONTINUE_AFTER_CHECKPOINT = 'Continue the task from your checkpoint. (DSH ended the previous session to save context; the user has not sent anything new.)';
+export const CONTINUE_AFTER_CHECKPOINT = 'Continue the task from your checkpoint. (Unify ended the previous session to save context; the user has not sent anything new.)';

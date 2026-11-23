@@ -3,6 +3,8 @@
  * Codex sends `Command` with a wrapped PowerShell line, MCP tools carry `mcp__server__tool` prefixes. The sidebar
  * shows one short name per call (`ripgrep`, `Read`, `Edit`) plus a short detail, and the full call on hover.
  */
+import type { SidebarInternalTool } from '../sidebar/view';
+import { classifyInternalTool, isFriendlyRowsEnabled, type InternalToolPlaces } from '../unify/internalRows';
 
 export type ToolKind = 'read' | 'search' | 'shell' | 'edit' | 'other';
 
@@ -14,7 +16,7 @@ export interface ToolDisplay {
   full?: string;
 }
 
-/** Built-in and DSH tool names, lowercased with separators removed, to their short name and kind. */
+/** Built-in and Unify tool names, lowercased with separators removed, to their short name and kind. */
 const NAMED_TOOLS: Record<string, { title: string; kind: ToolKind; field?: string }> = {
   read: { title: 'Read', kind: 'read' },
   readfile: { title: 'Read', kind: 'read' },
@@ -77,7 +79,7 @@ function compactKey(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-/** `mcp__dsh-delegate__read_file` and `dsh-delegate.read_file` become `read_file`. */
+/** `mcp__unify__read_file` and `unify.read_file` become `read_file`. */
 function bareName(title: string): string {
   const trimmed = title.trim();
   const mcp = trimmed.match(/^mcp__.+?__(.+)$/);
@@ -197,4 +199,19 @@ export function displayTool(rawTitle: string, rawDetail?: string): ToolDisplay {
   const words = name.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
   const title = words ? words[0].toUpperCase() + words.slice(1).toLowerCase() : 'Tool';
   return { kind: 'other', title, detail, full };
+}
+
+/**
+ * The friendly row for a generic file call on the app's own data, when `chat.friendlyInternalRows` is on.
+ * `input` accepts the raw arguments object, the JSON text a harness sent, or a plain path detail.
+ * Dedicated tools and project files return undefined and keep their normal row.
+ */
+export function internalToolOf(
+  call: { tool: string; input: unknown },
+  places: InternalToolPlaces,
+): SidebarInternalTool | undefined {
+  if (!isFriendlyRowsEnabled()) {
+    return undefined;
+  }
+  return classifyInternalTool(call, places);
 }

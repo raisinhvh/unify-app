@@ -9,6 +9,9 @@ export const providerNames: Record<string, string> = {
   'opencode-go': 'OpenCode Go',
   mistral: 'Mistral',
   'self-hosted': 'Self-hosted',
+  gemini: 'Gemini',
+  xai: 'xAI',
+  groq: 'Groq',
 };
 
 export const providerColors: Record<string, string> = {

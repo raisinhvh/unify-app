@@ -1,0 +1,11 @@
+[
+  { "wait": 3500 },
+  { "mark": "create loader.ts" },
+  { "eval": "__w3b.createFile('src/toolpacks/loader.ts')" },
+  { "wait": 1400 },
+  { "mark": "rename tools.ts" },
+  { "eval": "__w3b.renameFile('src/mcp/tools.ts', 'src/mcp/toolTable.ts')" },
+  { "wait": 1400 },
+  { "mark": "delete worker.ts" },
+  { "eval": "__w3b.deleteFile('src/toolpacks/worker.ts')" }
+]

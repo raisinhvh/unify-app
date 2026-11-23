@@ -7,20 +7,41 @@
  *   - assistant messages: markdown
  *   - approvals and questions are flat rows on a guide line, resolved ones collapse to a summary
  *   - media, DSH notes, subagents (open one to read its own feed)
+ *   - images a tool call gave the agent show as prints under it; a subagent's row grows a strip of the images it
+ *     sent the main agent, minus any already shown in this chat (MediaLines)
+ *   - internal tool rows say what the call really did (`internal`), and expand to the raw call
+ *   - explorer runs are an inline "Explored" row, not a subagent (ExplorerRow)
+ *   - agent → agent messages are quiet rows (AgentMessageRow)
  *
  * Rows are keyed by timeline id, so streaming text and state changes update in place instead of remounting.
  */
 import { createMemo, createSignal, For, Match, Show, Switch, type Accessor, type JSX } from 'solid-js';
 import { Button, Icon, Loader, actionLoader, toolAction, tooltip, type IconName } from '../../components';
+import { isImage, mediaKey, openMediaViewer, thumbSource, uniqueMedia, type MediaItem } from '../../components/media';
 import { Collapse, Presence } from '../../motion';
 import { post } from '../../bridge';
-import type { SidebarSubagent, SidebarTimelineItem, SidebarToolEvent } from '../../protocol';
+import type { SidebarInternalTool, SidebarMedia, SidebarSubagent, SidebarTimelineItem, SidebarToolEvent } from '../../protocol';
 import { isRunning, userImages, viewState } from '../../store';
+import { feature } from '../../store/features';
+import { AgentMessageRow } from './AgentMessageRow';
+import { ExplorerRow } from './ExplorerRow';
+import { InternalIcon, internalLoader } from './internalTools';
+import { SubagentStrip, ToolMediaLine } from './MediaLines';
 import { QuestionRow } from './QuestionRow';
 import { handleMarkdownClick, renderMarkdown } from './markdown';
 import './timeline.css';
 
-type ToolLike = Pick<SidebarToolEvent, 'title' | 'detail' | 'full' | 'kind'> & { state: SidebarToolEvent['state'] };
+type ToolLike = Pick<SidebarToolEvent, 'title' | 'detail' | 'full' | 'kind'> & {
+  state: SidebarToolEvent['state'];
+  internal?: SidebarInternalTool;
+  media?: SidebarMedia[];
+};
+
+const explorerProfile = 'explorer';
+
+function isExplorer(chatId: string, agentId: string): boolean {
+  return viewState.subagents[chatId]?.[agentId]?.profile === explorerProfile;
+}
 
 type FeedItem =
   | Exclude<SidebarTimelineItem, { kind: 'tool' } | { kind: 'diff' }>
@@ -43,32 +64,110 @@ function feedItems(timeline: SidebarTimelineItem[]): FeedItem[] {
 
 /* Tool rows */
 
-function toolGlyph(tool: ToolLike & { children?: unknown[] }): IconName {
+function toolGlyph(tool: ToolLike): IconName {
   if (tool.state === 'error') return 'close';
   if (tool.state === 'cancelled') return 'stop';
   if (tool.kind === 'search') return 'search';
   return 'check';
 }
 
-export function ToolRow(props: { tool: ToolLike & { children?: unknown[] }; class?: string }): JSX.Element {
-  const full = () => props.tool.full || props.tool.title + (props.tool.detail ? ` ${props.tool.detail}` : '');
+/** The call as the agent made it (shown on hover, and when an internal row is opened). */
+function rawCall(tool: ToolLike): string {
+  return tool.full || tool.title + (tool.detail ? ` ${tool.detail}` : '');
+}
+
+function ToolGlyph(props: { tool: ToolLike }): JSX.Element {
+  const internal = () => props.tool.internal;
+  return (
+    <span class="tool-glyph">
+      <Switch fallback={<Icon name={toolGlyph(props.tool)} size={12} />}>
+        <Match when={props.tool.state === 'running'}>
+          <Loader
+            id={internal() ? internalLoader[internal()!.kind] : actionLoader[toolAction(props.tool)]}
+            size={12}
+          />
+        </Match>
+        <Match when={props.tool.state === 'complete' && internal()}>
+          {current => <InternalIcon kind={current().kind} />}
+        </Match>
+      </Switch>
+    </span>
+  );
+}
+
+/** One call on one line. An internal call shows what it really did; the raw call stays in the tooltip. */
+export function ToolRow(props: { tool: ToolLike; class?: string; trailing?: JSX.Element }): JSX.Element {
+  const title = () => props.tool.internal?.label ?? props.tool.title;
+  const detail = () => (props.tool.internal ? props.tool.internal.detail : props.tool.detail);
   return (
     <div
       class={props.class ? `tool-row ${props.class}` : 'tool-row'}
-      classList={{ [`tool-${props.tool.state}`]: true }}
-      ref={element => tooltip(element, () => <span class="type-mono tool-tip">{full()}</span>, { placement: 'top-start', delay: 600 })}
+      classList={{
+        [`tool-${props.tool.state}`]: true,
+        'tool-internal': !!props.tool.internal,
+      }}
+      ref={element => tooltip(element, () => <span class="type-mono tool-tip">{rawCall(props.tool)}</span>, { placement: 'top-start', delay: 600 })}
     >
-      <span class="tool-glyph">
-        <Show when={props.tool.state === 'running'} fallback={<Icon name={toolGlyph(props.tool)} size={12} />}>
-          <Loader id={actionLoader[toolAction(props.tool)]} size={12} />
-        </Show>
-      </span>
-      <span class="tool-row-title">{props.tool.title}</span>
-      <Show when={props.tool.detail}>
-        <span class="tool-row-detail">{props.tool.detail!.replace(/\s+/g, ' ')}</span>
+      <ToolGlyph tool={props.tool} />
+      <span class="tool-row-title">{title()}</span>
+      <Show when={detail()}>
+        {text => <span class="tool-row-detail">{text().replace(/\s+/g, ' ')}</span>}
       </Show>
+      {props.trailing}
     </div>
   );
+}
+
+/** A tool row in a feed or list. An internal call opens to the raw call underneath, on a guide line. */
+function ToolEntry(props: { tool: ToolLike; class?: string }): JSX.Element {
+  const [open, setOpen] = createSignal(false);
+  return (
+    <Show
+      when={props.tool.internal}
+      fallback={
+        <ToolRow
+          tool={props.tool}
+          class={props.class}
+        />
+      }
+    >
+      <div class="tool-entry">
+        <button
+          type="button"
+          class="tool-row-button"
+          aria-expanded={open()}
+          aria-label={open() ? 'Hide the raw call' : 'Show the raw call'}
+          onClick={() => setOpen(!open())}
+        >
+          <ToolRow
+            tool={props.tool}
+            class={props.class}
+            trailing={
+              <Icon
+                name="chevronRight"
+                size={12}
+                class="tool-batch-chevron"
+                style={{ rotate: open() ? '90deg' : '0deg' }}
+              />
+            }
+          />
+        </button>
+        <Collapse open={open()}>
+          <div class="tool-raw-slot">
+            <pre class="tool-raw type-mono">{rawCall(props.tool)}</pre>
+          </div>
+        </Collapse>
+      </div>
+    </Show>
+  );
+}
+
+/** Images the calls gave the agent, once per image, when `chats.toolImages` is on. */
+function toolMedia(tools: ToolLike[]): MediaItem[] {
+  if (!feature('chats.toolImages')) {
+    return [];
+  }
+  return uniqueMedia(tools.flatMap(tool => tool.media ?? []));
 }
 
 function childKind(child: { title: string; kind?: SidebarToolEvent['kind'] }): SidebarToolEvent['kind'] {
@@ -84,10 +183,17 @@ function ToolList(props: { tools: SidebarToolEvent[] }): JSX.Element {
       <For each={props.tools}>
         {tool => (
           <>
-            <ToolRow tool={tool} />
+            <ToolEntry tool={tool} />
             <Show when={tool.children?.length}>
               <div class="tool-children">
-                <For each={tool.children}>{child => <ToolRow tool={{ ...child, kind: childKind(child) }} class="tool-child" />}</For>
+                <For each={tool.children}>
+                  {child => (
+                    <ToolEntry
+                      tool={{ ...child, kind: childKind(child) }}
+                      class="tool-child"
+                    />
+                  )}
+                </For>
               </div>
             </Show>
           </>
@@ -101,9 +207,13 @@ function ToolBatch(props: { item: Extract<FeedItem, { kind: 'toolbatch' }> }): J
   const [expanded, setExpanded] = createSignal(false);
   const last = () => props.item.tools[props.item.tools.length - 1];
   const single = () => props.item.tools.length === 1 && !last().children?.length;
+  // The prints sit under the batch (not under each call), so they stay put when the batch opens or closes.
+  const media = createMemo(() => toolMedia(props.item.tools));
+  // A batch call counts as its children, so "Batch · 2 calls" never shows a count of 1.
+  const callCount = () => props.item.tools.reduce((total, tool) => total + (tool.children?.length || 1), 0);
   return (
     <div class="feed-entry tool-batch">
-      <Show when={!single()} fallback={<ToolRow tool={last()} />}>
+      <Show when={!single()} fallback={<ToolEntry tool={last()} />}>
         <button
           type="button"
           class="tool-batch-head"
@@ -111,15 +221,18 @@ function ToolBatch(props: { item: Extract<FeedItem, { kind: 'toolbatch' }> }): J
           aria-label={expanded() ? 'Collapse tool calls' : 'Expand tool calls'}
           onClick={() => setExpanded(!expanded())}
         >
-          <Show when={!expanded()} fallback={<span class="tool-row-title">{props.item.tools.length} tool calls</span>}>
+          <Show when={!expanded()} fallback={<span class="tool-row-title">{callCount()} tool calls</span>}>
             <ToolRow tool={last()} class="tool-ticker" />
           </Show>
-          <span class="tool-count">{props.item.tools.length}</span>
+          <span class="tool-count">{callCount()}</span>
           <Icon name="chevronRight" size={12} class="tool-batch-chevron" style={{ rotate: expanded() ? '90deg' : '0deg' }} />
         </button>
         <Collapse open={expanded()}>
           <ToolList tools={props.item.tools} />
         </Collapse>
+      </Show>
+      <Show when={media().length}>
+        <ToolMediaLine media={media()} />
       </Show>
     </div>
   );
@@ -164,7 +277,7 @@ function UserMessage(props: { chatId: string; item: Extract<FeedItem, { kind: 'm
           </div>
         }
       >
-        <Show when={images().length}>
+        <Show when={feature('chats.imagesInBubble') && images().length}>
           <div class="bubble-images">
             <For each={images()}>{image => <img src={`data:${image.mimeType};base64,${image.data}`} alt={image.name} />}</For>
           </div>
@@ -209,6 +322,12 @@ function ApprovalRow(props: { item: Extract<FeedItem, { kind: 'approval' }> }): 
       <Collapse open={pending()}>
         <div class="interrupt-actions">
           <Button variant="primary" onClick={() => post({ type: 'approvalResponse', id: id(), allow: true })}>Allow</Button>
+          <Button
+            variant="text"
+            onClick={() => post({ type: 'approvalResponse', id: id(), allow: true, always: true })}
+          >
+            Always allow
+          </Button>
           <Button variant="secondary" onClick={() => post({ type: 'approvalResponse', id: id(), allow: false })}>Deny</Button>
         </div>
       </Collapse>
@@ -218,7 +337,22 @@ function ApprovalRow(props: { item: Extract<FeedItem, { kind: 'approval' }> }): 
 
 /* Media, notes, subagents */
 
-function MediaEntry(props: { item: Extract<FeedItem, { kind: 'media' }> }): JSX.Element {
+/** Images open the full viewer from where they sit; other files open with the OS. */
+function MediaEntry(props: { item: Extract<FeedItem, { kind: 'media' }>; sender?: string }): JSX.Element {
+  const thumbs = new Map<string, HTMLElement>();
+  const open = (media: MediaItem) => {
+    if (!isImage(media)) {
+      post({ type: 'openMedia', file: media.file });
+      return;
+    }
+    const images = props.item.items.filter(isImage);
+    openMediaViewer({
+      items: images,
+      index: images.indexOf(media),
+      sender: props.sender,
+      origin: index => thumbs.get(mediaKey(images[index])),
+    });
+  };
   return (
     <div class="feed-entry assistant media-entry" classList={{ generated: !!props.item.generated }}>
       <Show when={props.item.caption}>
@@ -238,9 +372,19 @@ function MediaEntry(props: { item: Extract<FeedItem, { kind: 'media' }> }): JSX.
           <For each={props.item.items}>
             {media => (
               <Presence when>
-                <button type="button" class="media-thumb" title={media.name} onClick={() => post({ type: 'openMedia', file: media.file })}>
-                  <Show when={media.mimeType.startsWith('image/')} fallback={<span class="media-file"><Icon name="file" size={14} />{media.name}</span>}>
-                    <img src={media.file} alt={media.name} />
+                <button
+                  type="button"
+                  class="media-thumb"
+                  title={media.name}
+                  ref={element => thumbs.set(mediaKey(media), element)}
+                  onClick={() => open(media)}
+                >
+                  <Show when={isImage(media)} fallback={<span class="media-file"><Icon name="file" size={14} />{media.name}</span>}>
+                    <img
+                      src={props.item.generated ? thumbSource(media) : media.file}
+                      alt={media.name}
+                      draggable={false}
+                    />
                   </Show>
                 </button>
               </Presence>
@@ -263,34 +407,100 @@ function subagentDetail(agent: SidebarSubagent): string {
   return agent.messages.length ? 'View subagent chat' : 'Completed';
 }
 
-function SubagentEntry(props: { chatId: string; agentId: string; onOpen: (agentId: string) => void }): JSX.Element {
+function SubagentEntry(props: {
+  chatId: string;
+  agentId: string;
+  parentMedia: Accessor<ReadonlySet<string>>;
+  onOpen: (agentId: string) => void;
+}): JSX.Element {
   const agent = () => viewState.subagents[props.chatId]?.[props.agentId];
   return (
     <Show when={agent()}>
       {current => (
-        <button type="button" class="feed-entry subagent-row" onClick={() => props.onOpen(props.agentId)}>
-          <span class="tool-glyph">
-            <Switch fallback={<Icon name="check" size={12} />}>
-              <Match when={current().state === 'running'}>
-                <Loader id={actionLoader[current().delegated ? 'delegating' : 'spawning']} size={12} />
-              </Match>
-              <Match when={current().state === 'error'}>
-                <Icon name="close" size={12} />
-              </Match>
-              <Match when={current().state === 'cancelled'}>
-                <Icon name="stop" size={12} />
-              </Match>
-            </Switch>
-          </span>
-          <span class="subagent-title">{current().title}</span>
-          <Show when={current().model}>
-            <span class="subagent-model">{current().model}</span>
-          </Show>
-          <span class="subagent-detail">{subagentDetail(current())}</span>
-          <Icon name="chevronRight" size={12} />
-        </button>
+        <Show
+          when={current().profile !== explorerProfile}
+          fallback={<ExplorerRow agent={current()} />}
+        >
+          <SubagentRow
+            agent={current()}
+            parentMedia={props.parentMedia}
+            onOpen={() => props.onOpen(props.agentId)}
+          />
+        </Show>
       )}
     </Show>
+  );
+}
+
+/**
+ * A subagent in the parent chat. With `chats.subagentImageStrip` on, it grows a strip of the images it sent the
+ * main agent (as they arrive), leaving out any this chat already shows inline.
+ */
+function SubagentRow(props: {
+  agent: SidebarSubagent;
+  parentMedia: Accessor<ReadonlySet<string>>;
+  onOpen: () => void;
+}): JSX.Element {
+  const strip = createMemo(() => {
+    if (!feature('chats.subagentImageStrip')) {
+      return [];
+    }
+    return uniqueMedia(props.agent.sentToParent ?? [], props.parentMedia());
+  });
+  return (
+    <div class="feed-entry subagent-entry">
+      <button type="button" class="subagent-row" onClick={() => props.onOpen()}>
+        <span class="tool-glyph">
+          <Switch fallback={<Icon name="check" size={12} />}>
+            <Match when={props.agent.state === 'running'}>
+              <Loader id={actionLoader[props.agent.delegated ? 'delegating' : 'spawning']} size={12} />
+            </Match>
+            <Match when={props.agent.state === 'error'}>
+              <Icon name="close" size={12} />
+            </Match>
+            <Match when={props.agent.state === 'cancelled'}>
+              <Icon name="stop" size={12} />
+            </Match>
+          </Switch>
+        </span>
+        <span class="subagent-title">{props.agent.title}</span>
+        <Show when={props.agent.model}>
+          <span class="subagent-model">{props.agent.model}</span>
+        </Show>
+        <span class="subagent-detail">{subagentDetail(props.agent)}</span>
+        <Icon name="chevronRight" size={12} />
+      </button>
+      <Collapse open={strip().length > 0}>
+        <SubagentStrip
+          media={strip()}
+          sender={props.agent.title}
+        />
+      </Collapse>
+    </div>
+  );
+}
+
+type SubagentMessage = SidebarSubagent['messages'][number];
+
+/** A message's images as an inline media entry (send_media and the like), captioned by its text. */
+function messageMedia(message: SubagentMessage, caption: boolean): Extract<FeedItem, { kind: 'media' }> {
+  return {
+    id: `media:${message.id}`,
+    kind: 'media',
+    caption: caption && message.text ? message.text : undefined,
+    items: message.media ?? [],
+  };
+}
+
+function SubagentToolEntry(props: { tool: ToolLike }): JSX.Element {
+  const media = createMemo(() => toolMedia([props.tool]));
+  return (
+    <div class="feed-entry tool-batch">
+      <ToolEntry tool={props.tool} />
+      <Show when={media().length}>
+        <ToolMediaLine media={media()} />
+      </Show>
+    </div>
   );
 }
 
@@ -312,9 +522,27 @@ function SubagentFeed(props: { agent: SidebarSubagent; onBack: () => void }): JS
       </Show>
       <For each={props.agent.messages}>
         {message => (
-          <Show when={message.role === 'tool' && message.tool} fallback={<AssistantMessage text={message.text} />}>
-            <ToolRow tool={{ ...message.tool!, state: 'complete' }} />
-          </Show>
+          <Switch fallback={<AssistantMessage text={message.text} />}>
+            <Match when={message.role === 'tool' && message.tool}>
+              {tool => (
+                <>
+                  <SubagentToolEntry tool={{ ...tool(), state: 'complete' }} />
+                  <Show when={message.media?.length}>
+                    <MediaEntry
+                      item={messageMedia(message, false)}
+                      sender={props.agent.title}
+                    />
+                  </Show>
+                </>
+              )}
+            </Match>
+            <Match when={message.media?.length}>
+              <MediaEntry
+                item={messageMedia(message, true)}
+                sender={props.agent.title}
+              />
+            </Match>
+          </Switch>
         )}
       </For>
     </div>
@@ -323,7 +551,22 @@ function SubagentFeed(props: { agent: SidebarSubagent; onBack: () => void }): JS
 
 /* Feed */
 
-function FeedRow(props: { chatId: string; item: Accessor<FeedItem | undefined>; onOpenSubagent: (id: string) => void }): JSX.Element {
+type AgentMessageEntry = Extract<FeedItem, { kind: 'agentMessage' }>;
+
+/** Agent messages are hidden when the setting is off, and never shown for explorer runs (they are lookups). */
+function showAgentMessage(chatId: string, entry: AgentMessageEntry): boolean {
+  if (!feature('agents.messaging.showInChat')) {
+    return false;
+  }
+  return !isExplorer(chatId, entry.message.fromId) && !isExplorer(chatId, entry.message.toId);
+}
+
+function FeedRow(props: {
+  chatId: string;
+  item: Accessor<FeedItem | undefined>;
+  parentMedia: Accessor<ReadonlySet<string>>;
+  onOpenSubagent: (id: string) => void;
+}): JSX.Element {
   return (
     <Show when={props.item()}>
       {item => (
@@ -351,12 +594,44 @@ function FeedRow(props: { chatId: string; item: Accessor<FeedItem | undefined>; 
             {note => <NoteEntry item={note()} />}
           </Match>
           <Match when={item().kind === 'subagent' && (item() as Extract<FeedItem, { kind: 'subagent' }>)}>
-            {subagent => <SubagentEntry chatId={props.chatId} agentId={subagent().agentId} onOpen={props.onOpenSubagent} />}
+            {subagent => (
+              <SubagentEntry
+                chatId={props.chatId}
+                agentId={subagent().agentId}
+                parentMedia={props.parentMedia}
+                onOpen={props.onOpenSubagent}
+              />
+            )}
+          </Match>
+          <Match when={item().kind === 'agentMessage' && (item() as AgentMessageEntry)}>
+            {entry => (
+              <Show when={showAgentMessage(props.chatId, entry())}>
+                <AgentMessageRow item={entry()} />
+              </Show>
+            )}
           </Match>
         </Switch>
       )}
     </Show>
   );
+}
+
+/** Keys of every image this chat already shows inline: media entries, and tool prints when those are on. */
+function inlineMediaKeys(timeline: SidebarTimelineItem[]): ReadonlySet<string> {
+  const keys = new Set<string>();
+  const toolImages = feature('chats.toolImages');
+  for (const entry of timeline) {
+    if (entry.kind === 'media') {
+      for (const media of entry.items) {
+        keys.add(mediaKey(media));
+      }
+    } else if (toolImages && entry.kind === 'tool' && entry.event.kind !== 'edit' && entry.event.kind !== 'subagent') {
+      for (const media of entry.event.media ?? []) {
+        keys.add(mediaKey(media));
+      }
+    }
+  }
+  return keys;
 }
 
 export function Timeline(props: { chatId: string }): JSX.Element {
@@ -369,6 +644,8 @@ export function Timeline(props: { chatId: string }): JSX.Element {
     const byId = new Map(items.map(item => [item.id, item]));
     return { order: items.map(item => item.id), byId };
   });
+
+  const parentMedia = createMemo(() => inlineMediaKeys(viewState.timeline[props.chatId] || []));
 
   const openedAgent = () => (openedSubagent() ? viewState.subagents[props.chatId]?.[openedSubagent()] : undefined);
 
@@ -398,7 +675,14 @@ export function Timeline(props: { chatId: string }): JSX.Element {
               <div class="feed-empty type-caption">Ask about your workspace or request an edit.</div>
             </Show>
             <For each={feed().order}>
-              {id => <FeedRow chatId={props.chatId} item={() => feed().byId.get(id)} onOpenSubagent={setOpenedSubagent} />}
+              {id => (
+                <FeedRow
+                  chatId={props.chatId}
+                  item={() => feed().byId.get(id)}
+                  parentMedia={parentMedia}
+                  onOpenSubagent={setOpenedSubagent}
+                />
+              )}
             </For>
           </div>
         }

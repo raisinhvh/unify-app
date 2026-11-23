@@ -1,7 +1,7 @@
 /**
  * File-system style tree (Figma Tree/Folder 306:6184, Tree/Item 306:6199).
  *
- *   <TreeFolder label="DSH" icon="folder" trailing="Programs/DSH" open={open()} onToggle={setOpen}>
+ *   <TreeFolder label="Unify" icon="folder" trailing="Programs/Unify" open={open()} onToggle={setOpen}>
  *     <TreeItem leading={<ChatLoader … />} label="Fix ACP init timeout" trailing="0:42" selected />
  *   </TreeFolder>
  *

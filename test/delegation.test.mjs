@@ -49,7 +49,7 @@ test('Claude denies native agents before approval callbacks and preserves the de
     const launch = launches.at(-1);
     assert.equal(launch.args[launch.args.indexOf('--disallowedTools') + 1], 'Agent,Task');
     assert.ok(!launch.args.includes('--forward-subagent-text'));
-    if (bridge) assert.deepEqual(JSON.parse(launch.args[launch.args.indexOf('--mcp-config') + 1]), { mcpServers: { 'dsh-delegate': bridge } });
+    if (bridge) assert.deepEqual(JSON.parse(launch.args[launch.args.indexOf('--mcp-config') + 1]), { mcpServers: { unify: bridge } });
     const responses = [];
     launch.child.stdin.on('data', chunk => {
       const response = JSON.parse(String(chunk));

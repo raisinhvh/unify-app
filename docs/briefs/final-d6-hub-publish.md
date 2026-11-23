@@ -18,7 +18,7 @@ The user approved creating the public GitHub repo `raisinhvh/unify-hub` and publ
   The repo layout must be exactly what `githubRegistry.ts` reads (index file, per-pack folders, release assets or archives, the install script). Read those files; don't guess.
 
 ## Task
-1. Build the repo in `C:\Users\User\Documents\Projects\AI Stuff\Programs\unify-hub\`, a new folder next to Unify (outside this working copy):
+1. Build the repo in `hub-staging\ (inside the Unify working copy, gitignored; the main agent moves it to ..\unify-hub afterwards)`:
    - `git init`, main branch `main`;
    - an MIT `LICENSE`;
    - a `README.md` saying what the Hub is, how to install a pack from Unify, and that publishing is limited to approved accounts;
@@ -41,7 +41,7 @@ The user approved creating the public GitHub repo `raisinhvh/unify-hub` and publ
 5. Point the engine at the repo: if `src/engine/hub/githubRegistry.ts` has a placeholder repo name, report the exact line to change. Don't edit engine files yourself; another agent owns `src/engine/hub/` right now.
 
 ## Files you own
-- Everything inside `C:\Users\User\Documents\Projects\AI Stuff\Programs\unify-hub\`. Nothing in the Unify working copy.
+- Everything inside `hub-staging\ (inside the Unify working copy, gitignored; the main agent moves it to ..\unify-hub afterwards)`. Nothing else in the Unify working copy.
 
 ## Report
 - The repo tree (2 levels).

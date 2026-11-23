@@ -21,7 +21,7 @@ Spec: `docs/UNIFY_SPEC.md` → Decisions → "Images are first-class". Engine si
   	sweep(): Promise<number>;
   }
   ```
-- Migration: none. Old DSH `attachments/` and `media/<chatId>/` files are left alone (DSH still uses them); Unify just stops writing there.
+- Migration: none. The old `attachments/` and `media/<chatId>/` folders are left alone; Unify just stops writing there.
 
 ## Electron protocol (`src/main/`)
 - `unify-media://<sha256>` serves the original; `unify-media://<sha256>?thumb=1` serves the thumbnail. Registered as a privileged, secure, read-only scheme. Unknown hashes → 404. Hashes must match `/^[0-9a-f]{64}$/`.

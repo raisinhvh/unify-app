@@ -2,7 +2,7 @@
  * The only way the renderer talks to the engine.
  *
  * Prefers Unify's preload API (`window.unify`, see ARCHITECTURE.md). Falls back to a VS Code style
- * `acquireVsCodeApi()` (the preload exposes one too, and it lets the renderer run inside a DSH webview).
+ * `acquireVsCodeApi()` (the preload exposes one too, and it lets the renderer run inside a VS Code webview).
  * In a plain browser (vite dev, screenshots) `installDevBridge` swaps in a mock fed from fixture JSON.
  */
 import type { SidebarHostMessage, SidebarWebviewMessage } from './protocol';

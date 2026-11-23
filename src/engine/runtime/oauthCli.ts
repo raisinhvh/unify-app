@@ -29,7 +29,7 @@ export interface CliTurn {
   cacheTtl?: '5m' | '1h';
   /** Reports Claude rate limit updates. */
   onRateLimit?: (info: unknown) => void;
-  /** Drop built-in Claude tools that cannot work inside DSH or that DSH replaces (TRIMMED_CLAUDE_TOOLS). */
+  /** Drop built-in Claude tools that cannot work inside Unify or that Unify replaces (TRIMMED_CLAUDE_TOOLS). */
   trimTools?: boolean;
   /** Reports token usage once per Claude result event. Errors thrown here are ignored. */
   onUsage?(usage: TurnUsage): void;
@@ -74,16 +74,16 @@ export interface TurnUsage {
 }
 
 /**
- * Claude Code tools that cannot work inside DSH or that DSH replaces, apart from the native agent tools
+ * Claude Code tools that cannot work inside Unify or that Unify replaces, apart from the native agent tools
  * (nativeAgents.ts). Removing them takes their definitions out of every request; names a Claude Code version does
  * not have are ignored.
  */
 export const TRIMMED_CLAUDE_TOOLS = [
-  // Prompts scheduled into the session later; the claude process exits after every DSH turn, so they never fire.
+  // Prompts scheduled into the session later; the claude process exits after every Unify turn, so they never fire.
   'ScheduleWakeup', 'CronCreate', 'CronDelete', 'CronList',
-  // Worktrees would move work out of the working copy DSH reviews.
+  // Worktrees would move work out of the working copy Unify reviews.
   'EnterWorktree', 'ExitWorktree',
-  // Cards and pages that only claude.ai shows; DSH's chat cannot display them (it has send_media for files).
+  // Cards and pages that only claude.ai shows; Unify's chat cannot display them (it has send_media for files).
   'SendUserFile', 'ReportFindings', 'ShowOnboardingRolePicker', 'ReadNotifications', 'Artifact', 'ArtifactComments', 'ArtifactData', 'DesignSync',
   'SuggestConnectors', 'SuggestPluginInstall', 'SuggestSkills',
 ];
@@ -133,7 +133,7 @@ export function claudeArgs(turn: CliTurn): string[] {
       ...effort,
     ];
   }
-  const bridge = turn.delegate ? ['--mcp-config', JSON.stringify({ mcpServers: { 'dsh-delegate': turn.delegate } }), '--allowedTools', 'mcp__dsh-delegate'] : [];
+  const bridge = turn.delegate ? ['--mcp-config', JSON.stringify({ mcpServers: { unify: turn.delegate } }), '--allowedTools', 'mcp__unify'] : [];
   const disallowedTools = disallowedClaudeTools(turn);
   return [
     '--print', ...claudeSpeedSettings(turn.speed),
@@ -158,7 +158,7 @@ export function claudeArgs(turn: CliTurn): string[] {
 export const IDLE_CLOSE_MS = 1_500;
 
 /**
- * Longest wait on background tasks DSH tracks before closing input anyway. Claude Code stops a background command
+ * Longest wait on background tasks Unify tracks before closing input anyway. Claude Code stops a background command
  * after at most 2 hours, so a real task ends before this; the limit only covers a task whose end was never reported.
  */
 export const BACKGROUND_WAIT_LIMIT_MS = 130 * 60_000;
@@ -169,7 +169,7 @@ export const NO_IDLE_LIMIT_MS = 10 * 60_000;
 /** Child environment for a Claude turn, with the prompt cache lifetime when the turn sets one. */
 function claudeEnv(turn: CliTurn): NodeJS.ProcessEnv {
   const ttl = turn.cacheTtl ?? (turn.lean ? '5m' : undefined);
-  // Session state events (idle / running / requires_action) tell DSH when closing stdin can no longer cut off a permission request.
+  // Session state events (idle / running / requires_action) tell Unify when closing stdin can no longer cut off a permission request.
   const env = { ...agentEnv(cliEnv(turn.account)), CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1' };
   return ttl ? { ...env, CLAUDE_CODE_PROMPT_CACHE_TTL: ttl } : env;
 }
@@ -339,7 +339,7 @@ export class ClaudeCliRuntime {
             };
             if (request.subtype === 'can_use_tool') {
               if (nativeAgentsBlocked() && isNativeSubagentTool(String(request.tool_name || ''))) {
-                respond({ behavior: 'deny', message: 'Use DSH delegate_task with a configured subagent profile.' });
+                respond({ behavior: 'deny', message: 'Use Unify delegate_task with a configured subagent profile.' });
                 continue;
               }
               const input = (request.input && typeof request.input === 'object' ? request.input : {}) as Record<string, unknown>;

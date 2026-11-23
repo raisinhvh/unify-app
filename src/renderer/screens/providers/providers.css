@@ -21,6 +21,7 @@
   height: 100%;
   padding: 29px 40px 40px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .providers-column {
@@ -414,6 +415,16 @@
   white-space: nowrap;
 }
 
+/* A muted trailing part of a cell (account label, plan price), set off by spacing. */
+.pv-usage-muted {
+  margin-left: 0.75em;
+  color: var(--text3);
+}
+
+.pv-usage-name .pv-usage-muted {
+  color: var(--text2);
+}
+
 .pv-usage-plan {
   overflow: hidden;
   color: var(--text2);
@@ -421,12 +432,6 @@
   line-height: 16px;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.pv-usage-plan-price {
-  display: block;
-  color: var(--text3);
-  font-size: 11px;
 }
 
 .pv-usage-share,
@@ -487,6 +492,15 @@
   color: var(--text3);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pv-usage-missing-provider {
+  margin-left: 0.75em;
+  color: var(--text2);
+}
+
+.pv-usage-missing-account {
+  margin-left: 0.75em;
 }
 
 .pv-link {
@@ -596,12 +610,17 @@
   color: var(--text2);
 }
 
+/* Spacing alone separates the state from the model count (16px with the row's 6px gap). */
 .pv-account-models {
+  margin-left: 10px;
   color: var(--text3);
 }
 
-.pv-sep {
-  color: var(--text3);
+/* The account label after the provider in a title: "Anthropic" then a muted "Work". */
+.pv-title-muted {
+  margin-left: 0.6em;
+  color: var(--text2);
+  font-weight: 400;
 }
 
 .pv-account-header .pv-icon-28 {
@@ -738,17 +757,6 @@
   border-color: var(--text3);
 }
 
-.pv-default-model .button {
-  height: 24px;
-  padding: 0 6px;
-  color: var(--text);
-  font-size: 12px;
-}
-
-.pv-default-model .button-trailing {
-  color: var(--text3);
-}
-
 /* "Usage" is a label row whose value column holds the three limit rows (Figma 24). */
 .pv-account-usage {
   align-items: flex-start;
@@ -758,33 +766,40 @@
   padding-top: 9px;
 }
 
+/*
+ * All metric rows live in one shared grid so the label column is sized to the longest label
+ * across every row and the bars stay aligned. The label column grows to its content first
+ * (capped by the label's max-width so an extremely long label wraps to two lines instead of
+ * being ellipsized) and the bar gives way before anything else is squeezed. Each row is a
+ * subgrid, so it keeps its own row while sharing the parent's column tracks.
+ */
 .pv-inline-usage {
-  display: flex;
+  display: grid;
   flex: 1;
-  flex-direction: column;
   min-width: 0;
+  grid-template-columns: minmax(0, max-content) minmax(120px, 164px) 48px 108px 1fr;
+  grid-auto-rows: 36px;
+  align-items: center;
 }
 
 .pv-metric-row {
   display: grid;
-  grid-template-columns: 116px 188px 48px 108px 1fr;
-  column-gap: 0;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
-  height: 36px;
 }
 
 .pv-metric-label {
+  max-width: 220px;
   overflow: hidden;
   color: var(--text3);
   font-size: 12px;
   line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .pv-metric-bar {
   display: block;
-  width: 176px;
+  width: calc(100% - 12px);
   height: 4px;
   margin-right: 12px;
   overflow: hidden;
@@ -818,6 +833,7 @@
   color: var(--text2);
   font-size: 12px;
   line-height: 16px;
+  white-space: nowrap;
 }
 
 .pv-view-usage:hover {

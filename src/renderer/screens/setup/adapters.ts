@@ -3,7 +3,6 @@
  * checkDependencies/installProvider for provider CLIs); the rest goes through typed requests that
  * settings/protocol-requests.md describes. Until the engine answers them:
  *   - git and node stay "Checking…" (provider CLIs still come from dependencyState),
- *   - imports report nothing found,
  *   - the setup-complete flag lives in renderer persistence only.
  */
 import { createSignal } from 'solid-js';
@@ -34,7 +33,7 @@ interface ToolsStateMessage {
   tools: ToolStatus[];
 }
 
-/** Provider CLI executables and the provider ids DSH's dependencyState / installProvider use. */
+/** Provider CLI executables and the provider ids dependencyState / installProvider use. */
 const providerTools: { id: string; provider: string; description: string }[] = [
   { id: 'claude', provider: 'claude-cli', description: 'Claude Code CLI, the Anthropic agent runtime' },
   { id: 'codex', provider: 'codex-cli', description: 'Codex CLI, the OpenAI agent runtime' },
@@ -86,7 +85,7 @@ export function tools(): ToolStatus[] {
   // The engine decides `required` and which provider CLIs to list (see protocol-requests.md).
   const fromEngine = engineTools();
   if (fromEngine) return fromEngine;
-  const list: ToolStatus[] = baseTools.map(tool => ({ ...tool, state: 'checking', required: true }));
+  const list: ToolStatus[] = baseTools.map((tool): ToolStatus => ({ ...tool, state: 'checking', required: true }));
   for (const tool of providerTools) {
     if (!providerInUse(tool.provider)) continue;
     const dependency = dependencies()?.find(item => item.provider === tool.provider);
@@ -106,7 +105,7 @@ export function checkTools(): void {
   listen();
   setChecking(true);
   const current = engineTools();
-  if (current) setEngineTools(current.map(tool => (tool.state === 'fixing' ? tool : { ...tool, state: 'checking' })));
+  if (current) setEngineTools(current.map((tool): ToolStatus => (tool.state === 'fixing' ? tool : { ...tool, state: 'checking' })));
   postRequest({ type: 'checkTools' });
   post({ type: 'checkDependencies' });
 }
@@ -115,63 +114,13 @@ export function fixTool(id: string): void {
   listen();
   const providerTool = providerTools.find(tool => tool.id === id);
   const current = engineTools();
-  if (current) setEngineTools(current.map(tool => (tool.id === id ? { ...tool, state: 'fixing', error: undefined } : tool)));
+  if (current) setEngineTools(current.map((tool): ToolStatus => (tool.id === id ? { ...tool, state: 'fixing', error: undefined } : tool)));
   if (providerTool && !current) {
     setFixing(list => [...list, id]);
     post({ type: 'installProvider', provider: providerTool.provider });
     return;
   }
   postRequest({ type: 'fixTool', id });
-}
-
-/* Imports from DSH (Extras) */
-
-export interface DshImportScan {
-  /** Toolpack folder names in ~/.dsh/toolpacks not yet installed in Unify. */
-  toolpacks: string[];
-  rules: number;
-  skills: number;
-  memoryNotes: number;
-}
-
-export type ImportKind = 'toolpacks' | 'knowledge';
-
-interface DshImportStateMessage {
-  type: 'dshImportState';
-  scan: DshImportScan;
-}
-
-interface DshImportResultMessage {
-  type: 'dshImportResult';
-  what: ImportKind;
-  ok: boolean;
-  /** Toolpacks installed, or rules + skills + notes merged. */
-  count: number;
-  error?: string;
-}
-
-const [importScan, setImportScan] = createSignal<DshImportScan | undefined>();
-const [importResults, setImportResults] = createSignal<Partial<Record<ImportKind, DshImportResultMessage>>>({});
-export { importScan, importResults };
-
-let importListening = false;
-
-export function scanImports(): void {
-  if (!importListening) {
-    importListening = true;
-    onRequestReply<DshImportStateMessage>('dshImportState', message => setImportScan(message.scan));
-    onRequestReply<DshImportResultMessage>('dshImportResult', message => setImportResults(current => ({ ...current, [message.what]: message })));
-  }
-  postRequest({ type: 'scanDshImports' });
-}
-
-export function importFromDsh(what: ImportKind): void {
-  setImportResults(current => {
-    const next = { ...current };
-    delete next[what];
-    return next;
-  });
-  postRequest({ type: 'importFromDsh', what });
 }
 
 /* Setup flag and default project */
@@ -181,8 +130,6 @@ export interface SetupSummary {
   project?: SidebarProject;
   tools: string[];
   theme: string;
-  toolpacks: 'imported' | 'skipped';
-  knowledge: 'imported' | 'skipped';
 }
 
 interface SetupStateMessage {

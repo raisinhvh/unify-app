@@ -37,7 +37,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
-public static class DshPriorityJob {
+public static class UnifyPriorityJob {
   [StructLayout(LayoutKind.Sequential)]
   struct BasicLimits {
     public long PerProcessUserTimeLimit;
@@ -75,7 +75,7 @@ public static class DshPriorityJob {
   }
 }
 '@
-[DshPriorityJob]::Apply([int]$env:DSH_PRIORITY_PID, [uint32]$env:DSH_PRIORITY_CLASS)
+[UnifyPriorityJob]::Apply([int]$env:UNIFY_PRIORITY_PID, [uint32]$env:UNIFY_PRIORITY_CLASS)
 `;
 
 /**
@@ -91,7 +91,7 @@ export function applyAgentPriority(pid: number | undefined): void {
     const helper = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', JOB_SCRIPT], {
       windowsHide: true,
       stdio: 'ignore',
-      env: { ...process.env, DSH_PRIORITY_PID: String(pid), DSH_PRIORITY_CLASS: String(PRIORITY_CLASS[priority]) },
+      env: { ...process.env, UNIFY_PRIORITY_PID: String(pid), UNIFY_PRIORITY_CLASS: String(PRIORITY_CLASS[priority]) },
     });
     helper.on('error', () => undefined);
   } catch { /* PowerShell missing; the harness itself still has the raised priority */ }

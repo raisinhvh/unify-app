@@ -1,6 +1,6 @@
 /** Pure preflight rules shared by mirror admission and workspace edit application. */
 export function assertLocalFileScheme(scheme: string): void {
-  if (scheme !== 'file') throw new Error('DSH review supports saved files in a local workspace; untitled and remote documents are not review targets.');
+  if (scheme !== 'file') throw new Error('Unify review supports saved files in a local workspace; untitled and remote documents are not review targets.');
 }
 
 /** Match the text VS Code/UTF-8 decoding exposes, including CRLF and BOM normalization. */

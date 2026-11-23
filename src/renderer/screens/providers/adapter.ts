@@ -57,11 +57,6 @@ export interface AccountExtension {
   defaultModel?: string;
 }
 
-export interface ModelExtension {
-  /** Context window in tokens. */
-  contextWindow?: number;
-}
-
 export type AccountStatus = 'connected' | 'signedOut' | 'error' | 'loading';
 
 export interface AccountView {
@@ -178,8 +173,19 @@ export const allAccounts = (): AccountView[] => providerGroups().flatMap(group =
 export const findAccount = (id: string | undefined): AccountView | undefined =>
   id ? allAccounts().find(account => account.id === id) : undefined;
 
-/** "Anthropic · Work". */
-export const accountTitle = (account: Pick<AccountView, 'provider' | 'label'>): string => `${providerTitle(account.provider)} · ${account.label}`;
+/**
+ * An account's name in two parts: the provider ("Anthropic") and the account label ("Work"). Screens show the label
+ * muted after the provider, never joined with a separator glyph.
+ */
+export interface AccountName {
+  provider: string;
+  label: string;
+}
+
+export const accountName = (account: Pick<AccountView, 'provider' | 'label'>): AccountName => ({
+  provider: providerTitle(account.provider),
+  label: account.label,
+});
 
 /** What the "Signed in with" row says. */
 export function signedInWith(account: AccountView): string {
@@ -194,10 +200,6 @@ export function brandedPlan(account: AccountView): string {
   const brand = planBrands[account.provider];
   return brand && account.usage?.plan ? `${brand} ${name}` : name;
 }
-
-/** "Mistral · API key" — provider and account in one cell (Usage table). */
-export const accountNameWithProvider = (account: Pick<AccountView, 'provider' | 'label'>): string =>
-  `${providerTitle(account.provider)} · ${account.label}`;
 
 export interface ModelView {
   id: string;
@@ -217,7 +219,7 @@ export function accountModels(account: AccountView): ModelView[] {
       id: model.id,
       name: model.name,
       enabled: model.id in local.models ? local.models[model.id] : model.enabled !== false,
-      contextWindow: (model as SidebarModel & ModelExtension).contextWindow,
+      contextWindow: model.contextWindow,
     }));
 }
 
@@ -271,7 +273,7 @@ export function planName(account: AccountView): string {
   return account.authType === 'oauth' ? 'Subscription' : 'API key';
 }
 
-/** "Max · $100/mo" is built by the account page from these two. */
+/** The plan's price ("$100/mo"), shown muted after planName ("Max"). */
 export function planDetail(account: AccountView): string {
   const plan = account.usage?.plan;
   if (!plan) return account.authType === 'oauth' ? 'Reported by the provider' : 'Billed by the provider';

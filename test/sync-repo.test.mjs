@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { PushRejected, SyncClone } from '../dist/sync/gitRepo.mjs';
 import { bundleToTree, describeChanges, hashBundle, mergeBundles, treeToBundle } from '../dist/sync/configSync.mjs';
 
-const bundle = (files = {}, settings = {}, toolpacks = {}) => ({ format: 'dsh-config', version: 1, settings, files, toolpacks });
+const bundle = (files = {}, settings = {}, toolpacks = {}) => ({ format: 'unify-config', version: 1, settings, files, toolpacks });
 const hasGit = (() => { try { execFileSync('git', ['--version']); return true; } catch { return false; } })();
 
 async function remote(t) {
@@ -20,7 +20,7 @@ async function remote(t) {
 
 test('a config round-trips through the repository layout, binary files included', () => {
   const config = bundle(
-    { 'dsh/AGENTS.md': { data: '# Rules\n' }, 'memory/tools/rig.md': { data: 'Rig\n' }, 'memory/img/a.png': { data: Buffer.from([0, 255, 1]).toString('base64'), encoding: 'base64' } },
+    { 'unify/AGENTS.md': { data: '# Rules\n' }, 'memory/tools/rig.md': { data: 'Rig\n' }, 'memory/img/a.png': { data: Buffer.from([0, 255, 1]).toString('base64'), encoding: 'base64' } },
     { models: [{ name: 'M' }], 'features.autoName': false },
     { blender: { enabled: false, source: 'export default {}', settings: { 'config.json': { host: 'x' } } } },
   );
@@ -31,7 +31,7 @@ test('a config round-trips through the repository layout, binary files included'
   assert.deepEqual([...tree.get('memory/img/a.png')], [0, 255, 1]);
   assert.equal(hashBundle(treeToBundle(tree)), hashBundle(config));
   assert.equal(treeToBundle(new Map()), undefined);
-  assert.throws(() => treeToBundle(new Map([['notes.md', Buffer.from('x')]])), /not made by DSH-IDE/);
+  assert.throws(() => treeToBundle(new Map([['notes.md', Buffer.from('x')]])), /not made by Unify/);
   // Files DSH does not know (a user's own README edits, CI files) are ignored rather than rejected.
   tree.set('.github/workflows/x.yml', Buffer.from('x'));
   tree.set('memory/.obsidian/app.json', Buffer.from('{}'));
@@ -39,11 +39,11 @@ test('a config round-trips through the repository layout, binary files included'
 });
 
 test('a memory note changed on both PCs keeps both versions instead of pausing sync', () => {
-  const base = bundle({ 'memory/a.md': { data: 'base' }, 'dsh/AGENTS.md': { data: 'base' } });
-  const local = bundle({ 'memory/a.md': { data: 'mine' }, 'dsh/AGENTS.md': { data: 'mine' } });
-  const remote = bundle({ 'memory/a.md': { data: 'theirs' }, 'dsh/AGENTS.md': { data: 'theirs' } });
+  const base = bundle({ 'memory/a.md': { data: 'base' }, 'unify/AGENTS.md': { data: 'base' } });
+  const local = bundle({ 'memory/a.md': { data: 'mine' }, 'unify/AGENTS.md': { data: 'mine' } });
+  const remote = bundle({ 'memory/a.md': { data: 'theirs' }, 'unify/AGENTS.md': { data: 'theirs' } });
   const { bundle: merged, conflicts } = mergeBundles(base, local, remote);
-  assert.deepEqual(conflicts, ['~/.dsh/AGENTS.md']);
+  assert.deepEqual(conflicts, ['~/.unify/AGENTS.md']);
   assert.equal(merged.files['memory/a.md'].data, 'theirs');
   const copy = Object.keys(merged.files).find(key => /^memory\/a \(conflict .+\)\.md$/.test(key));
   assert.equal(merged.files[copy].data, 'mine');
@@ -54,7 +54,7 @@ test('a memory note changed on both PCs keeps both versions instead of pausing s
 });
 
 test('commit messages name what changed', () => {
-  assert.equal(describeChanges(bundle(), bundle({ 'memory/a.md': { data: '1' } }, { models: [] }), 'PC1'), 'Sync from PC1: dsh.models, memory/a.md');
+  assert.equal(describeChanges(bundle(), bundle({ 'memory/a.md': { data: '1' } }, { models: [] }), 'PC1'), 'Sync from PC1: unify.models, memory/a.md');
   assert.match(describeChanges(undefined, bundle({ a: { data: '1' }, b: { data: '1' }, c: { data: '1' }, d: { data: '1' } }), 'PC1'), /and 1 more$/);
 });
 

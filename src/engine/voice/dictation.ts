@@ -70,7 +70,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-public static class DshRecorder {
+public static class UnifyRecorder {
 	[StructLayout(LayoutKind.Sequential)]
 	struct WaveFormat {
 		public ushort Tag;
@@ -293,8 +293,8 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 function Emit($data) { [Console]::Out.WriteLine(($data | ConvertTo-Json -Compress)); [Console]::Out.Flush() }
 try {
-  Add-Type -TypeDefinition $env:DSH_VOICE_RECORDER
-  [DshRecorder]::Run($env:DSH_VOICE_FOLDER, [bool]$env:DSH_VOICE_DEBUG)
+  Add-Type -TypeDefinition $env:UNIFY_VOICE_RECORDER
+  [UnifyRecorder]::Run($env:UNIFY_VOICE_FOLDER, [bool]$env:UNIFY_VOICE_DEBUG)
   exit 0
 } catch {
   $message = $_.Exception.Message
@@ -348,7 +348,7 @@ export class Dictation {
       return;
     }
     try {
-      this.folder = await mkdtemp(join(tmpdir(), 'dsh-voice-'));
+      this.folder = await mkdtemp(join(tmpdir(), 'unify-voice-'));
     } catch (error) {
       this.finish(`Could not create a folder for recordings: ${(error as Error).message}`);
       return;
@@ -357,7 +357,7 @@ export class Dictation {
     const encoded = Buffer.from(SCRIPT, 'utf16le').toString('base64');
     const recorder = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
       windowsHide: true,
-      env: { ...process.env, DSH_VOICE_RECORDER: RECORDER, DSH_VOICE_FOLDER: this.folder },
+      env: { ...process.env, UNIFY_VOICE_RECORDER: RECORDER, UNIFY_VOICE_FOLDER: this.folder },
     });
     this.recorder = recorder;
     let buffer = '';
@@ -411,7 +411,7 @@ export class Dictation {
       this.pump();
     } else if (event.type === 'error') {
       this.failure = typeof event.message === 'string' ? event.message : 'Microphone recording failed.';
-    } else if (event.type === 'debug' && process.env.DSH_VOICE_DEBUG) console.log('[voice]', event.text);
+    } else if (event.type === 'debug' && process.env.UNIFY_VOICE_DEBUG) console.log('[voice]', event.text);
   }
 
   /** Transcribes queued phrases one at a time; ends the session once recording and transcription are both done. */

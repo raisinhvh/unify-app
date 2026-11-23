@@ -1,0 +1,12 @@
+{
+  "extends": "chatpane",
+  "messages": [
+    {
+      "type": "diffState",
+      "diffs": [
+        { "id": "d1", "path": "src/renderer/shell/paneHeaderLayoutControllerWithResponsiveModelPillPlacement.tsx", "summary": "Move the model pill", "additions": 48, "deletions": 17 },
+        { "id": "d2", "path": "src/renderer/shell/shell.css", "summary": "Hairline before close", "additions": 6, "deletions": 1 }
+      ]
+    }
+  ]
+}

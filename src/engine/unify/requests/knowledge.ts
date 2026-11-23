@@ -1,12 +1,12 @@
 /**
  * Knowledge (rules, skills, memory) for the Knowledge screen.
  *
- * Rules are sections of DSH's shared instruction files (`## <name>` in `~/.dsh/AGENTS.md` and the project's
- * `AGENTS.md`), because the screen creates many named rules while DSH's saveInstruction only knows fixed
- * file names. Skills are DSH's real skill folders, read through instructions/store. Memory is DSH's memory
- * folders: `~/.dsh/memory` and `<workspace>/.dsh/memory`.
+ * Rules are sections of Unify's shared instruction files (`## <name>` in `~/.unify/AGENTS.md` and the project's
+ * `AGENTS.md`), because the screen creates many named rules while Unify's saveInstruction only knows fixed
+ * file names. Skills are Unify's real skill folders, read through instructions/store. Memory is Unify's memory
+ * folders: `~/.unify/memory` and `<workspace>/.unify/memory`.
  *
- * Audiences, descriptions and timestamps are Unify metadata in `~/.dsh/unify/knowledge.json`; DSH's files
+ * Audiences, descriptions and timestamps are Unify metadata in `~/.unify/unify/knowledge.json`; Unify's files
  * keep only the text. Audiences are stored but not yet enforced by the engine.
  */
 import { spawn } from 'node:child_process';
@@ -37,6 +37,15 @@ interface KnowledgeMetadata {
 
 interface KnowledgeStore {
   items: Record<string, KnowledgeMetadata>;
+  /** Previous file contents kept before an agent writes, keyed by absolute file path. */
+  versions?: Record<string, KnowledgeVersion[]>;
+}
+
+interface KnowledgeVersion {
+  at: number;
+  by: string;
+  /** null means the file did not exist before the agent's write. */
+  content: string | null;
 }
 
 const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
@@ -46,7 +55,10 @@ const DEFAULT_AUDIENCES: Audience[] = ['everyone'];
 
 function metadataStore(paths: RequestPaths): KnowledgeStore {
   const stored = readJsonFile<KnowledgeStore>(paths.knowledgeFile, { items: {} });
-  return { items: isRecord(stored.items) ? stored.items as Record<string, KnowledgeMetadata> : {} };
+  return {
+    items: isRecord(stored.items) ? stored.items as Record<string, KnowledgeMetadata> : {},
+    versions: isRecord(stored.versions) ? stored.versions as Record<string, KnowledgeVersion[]> : {},
+  };
 }
 
 function saveMetadata(paths: RequestPaths, store: KnowledgeStore): void {
@@ -66,9 +78,20 @@ function audiencesOf(store: KnowledgeStore, id: string): Audience[] {
   return Array.isArray(audiences) && audiences.length ? audiences : [...DEFAULT_AUDIENCES];
 }
 
+function versionsFor(store: KnowledgeStore, file: string): KnowledgeVersion[] {
+  return store.versions?.[path.resolve(file)] ?? [];
+}
+
+/** Who changed an item last: an agent's kept version, else the metadata (the UI's `'you'`). */
+function attribution(store: KnowledgeStore, file: string, metadata: KnowledgeMetadata, fallbackTime: number): { updatedBy: string; updatedAt: number } {
+  const latest = versionsFor(store, file).at(-1);
+  if (latest && latest.at > (metadata.updatedAt ?? 0)) return { updatedBy: latest.by, updatedAt: latest.at };
+  return { updatedBy: metadata.updatedBy ?? 'you', updatedAt: metadata.updatedAt ?? fallbackTime };
+}
+
 function ruleFile(paths: RequestPaths, scope: KnowledgeScope): string | undefined {
   if (scope === 'project') return paths.workspaceRoot ? path.join(paths.workspaceRoot, 'AGENTS.md') : undefined;
-  return path.join(paths.dshHome, 'AGENTS.md');
+  return path.join(paths.unifyHome, 'AGENTS.md');
 }
 
 interface RuleSection {
@@ -108,7 +131,7 @@ export function parseRuleSections(text: string): ParsedRules {
   return { preamble: preamble.join('\n').trim(), sections };
 }
 
-/** Smallest markdown that DSH will read as instructions: the preamble plus the named sections. */
+/** Smallest markdown that Unify will read as instructions: the preamble plus the named sections. */
 export function renderRuleSections(parsed: ParsedRules): string {
   const parts: string[] = [];
   if (parsed.preamble) parts.push(parsed.preamble.trim());
@@ -156,8 +179,8 @@ async function walkFiles(root: string, budget = { left: MAX_MEMORY_FILES }): Pro
 }
 
 function memoryRoot(paths: RequestPaths, scope: KnowledgeScope): string | undefined {
-  if (scope === 'project') return paths.workspaceRoot ? path.join(paths.workspaceRoot, '.dsh', 'memory') : undefined;
-  return path.join(paths.dshHome, 'memory');
+  if (scope === 'project') return paths.workspaceRoot ? path.join(paths.workspaceRoot, '.unify', 'memory') : undefined;
+  return path.join(paths.unifyHome, 'memory');
 }
 
 function noteTitle(content: string, file: string): string {
@@ -169,7 +192,7 @@ function noteTitle(content: string, file: string): string {
 function skillRoots(paths: RequestPaths): { root: string; prefix: string }[] {
   const roots = [
     { root: path.join(paths.agentsHome, 'skills'), prefix: 'agents' },
-    { root: path.join(paths.dshHome, 'skills'), prefix: 'dsh' },
+    { root: path.join(paths.unifyHome, 'skills'), prefix: 'unify' },
   ];
   if (paths.workspaceRoot) roots.push({ root: path.join(paths.workspaceRoot, '.agents', 'skills'), prefix: 'ws' });
   return roots;
@@ -178,8 +201,31 @@ function skillRoots(paths: RequestPaths): { root: string; prefix: string }[] {
 function skillFolderOf(item: Pick<InstructionItem, 'id'>, paths: RequestPaths): string {
   const prefix = item.id.slice(0, item.id.indexOf(':'));
   const rel = item.id.slice(item.id.indexOf(':') + 1);
-  const base = prefix === 'ws' ? paths.workspaceRoot! : prefix === 'agents' ? paths.agentsHome : paths.dshHome;
+  const base = prefix === 'ws' ? paths.workspaceRoot! : prefix === 'agents' ? paths.agentsHome : paths.unifyHome;
   return path.dirname(path.join(base, ...rel.split('/')));
+}
+
+/** True when `target` is a child of `root`; the root itself does not count. */
+function isInside(root: string, target: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(target));
+  return !!relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+/** A skill folder must be strictly inside one of the scanned skills roots before it is opened or removed. */
+function assertInsideSkillRoot(paths: RequestPaths, folder: string): void {
+  if (!skillRoots(paths).some(entry => isInside(entry.root, folder))) {
+    throw new Error('That skill folder is outside the skills folders.');
+  }
+}
+
+/** The folder of a skill the scan actually found, so a crafted id cannot point anywhere else. */
+async function skillFolderForId(paths: RequestPaths, id: string): Promise<string> {
+  const instructionId = id.slice('skill:'.length);
+  const skill = (await listInstructions(instructionRoots(paths))).find(item => item.id === instructionId);
+  if (!skill) throw new Error('That skill no longer exists.');
+  const folder = skillFolderOf(skill, paths);
+  assertInsideSkillRoot(paths, folder);
+  return folder;
 }
 
 function statTimeSync(file: string): number {
@@ -206,13 +252,15 @@ export async function listKnowledge(context: UnifyRequestContext, paths: Request
       : [{ slug: 'general', name: titleOfRules(text), body: parsed.preamble }];
     for (const section of sections) {
       const id = `rule:${scope}:${section.slug}`;
-      items.push(ruleItem(id, scope, section.name, file, metadataFor(store, id), audiencesOf(store, id), await statTime(file)));
+      const metadata = metadataFor(store, id);
+      const time = await statTime(file);
+      items.push(ruleItem(id, scope, section.name, file, metadata, audiencesOf(store, id), time, attribution(store, file, metadata, time)));
     }
   }
 
   const instructions = await listInstructions({
     workspace: paths.workspaceRoot,
-    dshHome: paths.dshHome,
+    unifyHome: paths.unifyHome,
     agentsHome: paths.agentsHome,
   });
   for (const instruction of instructions) {
@@ -222,6 +270,9 @@ export async function listKnowledge(context: UnifyRequestContext, paths: Request
     const id = `skill:${instruction.id}`;
     const files = (await walkFiles(folder)).map(file => path.relative(folder, file).split(path.sep).join('/')).sort();
     const metadata = metadataFor(store, id);
+    const skillFile = path.join(folder, 'SKILL.md');
+    const time = statTimeSync(skillFile);
+    const who = attribution(store, skillFile, metadata, time);
     items.push({
       id,
       kind: 'skill',
@@ -233,8 +284,8 @@ export async function listKnowledge(context: UnifyRequestContext, paths: Request
       files,
       createdBy: metadata.createdBy ?? 'you',
       createdAt: metadata.createdAt ?? statTimeSync(folder),
-      updatedBy: metadata.updatedBy ?? 'you',
-      updatedAt: metadata.updatedAt ?? statTimeSync(path.join(folder, 'SKILL.md')),
+      updatedBy: who.updatedBy,
+      updatedAt: who.updatedAt,
       usedIn: 0,
     });
   }
@@ -249,6 +300,8 @@ export async function listKnowledge(context: UnifyRequestContext, paths: Request
       const content = await readTextFile(file);
       const metadata = metadataFor(store, id);
       const folder = path.dirname(relative);
+      const time = statTimeSync(file);
+      const who = attribution(store, file, metadata, time);
       items.push({
         id,
         kind: 'memory',
@@ -260,8 +313,8 @@ export async function listKnowledge(context: UnifyRequestContext, paths: Request
         audiences: audiencesOf(store, id),
         createdBy: metadata.createdBy ?? 'you',
         createdAt: metadata.createdAt ?? statTimeSync(file),
-        updatedBy: metadata.updatedBy ?? 'you',
-        updatedAt: metadata.updatedAt ?? statTimeSync(file),
+        updatedBy: who.updatedBy,
+        updatedAt: who.updatedAt,
         usedIn: 0,
       });
     }
@@ -278,6 +331,7 @@ function ruleItem(
   metadata: KnowledgeMetadata,
   audiences: Audience[],
   time: number,
+  who: { updatedBy: string; updatedAt: number },
 ): KnowledgeItem {
   return {
     id,
@@ -289,8 +343,8 @@ function ruleItem(
     audiences,
     createdBy: metadata.createdBy ?? 'you',
     createdAt: metadata.createdAt ?? time,
-    updatedBy: metadata.updatedBy ?? 'you',
-    updatedAt: metadata.updatedAt ?? time,
+    updatedBy: who.updatedBy,
+    updatedAt: who.updatedAt,
     usedIn: 0,
   };
 }
@@ -308,7 +362,73 @@ function parseMemoryId(id: string): { scope: KnowledgeScope; relative: string } 
 }
 
 function instructionRoots(paths: RequestPaths) {
-  return { workspace: paths.workspaceRoot, dshHome: paths.dshHome, agentsHome: paths.agentsHome };
+  return { workspace: paths.workspaceRoot, unifyHome: paths.unifyHome, agentsHome: paths.agentsHome };
+}
+
+/** The file an item lives in, so a kept agent version can be found and restored. */
+async function knowledgeFileFor(paths: RequestPaths, id: string): Promise<string | undefined> {
+  if (id.startsWith('rule:')) {
+    const { scope } = parseRuleId(id);
+    return ruleFile(paths, scope);
+  }
+  if (id.startsWith('memory:')) {
+    const { scope, relative } = parseMemoryId(id);
+    const root = memoryRoot(paths, scope);
+    return root ? resolveInside(root, relative) : undefined;
+  }
+  if (id.startsWith('skill:')) {
+    return path.join(await skillFolderForId(paths, id), 'SKILL.md');
+  }
+  return undefined;
+}
+
+/** Files an undo may write: Unify's data home, the open workspace and the shared agent skills home. */
+function isInsideKnowledgeRoot(paths: RequestPaths, target: string): boolean {
+  return [paths.unifyHome, paths.workspaceRoot, paths.agentsHome].some(root => !!root && isInside(root, target));
+}
+
+/**
+ * Keeps the file as it was just before an agent writes it, so the Knowledge screen can undo that
+ * change. Called from the approval path; the user's own saves update the metadata instead.
+ */
+export function recordKnowledgeVersion(paths: RequestPaths, file: string, by: string): void {
+  const target = path.resolve(file);
+  let content: string | null = null;
+  try {
+    content = fs.readFileSync(target, 'utf8');
+  } catch {
+    content = null;
+  }
+  const store = metadataStore(paths);
+  const versions = store.versions ??= {};
+  const list = versions[target] ??= [];
+  const latest = list[list.length - 1];
+  if (latest && latest.content === content) return;
+  list.push({ at: Date.now(), by: by || 'an agent', content });
+  if (list.length > 5) list.splice(0, list.length - 5);
+  saveMetadata(paths, store);
+}
+
+/** Restores the version kept before the last agent write, then replies with the fresh state. */
+export async function undoKnowledgeChange(context: UnifyRequestContext, paths: RequestPaths, id: string): Promise<KnowledgeItem[]> {
+  const store = metadataStore(paths);
+  const target = await knowledgeFileFor(paths, id);
+  if (!target) throw new Error('Nothing to undo.');
+  const key = path.resolve(target);
+  if (!isInsideKnowledgeRoot(paths, key)) throw new Error('Nothing to undo.');
+  const list = store.versions?.[key];
+  if (!Array.isArray(list) || !list.length) throw new Error('Nothing to undo.');
+  const version = list.pop()!;
+  if (version.content === null) {
+    await fsp.rm(target, { force: true });
+  } else {
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.writeFile(target, version.content, 'utf8');
+  }
+  if (list && !list.length) delete store.versions![key];
+  touchMetadata(store, id, { updatedBy: 'you', updatedAt: Date.now() });
+  saveMetadata(paths, store);
+  return listKnowledge(context, paths);
 }
 
 /** Reads one item, or one file inside a skill. */
@@ -499,11 +619,7 @@ export async function removeKnowledge(context: UnifyRequestContext, paths: Reque
     const skill = (await listInstructions(instructionRoots(paths))).find(item => `skill:${item.id}` === id);
     if (!skill) throw new Error('That skill no longer exists.');
     const folder = path.resolve(skillFolderOf(skill, paths));
-    const allowed = skillRoots(paths).some(entry => {
-      const root = path.resolve(entry.root);
-      return folder === root || folder.startsWith(root + path.sep);
-    });
-    if (!allowed) throw new Error('That skill folder is outside the skills folders.');
+    assertInsideSkillRoot(paths, folder);
     await fsp.rm(folder, { recursive: true, force: true });
   } else if (id.startsWith('memory:')) {
     const { scope, relative } = parseMemoryId(id);
@@ -519,7 +635,7 @@ export async function removeKnowledge(context: UnifyRequestContext, paths: Reque
   saveMetadata(paths, store);
 }
 
-/** Stores audiences in Unify metadata; DSH itself does not filter by them yet. */
+/** Stores audiences in Unify metadata; Unify itself does not filter by them yet. */
 export function setKnowledgeAudiences(paths: RequestPaths, id: string, audiences: Audience[]): void {
   if (!Array.isArray(audiences)) throw new Error('Audiences must be a list.');
   const store = metadataStore(paths);
@@ -564,7 +680,12 @@ export async function importSkillFolder(
 }
 
 /** Opens an item (or one file inside a skill) in the OS file manager or its default app. */
-export function openKnowledge(paths: RequestPaths, id: string, file?: string): void {
+export async function openKnowledge(
+  paths: RequestPaths,
+  id: string,
+  file?: string,
+  launch: (target: string) => void = openInFileManager,
+): Promise<void> {
   let target: string | undefined;
   if (id.startsWith('rule:')) {
     const { scope } = parseRuleId(id);
@@ -574,13 +695,15 @@ export function openKnowledge(paths: RequestPaths, id: string, file?: string): v
     const root = memoryRoot(paths, scope);
     if (root) target = resolveInside(root, relative);
   } else if (id.startsWith('skill:')) {
-    const instructionId = id.slice('skill:'.length);
-    const prefix = instructionId.slice(0, instructionId.indexOf(':'));
-    const rel = instructionId.slice(instructionId.indexOf(':') + 1);
-    const base = prefix === 'ws' ? paths.workspaceRoot : prefix === 'agents' ? paths.agentsHome : paths.dshHome;
-    if (base) target = resolveInside(path.dirname(path.join(base, ...rel.split('/'))), file || '');
+    // Only a skill the scan found can be opened; a crafted id never becomes a path.
+    const folder = await skillFolderForId(paths, id);
+    target = file ? resolveInside(folder, file) : folder;
   }
   if (!target) throw new Error('Unknown knowledge item.');
+  launch(target);
+}
+
+function openInFileManager(target: string): void {
   const opener = process.platform === 'win32' ? 'explorer' : process.platform === 'darwin' ? 'open' : 'xdg-open';
   const child = spawn(opener, [target], { detached: true, stdio: 'ignore', windowsHide: true });
   child.on('error', () => undefined);

@@ -1,4 +1,25 @@
 /* Toolpacks content (Figma 22 · Toolpacks 306:3562). */
+.toolpacks-screen {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface);
+}
+
+.toolpacks-screen-panel {
+  position: relative;
+  flex: none;
+  width: var(--panel-width);
+  height: 100%;
+}
+
+.toolpacks-screen-content {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
 .tp-screen {
   height: 100%;
   overflow-y: auto;
@@ -71,9 +92,11 @@
   color: var(--text3);
 }
 
+/* Items are separate cells spaced apart; no separator glyphs. */
 .tp-meta-items {
   display: flex;
   align-items: center;
+  gap: 28px;
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -82,14 +105,9 @@
 
 .tp-meta-item {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: 6px;
-}
-
-.tp-meta-item + .tp-meta-item::before {
-  content: '·';
-  margin: 0 8px;
-  color: var(--text3);
 }
 
 .tp-meta-value {

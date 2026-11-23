@@ -3,7 +3,12 @@ import { AccountRegistry } from "./accountRegistry";
 import { accountForModel } from "../sync/configSync";
 import { ModelEntry, ResolvedModel } from "./types";
 
-const MODELS_KEY = "dsh.models.v1";
+const MODELS_KEY = "unify.models.v1";
+
+/** The settings section holding models. Sync writes the `unify` section. */
+function modelSettings(): vscode.WorkspaceConfiguration {
+  return vscode.workspace.getConfiguration('unify');
+}
 export const DEFAULT_MODEL: ModelEntry = {
   name: "DeepSeek V4 Flash",
   provider: "deepseek-official",
@@ -35,11 +40,11 @@ export class ModelRegistry {
     if (!name || !provider || !backend) throw new Error("Model name, provider, and backend are required");
     const normalized = { ...entry, name, provider, backend, account: entry.account || "default" };
     const models = this.read().filter((model) => model.name !== name && model.name !== originalName);
-    await vscode.workspace.getConfiguration('dsh').update('models', [...models, normalized], vscode.ConfigurationTarget.Global);
+    await modelSettings().update('models', [...models, normalized], vscode.ConfigurationTarget.Global);
   }
 
   public async remove(name: string): Promise<void> {
-    await vscode.workspace.getConfiguration('dsh').update('models', this.read().filter((model) => model.name !== name), vscode.ConfigurationTarget.Global);
+    await modelSettings().update('models', this.read().filter((model) => model.name !== name), vscode.ConfigurationTarget.Global);
   }
 
   public async resolve(name: string): Promise<ResolvedModel> {
@@ -56,25 +61,26 @@ export class ModelRegistry {
     return { model, account, secret };
   }
 
-  /** Copies models saved by older versions (in extension storage) into the `dsh.models` setting, which Config Sync carries. */
+  /** Copies models saved in extension storage into the `unify.models` setting, which Config Sync carries. */
   public async migrate(): Promise<void> {
-    if (vscode.workspace.getConfiguration('dsh').inspect('models')?.globalValue !== undefined) return;
-    const legacy = this.context.globalState.get<unknown>(MODELS_KEY, []);
-    if (Array.isArray(legacy) && legacy.length) await vscode.workspace.getConfiguration('dsh').update('models', legacy, vscode.ConfigurationTarget.Global);
+    if (modelSettings().inspect('models')?.globalValue !== undefined) return;
+    const stored = this.context.globalState.get<unknown>(MODELS_KEY, []);
+    if (Array.isArray(stored) && stored.length) await modelSettings().update('models', stored, vscode.ConfigurationTarget.Global);
   }
 
   public async pick(): Promise<ModelEntry | undefined> {
     const models = this.list(true);
     const selected = await vscode.window.showQuickPick(models.map((model) => ({
       label: model.name,
-      description: `${model.provider} · ${model.backend}`,
+      description: model.provider,
+      detail: model.backend,
       model,
     })), { placeHolder: "Select a model" });
     return selected?.model;
   }
 
   private read(): ModelEntry[] {
-    const configured = vscode.workspace.getConfiguration('dsh').get<unknown>('models');
+    const configured = modelSettings().get<unknown>('models');
     if (Array.isArray(configured)) return configured.filter((item): item is ModelEntry =>
       !!item && typeof item === 'object' && typeof item.name === 'string' && typeof item.provider === 'string' && typeof item.backend === 'string')
       .map(item => ({ ...item, enabled: item.enabled !== false, account: item.account || 'default' }));

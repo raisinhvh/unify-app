@@ -37,18 +37,20 @@ export function selectedModelLabel(): string {
   return viewState.models.find(item => item.id === value)?.name || 'Choose model';
 }
 
-function selectedModel() {
-  return viewState.models.find(item => item.id === viewState.selectedModelId);
+function findModel(modelId: string | undefined) {
+  return viewState.models.find(item => item.id === modelId);
 }
 
-export function effortOptions(): SelectOption[] {
-  const efforts = selectedModel()?.effortOptions || [];
+/** Effort choices for `modelId` (the selected model when omitted). */
+export function effortOptions(modelId: string | undefined = viewState.selectedModelId): SelectOption[] {
+  const efforts = findModel(modelId)?.effortOptions || [];
   if (!efforts.length) return [];
   return [{ value: '', label: 'Default' }, ...efforts.map(value => ({ value, label: value }))];
 }
 
-export function speedOptions(): SelectOption[] {
-  return (selectedModel()?.speedOptions || []).map(speed => ({ value: speed.label, label: speed.label }));
+/** Speed choices for `modelId` (the selected model when omitted). */
+export function speedOptions(modelId: string | undefined = viewState.selectedModelId): SelectOption[] {
+  return (findModel(modelId)?.speedOptions || []).map(speed => ({ value: speed.label, label: speed.label }));
 }
 
 export function selectModel(modelId: string, chatId?: string): void {

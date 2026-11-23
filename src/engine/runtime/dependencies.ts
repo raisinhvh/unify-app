@@ -107,7 +107,7 @@ export class WindowsDependencies {
   private async ensureNodeOnce(): Promise<string> {
     const configured = this.configuredNode?.()?.trim();
     if (configured) {
-      if (!await this.probeNode(configured)) throw new Error(`Configured Node executable '${configured}' is invalid or unsupported. Install Node 22.19+ (22.x) or 24+, with working npm, or update dsh.runtime.nodePath.`);
+      if (!await this.probeNode(configured)) throw new Error(`Configured Node executable '${configured}' is invalid or unsupported. Install Node 22.19+ (22.x) or 24+, with working npm, or update unify.runtime.nodePath.`);
       const location = await run(configured, ['-p', 'process.execPath']);
       const executable = location.stdout.trim();
       prependPath(dirname(executable)); return executable;
@@ -119,7 +119,7 @@ export class WindowsDependencies {
       const executable = resolved.stdout.trim() || candidate;
       prependPath(dirname(executable)); return executable;
     }
-    if (!WINDOWS) throw new Error('Node.js 22.19+ or 24+ with npm was not found. Install it (for example `brew install node` or from nodejs.org), or set dsh.runtime.nodePath, then try again.');
+    if (!WINDOWS) throw new Error('Node.js 22.19+ or 24+ with npm was not found. Install it (for example `brew install node` or from nodejs.org), or set unify.runtime.nodePath, then try again.');
     const root = join(this.storage, 'dependencies', 'node');
     const managed = join(root, 'node.exe');
     if (await this.probeNode(managed)) { prependPath(root); return managed; }
@@ -141,7 +141,7 @@ export class WindowsDependencies {
       const expected = sumText.split(/\r?\n/).find(line => line.trim().endsWith(` ${archive}`))?.trim().split(/\s+/)[0];
       if (!expected || createHash('sha256').update(await readFile(zip)).digest('hex').toLowerCase() !== expected.toLowerCase()) throw new Error(`SHA-256 verification failed for ${archive}.`);
       const extracted = join(stage, 'extracted'); await mkdir(extracted);
-      const expansion = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:DSH_NODE_ZIP -DestinationPath $env:DSH_NODE_DEST -Force"], PROCESS_TIMEOUT, { ...process.env, DSH_NODE_ZIP: zip, DSH_NODE_DEST: extracted });
+      const expansion = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:UNIFY_NODE_ZIP -DestinationPath $env:UNIFY_NODE_DEST -Force"], PROCESS_TIMEOUT, { ...process.env, UNIFY_NODE_ZIP: zip, UNIFY_NODE_DEST: extracted });
       if (expansion.code !== 0) throw new Error(`Could not expand the downloaded Node archive: ${expansion.stderr.slice(-2000)}`);
       const entries = await readdir(extracted);
       const unpacked = entries.map(entry => join(extracted, entry)).find(path => existsSync(join(path, 'node.exe')));
@@ -224,7 +224,7 @@ export class WindowsDependencies {
   private async installProviderOnce(provider: string): Promise<void> {
     const configured = this.configuredProvider?.(provider)?.trim();
     if (configured && !(provider === 'cursor-acp' && configured === 'agent')) throw new Error(`Configured ${provider} executable '${configured}' was not found or could not run. Clear its custom path in Settings before installing.`);
-    const stage = await mkdtemp(join(tmpdir(), `dsh-${provider}-`));
+    const stage = await mkdtemp(join(tmpdir(), `unify-${provider}-`));
     if (!WINDOWS) {
       try {
         const script = join(stage, 'install.sh');

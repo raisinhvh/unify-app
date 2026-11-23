@@ -8,7 +8,13 @@
  *     "extends": "base",            optional: start from another fixture's messages and persisted state
  *     "persisted": { ... },         renderer-local state (route, layout, panelOpen...) as persist.ts stores it
  *     "messages": [ ... ]           SidebarHostMessages sent after the renderer posts `ready`
+ *     "timed": [                    optional: messages played later, `after` ms from `ready` (a run that moves on)
+ *       { "after": 1200, "message": { ... } }
+ *     ]
  *   }
+ *
+ * `?timed=0` skips the timed messages (the first frame), `?timed=end` sends them all straight away (the end
+ * state), so screenshots of either are repeatable.
  *
  * Time fields (`updatedAt`, `resetsAt`, `fetchedAt`) may be negative or small: -42 means "42 minutes ago",
  * 300 means "300 minutes from now". Real epoch values pass through unchanged.
@@ -26,6 +32,13 @@ interface Fixture {
   extends?: string;
   persisted?: Record<string, unknown>;
   messages?: SidebarHostMessage[];
+  timed?: TimedMessage[];
+}
+
+interface TimedMessage {
+  /** Milliseconds after the renderer posts `ready`. */
+  after: number;
+  message: SidebarHostMessage;
 }
 
 // Fixtures are dev-server only; production builds carry none.
@@ -50,6 +63,7 @@ async function loadFixture(name: string): Promise<Fixture> {
   return {
     persisted: { ...parent.persisted, ...fixture.persisted },
     messages: [...parentMessages, ...childMessages],
+    timed: [...(parent.timed || []), ...(fixture.timed || [])],
   };
 }
 
@@ -67,6 +81,11 @@ const featureDefaults: Record<string, UnifyFeatureValue> = {
   'agents.messaging.scope': 'everyone',
   'agents.blockNativeAgents': true,
   'agents.maxParallel': 4,
+  'agents.explorerRanges': true,
+  'agents.stuckCommandMinutes': 5,
+  'agents.messaging.showInChat': true,
+  'chats.toolImages': true,
+  'chats.subagentImageStrip': true,
   'knowledge.agentWrites': true,
   'knowledge.audiences': true,
   'notifications.desktop': true,
@@ -155,9 +174,18 @@ export async function installMockBridge(): Promise<void> {
   const handle = (message: SidebarWebviewMessage) => {
     const sessionId = message.chatId || activeSessionId;
     switch (message.type) {
-      case 'ready':
+      case 'ready': {
         for (const item of fixture.messages || []) emit(item);
+        const timedMode = params.get('timed');
+        const timed = [...(fixture.timed || [])].sort((first, second) => first.after - second.after);
+        if (timedMode === '0') break;
+        if (timedMode === 'end') {
+          for (const entry of timed) emit(entry.message);
+          break;
+        }
+        for (const entry of timed) window.setTimeout(() => emit(entry.message), entry.after);
         break;
+      }
       case 'newSession': {
         const id = `mock-${Date.now()}`;
         sessions.unshift({ id, name: 'New chat', updatedAt: Date.now(), ...(message.project ? { project: message.project } : {}) });

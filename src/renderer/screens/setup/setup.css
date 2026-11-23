@@ -1,0 +1,323 @@
+/* Setup wizard (Figma 26a–26f). Transparent over Home (covered) and the backdrop; only the steps panel is solid. */
+
+.setup-wizard {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+}
+
+/* Steps panel (280px, surface, hairline on the right) */
+.setup-steps-slot {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  width: 280px;
+}
+
+.setup-steps {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0 12px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.setup-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 64px;
+  padding: 0 8px;
+  flex: none;
+}
+
+.setup-steps .tree-folder {
+  flex: 1;
+  min-height: 0;
+}
+
+.setup-steps-foot {
+  margin: 0;
+  padding: 0 4px 16px;
+  color: var(--text3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Pages */
+.setup-pages {
+  position: absolute;
+  inset: 0;
+}
+
+.setup-page {
+  overflow-y: auto;
+}
+
+/* 26a Welcome: the title sits left of centre, straight on the backdrop */
+.setup-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 40px;
+  min-height: 100%;
+  padding: 48px clamp(48px, 15vw, 216px);
+}
+
+.setup-welcome-title {
+  max-width: 720px;
+  margin: 0;
+  color: var(--text);
+}
+
+.setup-welcome-start {
+  height: 40px;
+  padding: 0 24px;
+}
+
+/* Step column: 560px, centred in the space right of the panel */
+.setup-column {
+  display: flex;
+  flex-direction: column;
+  width: 560px;
+  max-width: calc(100% - 64px);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 120px 0 72px;
+  transform: translateX(140px);
+}
+
+.setup-crumb {
+  display: flex;
+  gap: 6px;
+  color: var(--text3);
+}
+
+.setup-crumb-current {
+  color: var(--text2);
+}
+
+.setup-title {
+  margin: 12px 0 0;
+  color: var(--text);
+}
+
+.setup-lede {
+  margin: 8px 0 0;
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.setup-rule {
+  height: 1px;
+  margin: 24px 0;
+  background: var(--border);
+  flex: none;
+}
+
+.setup-body {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  flex: 1;
+}
+
+.setup-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+  margin-bottom: 6px;
+}
+
+.setup-section-head h2 {
+  margin: 0;
+  color: var(--text);
+}
+
+.setup-section-trailing {
+  display: flex;
+  align-items: center;
+  color: var(--text3);
+}
+
+.setup-empty {
+  margin: 4px 0 0;
+  color: var(--text3);
+}
+
+/* Rows (flat, file-system look) */
+.setup-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 12px;
+  border-radius: var(--radius-menu);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.setup-row.clickable {
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.setup-row.clickable:hover {
+  background: var(--hover);
+}
+
+.setup-row-leading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex: none;
+  color: var(--text2);
+}
+
+.setup-row-leading:empty {
+  display: none;
+}
+
+.setup-row-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.setup-row-label {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.setup-row-detail {
+  color: var(--text2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.setup-row-caption {
+  margin-top: 2px;
+  color: var(--text3);
+}
+
+.setup-row-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.setup-row-end .button-text {
+  margin-right: -8px;
+}
+
+.setup-row-hint {
+  color: var(--text3);
+}
+
+.setup-row-chevron {
+  color: var(--text3);
+}
+
+.setup-row-end .select {
+  max-width: 220px;
+}
+
+.setup-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text2);
+  white-space: nowrap;
+}
+
+.setup-state.warn {
+  color: var(--warn);
+}
+
+.setup-state.muted {
+  color: var(--text3);
+}
+
+.setup-state-check {
+  color: var(--add);
+}
+
+.setup-tree {
+  margin: 0 -4px;
+}
+
+.setup-theme-cards {
+  padding: 6px 4px 0;
+}
+
+.setup-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 12px;
+  max-width: 340px;
+  overflow: hidden;
+  color: var(--text2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-value-muted {
+  color: var(--text3);
+}
+
+/* Footer: hairline, Back on the left, status + Continue on the right */
+.setup-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+
+.setup-back {
+  margin-left: -8px;
+}
+
+.setup-footer-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.setup-footer-status {
+  overflow: hidden;
+  color: var(--text3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .setup-column {
+    transform: none;
+    margin-left: 312px;
+    max-width: calc(100% - 344px);
+  }
+}

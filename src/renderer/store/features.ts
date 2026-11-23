@@ -2,8 +2,8 @@
  * Feature toggles (shared contract — every screen reads from here, Settings writes).
  *
  * Unify is heavily customizable: every feature sits behind one of these ids from the start.
- * Source of truth is the engine: it persists values in ~/.dsh/unify/settings.json and mirrors them
- * as `viewState.unifyFeatures` (Record<FeatureId, FeatureValue>; separate from DSH's own
+ * Source of truth is the engine: it persists values in ~/.unify/settings.json and mirrors them
+ * as `viewState.unifyFeatures` (Record<FeatureId, FeatureValue>; separate from the engine's own
  * `viewState.features`). The renderer writes with post({ type: 'setUnifyFeature', id, value }). Until the engine sends a value, the default below applies.
  *
  * Adding a feature: add the id + default + label here (owner: main agent), then read it with feature(id).
@@ -44,6 +44,7 @@ export const featureDefinitions = {
 	'agents.maxParallel': { group: 'Agents', label: 'Parallel subagents', description: 'Most subagents running at once.', defaultValue: 4, scope: 'engine' },
 	'agents.imagesToParent': { group: 'Agents', label: 'Subagents send real images', description: 'Images a subagent sends reach the main agent as images, not file paths.', defaultValue: true, scope: 'engine' },
 	'agents.explorerRanges': { group: 'Agents', label: 'Explorer returns code ranges', description: 'The explorer ends with the exact file ranges it found, so the main agent reads only those lines.', defaultValue: true, scope: 'engine' },
+	'agents.stuckCommandMinutes': { group: 'Agents', label: 'Stop stuck commands after (minutes)', description: 'A command an agent runs that shows no CPU or disk activity for this long is stopped, so the agent never waits on it forever. 0 turns this off.', defaultValue: 5, scope: 'engine' },
 	'tools.rangeEdits': { group: 'Agents', label: 'Range reads and edits', description: 'Agents can read several line ranges in one call and replace just those lines, with a check that the lines have not changed.', defaultValue: true, scope: 'engine' },
 	'chats.showYourWork': { group: 'Agents', label: 'Show your work', description: 'Agents send screenshots, renders and before/after images of what they made. Images you have already seen are never sent twice.', defaultValue: true, scope: 'engine' },
 

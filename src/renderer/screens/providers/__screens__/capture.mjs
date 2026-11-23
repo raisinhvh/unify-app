@@ -23,9 +23,11 @@ const debugPort = 9444;
 const shots = [
   { state: 'usage', theme: 'walnutDark', name: 'providers-usage-walnutDark' },
   { state: 'account', theme: 'walnutDark', name: 'providers-account-walnutDark' },
+  { state: 'account', theme: 'walnutDark', name: 'providers-account-open-walnutDark', click: '.pv-default-model' },
   { state: 'add', theme: 'walnutDark', name: 'providers-add-walnutDark' },
   { state: 'usage', theme: 'walnutLight', name: 'providers-usage-walnutLight' },
   { state: 'account', theme: 'walnutLight', name: 'providers-account-walnutLight' },
+  { state: 'account', theme: 'walnutLight', name: 'providers-account-open-walnutLight', click: '.pv-default-model' },
   { state: 'add', theme: 'walnutLight', name: 'providers-add-walnutLight' },
   { state: 'add', theme: 'walnutDark', name: 'providers-add-selfhosted-walnutDark', add: 'Self-hosted' },
   { state: 'empty', theme: 'walnutDark', name: 'providers-empty-walnutDark' },
@@ -138,6 +140,15 @@ async function main() {
       const url = `http://127.0.0.1:${port}/screens/providers/preview.html?${query}`;
       await cdp.send('Page.navigate', { url });
       await delay(2600);
+      if (shot.click) {
+        // Open a popover (e.g. the default-model picker) before capturing.
+        await cdp.send('Runtime.evaluate', {
+          expression: `(() => { const target = document.querySelector(${JSON.stringify(shot.click)});
+            if (target) target.click(); return Boolean(target); })()`,
+          returnByValue: true,
+        });
+        await delay(600);
+      }
       if (shot.add) {
         // Expand a provider row to expose the inline form.
         await cdp.send('Runtime.evaluate', {

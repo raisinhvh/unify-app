@@ -1,4 +1,4 @@
-﻿import { createHash } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
@@ -52,7 +52,7 @@ async function installTools(storage: string, fetchImpl: typeof fetch): Promise<s
   for (const tool of RUST_TOOLS) {
     const target = join(bin, `${tool}.exe`);
     if (await probe(target)) continue;
-    const response = await fetchImpl(`https://api.github.com/repos/${repositories[tool]}/releases/latest`, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'dsh-ide' }, signal: AbortSignal.timeout(20_000) });
+    const response = await fetchImpl(`https://api.github.com/repos/${repositories[tool]}/releases/latest`, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'unify' }, signal: AbortSignal.timeout(20_000) });
     if (!response.ok) throw new Error(`Could not look up ${tool} release.`);
     const release = await response.json() as { assets?: ReleaseAsset[] };
     const asset = pickRustToolAsset(tool, release.assets || []);
@@ -65,8 +65,8 @@ async function installTools(storage: string, fetchImpl: typeof fetch): Promise<s
       const extracted = join(stage, 'extracted');
       await mkdir(extracted);
       const expansion = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
-        "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:DSH_RUST_ZIP -DestinationPath $env:DSH_RUST_DEST -Force"],
-      180_000, { ...process.env, DSH_RUST_ZIP: zip, DSH_RUST_DEST: extracted });
+        "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:UNIFY_RUST_ZIP -DestinationPath $env:UNIFY_RUST_DEST -Force"],
+      180_000, { ...process.env, UNIFY_RUST_ZIP: zip, UNIFY_RUST_DEST: extracted });
       if (expansion.code !== 0) throw new Error(`Could not expand ${asset.name}.`);
       const executable = await findExecutable(extracted, `${tool}.exe`);
       if (!executable || !await probe(executable)) throw new Error(`${tool} does not run.`);
@@ -91,7 +91,7 @@ export async function ensureRustTools(storage: string, fetchImpl: typeof fetch =
 export function activateRustTools(bin: string): void {
   const directory = dirname(bin);
   mkdirSync(directory, { recursive: true });
-  const script = `[ -n "$DSH_USER_BASH_ENV" ] && [ -f "$DSH_USER_BASH_ENV" ] && . "$DSH_USER_BASH_ENV"\ncase $- in\n  *c*)\n    for name in grep egrep fgrep find sed; do\n      eval "$name() { printf '%s\\n' '$name is not available here. Use rg (search), fd (find files) or sd (replace).' >&2; return 127; }"\n    done\n    ;;\nesac\n`;
+  const script = `[ -n "$UNIFY_USER_BASH_ENV" ] && [ -f "$UNIFY_USER_BASH_ENV" ] && . "$UNIFY_USER_BASH_ENV"\ncase $- in\n  *c*)\n    for name in grep egrep fgrep find sed; do\n      eval "$name() { printf '%s\\n' '$name is not available here. Use rg (search), fd (find files) or sd (replace).' >&2; return 127; }"\n    done\n    ;;\nesac\n`;
   writeFileSync(join(directory, 'bash-env.sh'), script, 'utf8');
   activeBin = bin;
 }
@@ -107,7 +107,7 @@ export function withRustTools(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const result = { ...env };
   const key = Object.keys(result).find(item => item.toLowerCase() === 'path') || 'Path';
   result[key] = `${activeBin}${result[key] ? `${delimiter}${result[key]}` : ''}`;
-  if (result.BASH_ENV) result.DSH_USER_BASH_ENV = result.BASH_ENV;
+  if (result.BASH_ENV) result.UNIFY_USER_BASH_ENV = result.BASH_ENV;
   result.BASH_ENV = join(dirname(activeBin), 'bash-env.sh');
   return result;
 }

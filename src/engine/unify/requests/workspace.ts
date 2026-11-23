@@ -2,13 +2,17 @@
  * Workspace files for the Files screen: one folder per request, safe workspace-relative paths, versioned
  * writes that detect an external edit, and a recursive watcher that pushes `fileChanged`.
  *
- * The watcher is optional: `fs.watch(..., { recursive: true })` exists on Windows and macOS but not on
- * every Linux Node build, so a failure only means no live notifications (the screen still reads on demand).
+ * The watcher can cover several project roots, honours each root's `.gitignore`, and always skips
+ * `node_modules`, `.git`, the project `.unify` folder and Unify's own data home. It is optional:
+ * `fs.watch(..., { recursive: true })` exists on Windows and macOS but not on every Linux Node build, so a
+ * failure only means no live notifications (the screen still reads on demand).
  */
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import type { FSWatcher } from 'node:fs';
 import * as path from 'node:path';
+import { unifyHome } from '../settings';
+import { GitIgnore } from './gitignore';
 import {
   FileDocument,
   FileEntry,
@@ -17,7 +21,7 @@ import {
 } from './types';
 import { relativeToWorkspace, resolveInside } from './state';
 
-/** Folders the tree and search never descend into (same list as DSH's instruction walker). */
+/** Folders the tree and search never descend into (same list as Unify's instruction walker). */
 export const IGNORED_DIRECTORIES = new Set([
   'node_modules', '.git', 'dist', 'build', '.venv', 'venv', '.next', '.turbo', '.npm-cache', '.system',
 ]);
@@ -195,10 +199,10 @@ interface WatchState {
   watcher: FSWatcher;
   timers: Map<string, NodeJS.Timeout>;
   known: Set<string>;
+  ignore: GitIgnore;
 }
 
 const watchers = new Map<string, WatchState>();
-let watchedRoot: string | undefined;
 let activeReply: UnifyReply | undefined;
 
 /** The dispatcher points this at the newest reply callback so pushes reach the live webview. */
@@ -207,36 +211,71 @@ export function setActiveUnifyReply(reply: UnifyReply | undefined): void {
 }
 
 function rememberPath(relative: string): void {
-  const state = watchedRoot ? watchers.get(watchedRoot) : undefined;
-  if (state) state.known.add(relative);
+  for (const state of watchers.values()) state.known.add(relative);
+}
+
+function normaliseRoots(roots: string | string[] | undefined): string[] {
+  const list = Array.isArray(roots) ? roots : roots ? [roots] : [];
+  const resolved: string[] = [];
+  for (const root of list) {
+    if (typeof root !== 'string' || !root) continue;
+    const full = path.resolve(root);
+    if (resolved.includes(full) || !statOrUndefined(full)?.isDirectory()) continue;
+    resolved.push(full);
+  }
+  return resolved;
+}
+
+/** Folders every root skips, besides those `.gitignore` names. */
+function skippedSegment(segment: string): boolean {
+  return IGNORED_DIRECTORIES.has(segment) || segment === '.unify';
+}
+
+/** Whether a changed root-relative path is outside what the Files screen shows. */
+function isIgnored(root: string, relative: string, isDirectory: boolean): boolean {
+  const segments = relative.split('/').filter(Boolean);
+  if (!segments.length) return false;
+  if (segments.some(skippedSegment)) return true;
+  const full = path.resolve(root, ...segments);
+  const home = path.resolve(unifyHome());
+  if (full === home || full.startsWith(home + path.sep)) return true;
+  const state = watchers.get(root);
+  if (!state) return false;
+  state.ignore.refresh();
+  // A file inside an ignored folder is ignored too; check every ancestor as a directory.
+  let prefix = '';
+  for (const segment of segments.slice(0, -1)) {
+    prefix = prefix ? `${prefix}/${segment}` : segment;
+    if (state.ignore.ignores(prefix, true)) return true;
+  }
+  return state.ignore.ignores(relative, isDirectory);
 }
 
 /**
- * Starts watching the workspace once. Safe to call for every files request; a second call replaces the
- * reply sink but keeps the watcher.
+ * Starts watching each project root once. Safe to call for every files request; an already-watched root keeps
+ * its watcher and only the reply sink is replaced.
  */
-export function watchWorkspace(root: string | undefined, reply?: UnifyReply): void {
+export function watchWorkspace(roots: string | string[] | undefined, reply?: UnifyReply): void {
   if (reply) activeReply = reply;
-  if (!root) return;
-  if (watchedRoot === root && watchers.has(root)) return;
-  if (watchedRoot && watchedRoot !== root) disposeUnifyRequestWatchers();
-  let watcher: FSWatcher;
-  try {
-    watcher = fs.watch(root, { recursive: true, persistent: false }, (_event, filename) => {
-      if (!filename) return;
-      const relative = filename.toString().replace(/\\/g, '/');
-      scheduleChange(root, relative);
+  for (const root of normaliseRoots(roots)) {
+    if (watchers.has(root)) continue;
+    let watcher: FSWatcher;
+    try {
+      watcher = fs.watch(root, { recursive: true, persistent: false }, (_event, filename) => {
+        if (!filename) return;
+        const relative = filename.toString().replace(/\\/g, '/');
+        scheduleChange(root, relative);
+      });
+    } catch {
+      // Recursive watching is unavailable on this platform; files still read on demand.
+      continue;
+    }
+    watcher.on('error', () => {
+      watcher.close();
+      watchers.delete(root);
     });
-  } catch {
-    return;
+    watchers.set(root, { watcher, timers: new Map(), known: new Set(), ignore: new GitIgnore(root) });
   }
-  watcher.on('error', () => {
-    watcher.close();
-    watchers.delete(root);
-    if (watchedRoot === root) watchedRoot = undefined;
-  });
-  watchers.set(root, { watcher, timers: new Map(), known: new Set() });
-  watchedRoot = root;
 }
 
 function scheduleChange(root: string, relative: string): void {
@@ -249,10 +288,11 @@ function scheduleChange(root: string, relative: string): void {
     const base = path.resolve(root);
     const full = path.resolve(base, ...relative.split('/'));
     if (full !== base && !full.startsWith(base + path.sep)) return;
-    if (relative.split('/').some(part => IGNORED_DIRECTORIES.has(part))) return;
-    const exists = !!statOrUndefined(full);
+    const info = statOrUndefined(full);
+    if (isIgnored(root, relative, !!info?.isDirectory())) return;
+    if (info?.isDirectory()) return;
     const wasKnown = state.known.has(relative);
-    if (!exists) {
+    if (!info) {
       state.known.delete(relative);
       activeReply?.({ type: 'fileChanged', path: relative, kind: 'deleted' } satisfies FilesReply);
       return;
@@ -273,6 +313,5 @@ export function disposeUnifyRequestWatchers(): void {
     state.watcher.close();
   }
   watchers.clear();
-  watchedRoot = undefined;
   activeReply = undefined;
 }

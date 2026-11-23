@@ -1,0 +1,81 @@
+/* DEV ONLY: frames for the ModelPicker preview. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+.o5-stage {
+  display: flex;
+  gap: 48px;
+  width: 100%;
+  height: 100%;
+  padding: 32px;
+  background: var(--bg);
+}
+
+.o5-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 420px;
+  flex: none;
+}
+
+.o5-caption {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 12px;
+  color: var(--text3);
+}
+
+.o5-composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 380px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pane);
+  background: var(--surface);
+}
+
+.o5-composer-bar.o5-narrow {
+  width: 240px;
+}
+
+.o5-spacer {
+  flex: 1;
+}
+
+.o5-send.button-primary {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+}
+
+.o5-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 420px;
+  min-height: 40px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.o5-setting-label {
+  flex: none;
+}
+
+.o5-open {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}

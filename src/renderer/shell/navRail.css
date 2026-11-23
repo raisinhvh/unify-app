@@ -1,0 +1,92 @@
+.rail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: var(--rail-width);
+  height: 100%;
+  flex: none;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  -webkit-app-region: drag;
+}
+
+.rail > * {
+  -webkit-app-region: no-drag;
+}
+
+.rail-logo {
+  position: absolute;
+  top: 12px;
+  left: 11.5px;
+  width: 32px;
+  height: 32px;
+  -webkit-app-region: drag;
+}
+
+.rail-highlight {
+  position: absolute;
+  top: 0;
+  left: 8px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--hover);
+  pointer-events: none;
+}
+
+.rail-items {
+  position: absolute;
+  top: 64px;
+  left: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rail-button.icon-button-large .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.rail-items .rail-button:hover:not(.current) {
+  background: color-mix(in srgb, var(--hover) 60%, transparent);
+}
+
+/* The glide highlight draws the current button's background. */
+.rail-items .rail-button.current,
+.rail-items .rail-button.current:hover {
+  background: transparent;
+  color: var(--text);
+}
+
+.rail-bottom {
+  position: absolute;
+  bottom: 12px;
+  left: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Rail entries that can hide: each sits at its own spring-driven place instead of in a flex column. */
+.nav-rail-items {
+  width: 40px;
+  height: 0;
+}
+
+.nav-rail-entry {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40px;
+  height: 40px;
+  transform-origin: center;
+}
+
+.nav-rail-meter {
+  display: flex;
+  justify-content: center;
+  transform-origin: center bottom;
+}

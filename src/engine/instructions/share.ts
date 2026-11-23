@@ -2,13 +2,26 @@ import { promises as fs } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
-export interface ShareRoots { dshHome: string; agentsHome: string }
+export interface ShareRoots {
+  /** Unify's data home: the same folder as `unifyHome()`. */
+  unifyHome?: string;
+  agentsHome: string;
+}
 export interface ShareResult { rules: boolean; skills: string[] }
 
-const START = '<!-- dsh:shared-rules:start (managed by DSH-IDE; edit global rules in DSH instead) -->';
-const END = '<!-- dsh:shared-rules:end -->';
+const START = '<!-- unify:shared-rules:start (managed by Unify; edit global rules in Unify instead) -->';
+const END = '<!-- unify:shared-rules:end -->';
+const MANIFEST = '.unify-shared.json';
 const NAME = /^[a-z0-9][a-z0-9-]{0,63}$/i;
+const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const BLOCK = new RegExp(`^${escape(START)}\\r?\\n[\\s\\S]*?^${escape(END)}(?=\\r?$)`, 'm');
 type Owned = Record<string, { fingerprint: string }>;
+
+const homeOf = (roots: ShareRoots): string => {
+  const home = roots.unifyHome;
+  if (!home) throw new Error('Share roots have no data home.');
+  return home;
+};
 
 async function read(file: string): Promise<string | undefined> {
   try { return await fs.readFile(file, 'utf8'); }
@@ -21,12 +34,10 @@ async function read(file: string): Promise<string | undefined> {
 async function rules(directory: string, roots: ShareRoots, enabled: boolean): Promise<boolean> {
   const file = join(directory, 'CLAUDE.md');
   const old = await read(file);
-  const source = enabled ? await read(join(roots.dshHome, 'AGENTS.md')) : undefined;
+  const source = enabled ? await read(join(homeOf(roots), 'AGENTS.md')) : undefined;
   const body = source?.trimEnd();
   const block = body?.trim() ? `${START}\n${body}\n${END}` : '';
-  const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`^${escape(START)}\\r?\\n[\\s\\S]*?^${escape(END)}(?=\\r?$)`, 'm');
-  const match = pattern.exec(old ?? '');
+  const match = BLOCK.exec(old ?? '');
   let next = old ?? '';
   let onlyBlock = false;
   if (match) {
@@ -71,7 +82,7 @@ async function scan(root: string): Promise<{ files: string[]; directories: strin
     for (const entry of entries) {
       const path = rel ? `${rel}/${entry.name}` : entry.name;
       const stat = await fs.lstat(join(root, path));
-      if (stat.isSymbolicLink()) continue;
+      if (entry.isSymbolicLink() || stat.isSymbolicLink()) continue;
       if (stat.isDirectory()) {
         directories.push(path);
         await walk(path);
@@ -95,12 +106,12 @@ async function skills(directory: string, roots: ShareRoots, enabled: boolean): P
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return [];
   }
-  const file = join(target, '.dsh-shared.json');
+  const file = join(target, MANIFEST);
   const owned = await manifest(file);
   const original = JSON.stringify(owned);
   const sources = new Map<string, string>();
   if (enabled) {
-    for (const home of [roots.agentsHome, roots.dshHome]) {
+    for (const home of [roots.agentsHome, homeOf(roots)]) {
       const root = join(home, 'skills');
       if (!await directoryExists(root)) continue;
       try {

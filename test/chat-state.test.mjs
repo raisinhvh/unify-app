@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { build } from 'esbuild';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const source = await readFile('src/engine/extension.ts', 'utf8');
 const bundle = await build({
-  stdin: { contents: source + '\nexport { ExtensionHost, DshSidebarProvider, WorkspaceMirror };', resolveDir: resolve('src/engine'), loader: 'ts' },
+  stdin: { contents: source + '\nexport { ExtensionHost, UnifySidebarProvider, WorkspaceMirror };', resolveDir: resolve('src/engine'), loader: 'ts' },
   bundle: true, write: false, platform: 'node', format: 'esm',
   logOverride: { 'import-is-undefined': 'silent' },
   plugins: [{ name: 'vscode-stub', setup(builder) {
@@ -15,7 +16,7 @@ const bundle = await build({
     builder.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: 'export const workspace = { getConfiguration: () => ({ get: (_key, fallback) => fallback }) }; export const window = {}; export const Uri = { file: path => ({ fsPath: path }) };' }));
   } }],
 });
-const { ExtensionHost, DshSidebarProvider, WorkspaceMirror } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+const { ExtensionHost, UnifySidebarProvider, WorkspaceMirror } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 
 function deferred() {
   let resolve, reject;
@@ -25,10 +26,11 @@ function deferred() {
 
 function navigationHost(records) {
   const host = Object.create(ExtensionHost.prototype);
-  const store = new Map([['dsh.ide.sessions.v1', records], ['dsh.ide.activeSession.v1', records[0]?.id]]);
+  const store = new Map([['unify.ide.sessions.v1', records], ['unify.ide.activeSession.v1', records[0]?.id]]);
   const messages = [];
   Object.assign(host, {
     active: records[0], chats: new Map(), chatLoads: new Map(), promptStarts: new Map(), deletedSessions: new Set(),
+    placesByChat: new Map(),
     transcripts: new Map(), timelines: {}, modelChoices: {}, selectedModel: 'Model',
     context: { globalStorageUri: { fsPath: '/storage' }, workspaceState: {
       get: (key, fallback) => store.has(key) ? store.get(key) : fallback,
@@ -75,7 +77,7 @@ test('new chats appear without copying files or starting a provider', async () =
   const { host, store, messages } = navigationHost([]);
   host.prepareChat = () => { throw new Error('New must not initialize the chat'); };
   await host.newChat();
-  const record = store.get('dsh.ide.sessions.v1')[0];
+  const record = store.get('unify.ide.sessions.v1')[0];
   assert.equal(record.pendingMirror, true);
   assert.equal(host.chats.size, 0);
   assert.equal(host.chatLoads.size, 0);
@@ -267,7 +269,7 @@ test('first submission is displayed before new chat persistence completes', asyn
 test('saved history is restored before the early user echo', async () => {
   const record = { id: 'one', modelName: 'Model', provider: 'cursor-acp', backend: 'auto' };
   const { host } = preparePromptHost([record]);
-  host.sidebar = new DshSidebarProvider({});
+  host.sidebar = new UnifySidebarProvider({});
   delete host.replayTranscript;
   host.timelines.one = { timeline: [{ id: 'old', kind: 'message', role: 'user', text: 'earlier' }], subagents: {} };
   const gate = deferred();
@@ -309,10 +311,10 @@ test('deletion updates navigation before backend close and prevents late saves',
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(disposed, false);
   assert.equal(host.active.id, 'two');
-  assert.deepEqual(store.get('dsh.ide.sessions.v1').map(record => record.id), ['two']);
+  assert.deepEqual(store.get('unify.ide.sessions.v1').map(record => record.id), ['two']);
   assert.ok(messages.some(message => message.type === 'sessionDeleted'));
   await host.saveSession(records[0]);
-  assert.deepEqual(store.get('dsh.ide.sessions.v1').map(record => record.id), ['two']);
+  assert.deepEqual(store.get('unify.ide.sessions.v1').map(record => record.id), ['two']);
   gate.resolve(); await deleted;
   assert.equal(disposed, true);
 });
@@ -394,7 +396,7 @@ test('deleting a draft during initialization disposes it without restoring the c
 
 test('saved timelines restore tools, approvals and subagent output in order', () => {
   let saved;
-  const sidebar = new DshSidebarProvider({}, undefined, (sessionId, timeline, subagents) => {
+  const sidebar = new UnifySidebarProvider({}, undefined, (sessionId, timeline, subagents) => {
     saved = JSON.parse(JSON.stringify({ sessionId, timeline, subagents }));
   });
   sidebar.postMessage({ type: 'userMessage', sessionId: 'chat', entryId: 'user', text: 'hello' });
@@ -403,7 +405,7 @@ test('saved timelines restore tools, approvals and subagent output in order', ()
   sidebar.postMessage({ type: 'approvalRequest', sessionId: 'chat', id: 'approval', title: 'Run', detail: 'command' });
   sidebar.postMessage({ type: 'approvalResolved', sessionId: 'chat', id: 'approval', allowed: true });
   sidebar.postMessage({ type: 'assistantDelta', sessionId: 'chat', entryId: 'answer', text: 'finished' });
-  const restored = new DshSidebarProvider({});
+  const restored = new UnifySidebarProvider({});
   restored.postMessage({ type: 'timelineState', ...saved });
   assert.deepEqual(restored.timeline('chat').map(entry => entry.kind), ['message', 'tool', 'subagent', 'approval', 'message']);
   assert.equal(restored.subagents('chat').child.messages[0].text, 'Done');
@@ -411,7 +413,7 @@ test('saved timelines restore tools, approvals and subagent output in order', ()
 });
 
 test('cancelling a turn leaves delegated subagents to the host, which reports how they end', () => {
-  const sidebar = new DshSidebarProvider({});
+  const sidebar = new UnifySidebarProvider({});
   sidebar.postMessage({ type: 'subagentEvent', sessionId: 'chat', agentId: 'native', title: 'Explore', state: 'running' });
   sidebar.postMessage({ type: 'subagentEvent', sessionId: 'chat', agentId: 'delegated', title: 'Composer', state: 'running', delegated: true });
   sidebar.postMessage({ type: 'runState', sessionId: 'chat', state: 'cancelling' });
@@ -423,14 +425,14 @@ test('cancelling a turn leaves delegated subagents to the host, which reports ho
 });
 
 test('generated media keeps its flag in the saved timeline', () => {
-  const sidebar = new DshSidebarProvider({});
+  const sidebar = new UnifySidebarProvider({});
   sidebar.postMessage({ type: 'mediaMessage', sessionId: 'chat', entryId: 'media:1', items: [{ name: 'a.png', mimeType: 'image/png', file: 'chat/a.png' }], generated: true });
   sidebar.postMessage({ type: 'mediaMessage', sessionId: 'chat', entryId: 'media:2', items: [{ name: 'b.png', mimeType: 'image/png', file: 'chat/b.png' }] });
   assert.deepEqual(sidebar.timeline('chat').map(entry => entry.generated), [true, undefined]);
 });
 
 test('a generated image box appears pending, then the same entry is filled in place', () => {
-  const sidebar = new DshSidebarProvider({});
+  const sidebar = new UnifySidebarProvider({});
   sidebar.postMessage({ type: 'mediaMessage', sessionId: 'chat', entryId: 'media:1', items: [], generated: true, status: 'pending' });
   sidebar.postMessage({ type: 'assistantDelta', sessionId: 'chat', entryId: 'after', text: 'Working on it' });
   sidebar.postMessage({ type: 'mediaMessage', sessionId: 'chat', entryId: 'media:1', items: [{ name: 'a.png', mimeType: 'image/png', file: 'chat/a.png' }], generated: true });
@@ -516,10 +518,21 @@ test('uploads preserve non-image bytes and reject malformed or oversized data', 
   try {
     const host = Object.create(ExtensionHost.prototype);
     host.context = { globalStorageUri: { fsPath: dir } };
+    host.media = {
+      async put(bytes, mimeType, ref) {
+        const hash = createHash('sha256').update(bytes).digest('hex');
+        await mkdir(join(dir, 'media'), { recursive: true });
+        await writeFile(join(dir, 'media', hash), bytes);
+        await writeFile(join(dir, 'media', 'index.json'), JSON.stringify({ [hash]: { refs: [ref], mimeType } }));
+        return { hash, mimeType };
+      },
+      pathOf(hash) { return join(dir, 'media', hash); },
+    };
     const payload = Buffer.from('context\nwith unicode: café');
-    const saved = await host.saveImages([{ name: '../notes.txt', mimeType: 'text/plain', data: payload.toString('base64') }]);
+    const saved = await host.saveImages([{ name: '../notes.txt', mimeType: 'text/plain', data: payload.toString('base64') }], 'chat');
     assert.deepEqual(await readFile(saved[0].path), payload);
-    assert.equal(saved[0].path.startsWith(join(dir, 'attachments')), true);
+    assert.equal(saved[0].path.startsWith(join(dir, 'media')), true);
+    assert.deepEqual(Object.values(JSON.parse(await readFile(join(dir, 'media', 'index.json'), 'utf8')))[0].refs, ['chat']);
     await assert.rejects(host.saveImages([{ name: 'bad', data: '!bad!' }]), /Invalid attachment/);
     await assert.rejects(host.saveImages([{ name: 'large', data: Buffer.alloc(10 * 1024 * 1024 + 1).toString('base64') }]), /10 MB/);
   } finally { await rm(dir, { recursive: true, force: true }); }
@@ -527,7 +540,7 @@ test('uploads preserve non-image bytes and reject malformed or oversized data', 
 
 test('messages for a chat whose history is not shown yet do not save over that history', () => {
   const saves = [];
-  const sidebar = new DshSidebarProvider({}, undefined, (sessionId, timeline) => saves.push([sessionId, timeline.length]));
+  const sidebar = new UnifySidebarProvider({}, undefined, (sessionId, timeline) => saves.push([sessionId, timeline.length]));
   // A reload posts job and run state for the reopened chat before its saved timeline is replayed.
   sidebar.postMessage({ type: 'jobState', sessionId: 'one', job: null });
   sidebar.postMessage({ type: 'runState', sessionId: 'one', state: 'idle', label: 'Ready' });
@@ -540,7 +553,7 @@ test('messages for a chat whose history is not shown yet do not save over that h
 test('a chat whose saved timeline was emptied is rebuilt from its transcript', () => {
   const records = [{ id: 'one', modelName: 'Model' }];
   const { host } = navigationHost(records);
-  host.sidebar = new DshSidebarProvider({});
+  host.sidebar = new UnifySidebarProvider({});
   host.timelines.one = { timeline: [], subagents: {} };
   host.transcripts.set('one', [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'hello' }]);
   host.replayTranscript('one');
@@ -559,7 +572,7 @@ test('turns DSH starts on its own never appear as the user speaking', async () =
   assert.equal(messages.filter(message => message.type === 'userMessage').length, 0);
   assert.equal(host.transcripts.get('one')[0].internal, true);
   // A rebuilt history skips them as well.
-  host.sidebar = new DshSidebarProvider({});
+  host.sidebar = new UnifySidebarProvider({});
   delete host.replayTranscript;
   host.transcripts.set('two', [{ role: 'user', text: 'mine' }, { role: 'user', text: 'internal', internal: true }, { role: 'assistant', text: 'reply' }]);
   host.replayTranscript('two');
@@ -666,9 +679,9 @@ test('auto compaction starts a fresh Claude session from transcript parts once t
       assert.match(sent.prompt, /part-02\.md \(messages 2-2\), Reply: REPLY GIVEN/);
       assert.match(sent.prompt, /Latest messages, word for word:\nUser: Add tests/);
       assert.deepEqual(record.parts.map(part => [part.from, part.to]), [[0, 1], [1, 2]]);
-      const part = await readFile(join(cwd, '.dsh', 'transcripts', 'one', 'part-02.md'), 'utf8');
+      const part = await readFile(join(cwd, '.unify', 'transcripts', 'one', 'part-02.md'), 'utf8');
       assert.match(part, /Assistant: Built it\.\n\[Tools: Edit src\/parser\.ts\]/);
-      assert.equal(await readFile(join(cwd, '.dsh', 'transcripts', '.gitignore'), 'utf8'), '*\n');
+      assert.equal(await readFile(join(cwd, '.unify', 'transcripts', '.gitignore'), 'utf8'), '*\n');
       // No name model is set, so the chat's own model splits and summarizes, and it sees the tools each turn used.
       assert.equal(summarized.length, 1);
       assert.equal(summarized[0][0], 'Model');

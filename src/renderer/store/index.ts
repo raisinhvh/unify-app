@@ -10,8 +10,7 @@ import { batch, createSignal } from 'solid-js';
 import { createStore, produce, reconcile } from 'solid-js/store';
 import { bridge, post } from '../bridge';
 import { readPersisted, writePersisted } from '../persist';
-import type { SidebarHostMessage, SidebarImage, SidebarTimelineItem, SidebarViewState } from '../protocol';
-import type { AgentInfo } from '@engine/unify/agentBus';
+import type { AgentInfo, SidebarHostMessage, SidebarImage, SidebarTimelineItem, SidebarViewState } from '../protocol';
 import { defaultViewState, readBootState } from './defaults';
 
 const [viewState, setViewState] = createStore<SidebarViewState>({ ...defaultViewState(), ...readBootStateSafe() });
@@ -63,8 +62,36 @@ export function setChatVisibilityCheck(check: (sessionId: string) => boolean): v
 const [agentRoster, setAgentRoster] = createSignal<AgentInfo[]>([]);
 export { agentRoster };
 
+/** The roster name of an agent, or undefined when it is not running (or not known yet). */
+export function agentName(agentId: string): string | undefined {
+  return agentRoster().find(agent => agent.id === agentId)?.name;
+}
+
 /** Last error the engine reported, shown as a notice. */
 export const [engineError, setEngineError] = createSignal<string | undefined>();
+
+/** Fields a subagentEvent may carry beyond the protocol's own (the profile's effort and speed chips). */
+interface SubagentEventExtras {
+  effort?: string;
+  speed?: string;
+}
+
+/**
+ * "Shut down when all tasks finish". Arming is the `power.shutdownWhenIdle` feature: the engine's shutdown
+ * controller arms when it turns on and answers with shutdownArmed (engine/unify/power.ts). Until that answer
+ * arrives the switch shows what was asked for, so it moves on the click instead of a round trip later.
+ */
+const [requestedArm, setRequestedArm] = createSignal<boolean>();
+
+/** Whether the one-shot shutdown is armed right now (live engine state, or the request still in flight). */
+export function shutdownArmed(): boolean {
+  return requestedArm() ?? !!viewState.shutdown?.armed;
+}
+
+export function setShutdownArmed(armed: boolean): void {
+  setRequestedArm(armed);
+  post({ type: 'setUnifyFeature', id: 'power.shutdownWhenIdle', value: armed });
+}
 
 type Listener = (message: SidebarHostMessage) => void;
 const extraListeners = new Set<Listener>();
@@ -81,6 +108,9 @@ function timelineOf(state: SidebarViewState, sessionId: string): SidebarTimeline
 
 export function applyHostMessage(message: SidebarHostMessage): void {
   batch(() => {
+    // A shutdown message settles a pending arm request; so does a feature echo that disagrees with it (refused).
+    if (message.type.startsWith('shutdown')) setRequestedArm(undefined);
+    if (message.type === 'unifyFeaturesState' && message.features?.['power.shutdownWhenIdle'] !== requestedArm()) setRequestedArm(undefined);
     switch (message.type) {
       case 'sessionState':
         setViewState('sessions', reconcile(message.sessions || [], { key: 'id' }));
@@ -154,6 +184,8 @@ export function applyHostMessage(message: SidebarHostMessage): void {
           if (Array.isArray(message.voiceCommands)) state.voiceCommands = message.voiceCommands;
           if (typeof message.voiceAvailable === 'boolean') state.voiceAvailable = message.voiceAvailable;
           if (message.processPriority) state.processPriority = message.processPriority;
+          // Unify feature values ride along on customize pushes; an omitted field leaves them unchanged.
+          if (message.unifyFeatures) state.unifyFeatures = { ...state.unifyFeatures, ...message.unifyFeatures };
         }));
         break;
       case 'syncState':
@@ -230,6 +262,9 @@ export function applyHostMessage(message: SidebarHostMessage): void {
           if (message.ranges) agent.ranges = message.ranges;
           if (typeof message.tokens === 'number') agent.tokens = message.tokens;
           if (message.sentToParent) agent.sentToParent = message.sentToParent;
+          const extras = message as SubagentEventExtras;
+          if (extras.effort) agent.effort = extras.effort;
+          if (extras.speed) agent.speed = extras.speed;
           if (message.text || message.media?.length) {
             const id = message.messageId || `message:${agent.messages.length}`;
             const entry = agent.messages.find(item => item.id === id);
@@ -312,7 +347,12 @@ export function applyHostMessage(message: SidebarHostMessage): void {
         break;
       case 'timelineState':
         setViewState(produce(state => {
-          state.timeline[message.sessionId] = message.timeline || [];
+          // The engine does not save agent messages in a chat's history, so a replay or compaction would drop them.
+          const timeline = message.timeline || [];
+          const kept = (state.timeline[message.sessionId] || []).filter(
+            item => item.kind === 'agentMessage' && !timeline.some(entry => entry.id === item.id),
+          );
+          state.timeline[message.sessionId] = [...timeline, ...kept];
           state.subagents[message.sessionId] = message.subagents || {};
           state.tools = [];
         }));
@@ -348,6 +388,9 @@ export function applyHostMessage(message: SidebarHostMessage): void {
       case 'shutdownFailed':
         setViewState('shutdown', { armed: false, phase: 'failed' });
         setEngineError(message.error);
+        break;
+      case 'githubState':
+        setViewState('github', message.github);
         break;
       case 'error':
         setEngineError(message.message);

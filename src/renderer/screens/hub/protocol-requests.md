@@ -98,7 +98,7 @@ UI -> engine:
 
 ```ts
 | { type: 'hubBrowse'; refresh?: boolean }                     // reply: hubState
-| { type: 'hubInstall'; id: string; target: HubInstallTarget } // reply: hubInstallProgress (repeated), then toolpacksState
+| { type: 'hubInstall'; id: string; target: HubInstallTarget; allowScript?: boolean } // reply: hubInstallProgress (repeated), hubInstallResult
 | { type: 'hubPublish' }                                       // engine: folder picker, validation, confirm, upload
 ```
 
@@ -107,12 +107,34 @@ Engine -> UI:
 ```ts
 | { type: 'hubState'; hub: HubState }
 | ({ type: 'hubInstallProgress' } & HubInstallProgress)
+| { type: 'hubInstallResult'; ok: boolean; id: string; needsScriptConsent?: boolean; scriptName?: string; scriptText?: string; error?: string }
 ```
+
+A pack that ships an install script and was sent without `allowScript` answers `hubInstallResult` with
+`needsScriptConsent`, `scriptName` and `scriptText`; nothing is installed. The Hub shows the script in a dialog
+and, if the user agrees, resends `hubInstall` with `allowScript: true`. `ok: false` with `error` shows as the
+row's Failed / Retry state.
 
 Install downloads the pack and runs its install script (spec), then sends `toolpacksState` with the new pack and a
 final `hubInstallProgress` with `state: 'done'`. With `target: 'all'` the pack is added to the synced set so the
 other devices install it too. The UI never uploads anything itself: `hubPublish` is a request, and the engine owns
 the confirmation.
+
+### Publish
+
+The UI asks the user to confirm an install before sending `hubInstall` (the pack's install script runs), and shows
+Upload only when `viewState.github.signedIn`; signed out it links to Settings instead.
+
+Today the engine answers `hubPublish` with a `hubState` whose `error` is "Publishing is not available yet."
+(later "Publishing is limited to approved accounts."). The adapter treats a `hubState` with an `error` that arrives
+while a publish is pending as the publish answer: the message shows calmly beside the Upload button, the catalogue
+keeps its packs, and the Hub does not show an error. Suggested dedicated reply, which the adapter already handles:
+
+```ts
+| { type: 'hubPublishResult'; ok: boolean; message: string; url?: string }
+// ok: false, message: 'Publishing is limited to approved accounts.'
+// ok: true,  message: 'Published Containers 1.2.0', url: 'https://github.com/…/pull/12'
+```
 
 ## Providers
 

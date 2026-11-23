@@ -48,9 +48,9 @@ function pack(
 }
 
 export const cataloguePacks: HubPack[] = [
-  pack('roblox-studio', 'Roblox Studio', 'dsh', 'studio', 'roblox', 12400, 24, 'Read and edit the open place: explorer, properties, scripts and playtests.', 300),
-  pack('figma-bridge', 'Figma bridge', 'dsh', 'design', 'figma', 8100, 8, 'Run plugin code, inspect nodes and capture frames from the open file.', 280),
-  pack('imaging', 'Imaging', 'dsh', 'media', 'imaging', 6700, 17, 'Resize, trim, composite and remove backgrounds without leaving the chat.', 260),
+  pack('roblox-studio', 'Roblox Studio', 'unify', 'studio', 'roblox', 12400, 24, 'Read and edit the open place: explorer, properties, scripts and playtests.', 300),
+  pack('figma-bridge', 'Figma bridge', 'unify', 'design', 'figma', 8100, 8, 'Run plugin code, inspect nodes and capture frames from the open file.', 280),
+  pack('imaging', 'Imaging', 'unify', 'media', 'imaging', 6700, 17, 'Resize, trim, composite and remove backgrounds without leaving the chat.', 260),
   pack('blender', 'Blender', 'mira.tools', 'studio', 'blender', 4200, 11, 'Build and render scenes, apply modifiers and export assets.', 200),
   pack('unity-editor', 'Unity Editor', 'northbeam', 'studio', 'engine', 3900, 14, 'Inspect scenes, edit prefabs and components, and enter play mode from an agent. Works with Unity 2022.3 and later.', 40),
   pack('postgres', 'Postgres', 'dataloom', 'data', 'database', 3100, 9, 'Query a database, read-only by default.', 90),
@@ -60,8 +60,8 @@ export const cataloguePacks: HubPack[] = [
   pack('containers', 'Containers', 'dockyard', 'dev', 'containers', 5200, 16, 'Build, run and inspect containers and read their logs.', 14),
   pack('spreadsheets', 'Spreadsheets', 'gridworks', 'data', 'sheet', 2400, 12, 'Read and edit sheets, formulas and charts in xlsx and csv.', 10),
   pack('screen-recorder', 'Screen recorder', 'sonar', 'media', 'recorder', 1100, 5, 'Record a window or region and hand the clip to an agent.', 6),
-  pack('git-helpers', 'Git helpers', 'dsh', 'dev', 'git', 3300, 6, 'Blame, bisect and summarise history without leaving the chat.', 240),
-  pack('web-search', 'Web search', 'dsh', 'web', 'web', 7300, 3, 'Search the web and read pages as clean text.', 310),
+  pack('git-helpers', 'Git helpers', 'unify', 'dev', 'git', 3300, 6, 'Blame, bisect and summarise history without leaving the chat.', 240),
+  pack('web-search', 'Web search', 'unify', 'web', 'web', 7300, 3, 'Search the web and read pages as clean text.', 310),
 ];
 
 export const catalogueFeatured = ['containers', 'spreadsheets', 'screen-recorder'];

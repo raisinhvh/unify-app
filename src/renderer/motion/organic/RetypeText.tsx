@@ -300,7 +300,11 @@ export function RetypeText(props: RetypeTextProps): JSX.Element {
     if (animating() || startTimer) land(props.value);
   };
 
+  /** The value last handed to the effect: a re-render with the same string must not retype or take a slot. */
+  let target = untrack(() => props.value);
   createEffect(on(() => props.value, value => {
+    if (value === target) return;
+    target = value;
     if (props.deleting) {
       setShown(value);
       return;

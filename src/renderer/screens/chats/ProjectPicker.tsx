@@ -3,8 +3,8 @@
  *
  *   Recent projects
  *   ▾ Programs              (parent folder)
- *       DSH            ✓    (selected project)
- *       Unify          2d   (last used)
+ *       Unify          ✓    (selected project)
+ *       Tools          2d   (last used)
  *   ▸ Roblox           3    (closed folders show how many projects they hold)
  *   ───────────
  *   + Open folder…   Ctrl O

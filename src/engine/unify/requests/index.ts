@@ -23,9 +23,11 @@ import {
   removeKnowledge,
   saveKnowledge,
   setKnowledgeAudiences,
+  undoKnowledgeChange,
 } from './knowledge';
 import {
   accountsState,
+  openProviderUsage,
   renameAccount,
   setAccountDefaultModel,
   setModelEnabled,
@@ -37,14 +39,12 @@ import {
   checkTools,
   fixTool,
   getSetupState,
-  importFromDsh,
   markSetupComplete,
-  scanDshImports,
   setDefaultProject,
 } from './setup';
 import { handleHubRequest } from './hub';
 import { requestPaths } from './state';
-import { Audience, ImportKind, KnowledgeDraft, KnowledgeScope, SetupSummary, ToolKind, ToolPolicy, UnifyRequestContext, UnifyRequestMessage } from './types';
+import { Audience, KnowledgeDraft, KnowledgeScope, SetupSummary, ToolKind, ToolPolicy, UnifyRequestContext, UnifyRequestMessage } from './types';
 
 export { disposeUnifyRequestWatchers } from './workspace';
 
@@ -67,7 +67,7 @@ function isFilesType(type: string): boolean {
 }
 
 /**
- * Answers one Unify screen request. `context.workspaceRoot` is the open folder; tests may also pass `dshHome`,
+ * Answers one Unify screen request. `context.workspaceRoot` is the open folder; tests may also pass `unifyHome`,
  * `unifyRoot` and `version` to point the stores at a temporary folder.
  */
 export async function handleUnifyRequest(
@@ -88,7 +88,7 @@ export async function handleUnifyRequest(
 
   if (isFilesType(type)) {
     setActiveUnifyReply(reply);
-    watchWorkspace(context.workspaceRoot, reply);
+    watchWorkspace([context.workspaceRoot, ...(context.workspaceRoots ?? [])], reply);
     announceWorkspace(context, reply);
     try {
       if (type === 'listDir') {
@@ -184,9 +184,17 @@ export async function handleUnifyRequest(
     }
     return true;
   }
+  if (type === 'undoKnowledgeChange') {
+    try {
+      send({ type: 'knowledgeState', items: await undoKnowledgeChange(context, paths, stringField(message, 'id')) });
+    } catch (error) {
+      send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
   if (type === 'openKnowledge') {
     try {
-      openKnowledge(paths, stringField(message, 'id'), typeof message.file === 'string' ? message.file : undefined);
+      await openKnowledge(paths, stringField(message, 'id'), typeof message.file === 'string' ? message.file : undefined);
     } catch {
       // Opening a file has no reply; a stale item simply does nothing.
     }
@@ -217,9 +225,17 @@ export async function handleUnifyRequest(
   if (type === 'setModelEnabled') {
     try {
       setModelEnabled(paths, stringField(message, 'modelId'), message.enabled === true);
+      context.refreshModelState?.();
     } catch {
       // The next modelState from the extension is the truth.
     }
+    return true;
+  }
+  if (type === 'openProviderUsage') {
+    send(openProviderUsage(paths, stringField(message, 'accountId'), {
+      refreshUsageState: context.refreshUsageState,
+      openExternal: context.openExternal,
+    }));
     return true;
   }
   if (type === 'renameAccount' || type === 'setAccountDefaultModel' || type === 'signOutAccount') {
@@ -229,7 +245,9 @@ export async function handleUnifyRequest(
       } else if (type === 'setAccountDefaultModel') {
         send(setAccountDefaultModel(paths, stringField(message, 'accountId'), stringField(message, 'modelId')));
       } else {
-        send(await signOutAccount(paths, stringField(message, 'accountId')));
+        const accountId = stringField(message, 'accountId');
+        send(await signOutAccount(paths, accountId));
+        context.refreshUsageState?.(accountId);
       }
     } catch {
       send(accountsState(paths));
@@ -273,19 +291,6 @@ export async function handleUnifyRequest(
     }
     return true;
   }
-  if (type === 'scanDshImports') {
-    send({ type: 'dshImportState', scan: await scanDshImports(paths) });
-    return true;
-  }
-  if (type === 'importFromDsh') {
-    const what: ImportKind = message.what === 'knowledge' ? 'knowledge' : 'toolpacks';
-    try {
-      send(await importFromDsh(paths, what));
-    } catch (error) {
-      send({ type: 'dshImportResult', what, ok: false, count: 0, error: error instanceof Error ? error.message : String(error) });
-    }
-    return true;
-  }
   if (type === 'getSetupState') {
     send(getSetupState(paths));
     return true;
@@ -306,7 +311,7 @@ export async function handleUnifyRequest(
   /* Hub --------------------------------------------------------------------------------------------------- */
 
   if (type === 'hubBrowse' || type === 'hubInstall' || type === 'hubPublish') {
-    return handleHubRequest(message, send, paths);
+    return handleHubRequest(message, send, paths, context);
   }
 
   return false;

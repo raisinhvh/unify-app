@@ -89,6 +89,8 @@ function createFakeSettings(initial = {}) {
 
 const IDLE = { runningChats: 0, runningSubagents: 0, pendingApprovals: 0, pendingQuestions: 0, runningProcesses: 0 };
 
+const WINDOWS_SHUTDOWN = { file: `${process.env.SystemRoot ?? 'C:\\Windows'}\\System32\\shutdown.exe`, args: ['/s', '/t', '0'] };
+
 function setup({ settings = createFakeSettings(), activity = { ...IDLE }, exec, saveState, platform = 'win32' } = {}) {
   const timers = createFakeTimers();
   const posted = [];
@@ -202,7 +204,7 @@ test('power: full countdown saves state then runs the primary command and disarm
   assert.equal(seconds[0], 60);
   assert.equal(seconds.at(-1), 0);
   assert.equal(harness.saveCount, 1);
-  assert.deepEqual(harness.execCalls, [['shutdown', '/s', '/t', '0']]);
+  assert.deepEqual(harness.execCalls, [[WINDOWS_SHUTDOWN.file, ...WINDOWS_SHUTDOWN.args]]);
   assert.equal(harness.settings.values['power.shutdownWhenIdle'], false);
   assert.deepEqual(harness.posted.at(-1), { type: 'shutdownArmed', armed: false });
   assert.equal(harness.controller.getStatus().armed, false);
@@ -261,6 +263,28 @@ test('power: re-checks idle after saving and does not fire if work started', asy
   assert.ok(harness.types().includes('shutdownWaiting'));
 });
 
+test('power: cancel during saving aborts before the OS command', async () => {
+  let releaseSave;
+  const savePending = new Promise((resolve) => { releaseSave = resolve; });
+  const harness = setup({ saveState: () => savePending });
+  harness.arm();
+  await harness.timers.advance(65_000);
+  assert.equal(harness.execCalls.length, 0);
+
+  harness.controller.cancelShutdown();
+  releaseSave();
+  await flushPromises();
+
+  assert.equal(harness.execCalls.length, 0);
+  assert.deepEqual(harness.posted.slice(-2), [
+    { type: 'shutdownCancelled' },
+    { type: 'shutdownArmed', armed: false },
+  ]);
+  assert.equal(harness.settings.values['power.shutdownWhenIdle'], false);
+  assert.equal(harness.controller.getStatus().armed, false);
+  assert.ok(!harness.types().includes('shutdownFailed'));
+});
+
 test('power: a failed save aborts, reports and disarms', async () => {
   const harness = setup({ saveState: async () => { throw new Error('disk full'); } });
   harness.arm();
@@ -272,19 +296,20 @@ test('power: a failed save aborts, reports and disarms', async () => {
   assert.equal(harness.notifications.at(-1).title, 'Shutdown failed');
 });
 
-test('power: primary command failure falls back', async () => {
+test('power: a failing Windows command posts shutdownFailed and does not fall back', async () => {
   const harness = setup({
-    exec: async (file) => {
-      if (file === 'shutdown') throw new Error('access denied');
+    exec: async () => {
+      throw new Error('access denied');
     },
   });
   harness.arm();
   await harness.timers.advance(65_000);
-  assert.deepEqual(harness.execCalls, [
-    ['shutdown', '/s', '/t', '0'],
-    ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', 'Stop-Computer -Force'],
-  ]);
-  assert.ok(!harness.types().includes('shutdownFailed'));
+  assert.deepEqual(harness.execCalls, [[WINDOWS_SHUTDOWN.file, ...WINDOWS_SHUTDOWN.args]]);
+  const failure = harness.posted.find((message) => message.type === 'shutdownFailed');
+  assert.match(failure.error, /access denied/);
+  assert.match(failure.error, /shutdown\.exe/);
+  assert.equal(harness.notifications.at(-1).title, 'Shutdown failed');
+  assert.equal(harness.settings.values['power.shutdownWhenIdle'], false);
 });
 
 test('power: both commands failing posts shutdownFailed, notifies and stays disarmed', async () => {
@@ -311,7 +336,7 @@ test('power: platform commands', () => {
     { file: 'shutdown', args: ['-h', 'now'] },
   ]);
   assert.deepEqual(shutdownCommandsFor('linux')[0], { file: 'systemctl', args: ['poweroff'] });
-  assert.deepEqual(shutdownCommandsFor('win32')[0], { file: 'shutdown', args: ['/s', '/t', '0'] });
+  assert.deepEqual(shutdownCommandsFor('win32'), [WINDOWS_SHUTDOWN]);
 });
 
 test('power: dispose stops timers and listeners', async () => {

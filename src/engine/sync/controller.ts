@@ -11,9 +11,9 @@ import {
 } from './configSync';
 import { GitAuth, PushRejected, SyncClone } from './gitRepo';
 
-const STATE_KEY = 'dsh.ide.configSync.v2';
+const STATE_KEY = 'unify.ide.configSync.v2';
 /** The gist-based sync this replaced; only its auto setting is carried over. */
-const LEGACY_STATE_KEY = 'dsh.ide.configSync.v1';
+const LEGACY_STATE_KEY = 'unify.ide.configSync.v1';
 /** Local edits are batched so a burst of saves makes one commit. */
 const UPLOAD_DELAY = 5000;
 /** Regaining focus looks for edits from other PCs at most this often. */
@@ -23,10 +23,10 @@ const POLL_INTERVAL = 2 * 60_000;
 /** The GitHub copy as of the last sync, kept so edits made on both PCs can be merged. */
 const BASE_FILE = 'config-sync-base.json';
 const CLONE_DIR = 'sync-repo';
-const EMPTY: ConfigBundle = { format: 'dsh-config', version: 1, settings: {}, files: {}, toolpacks: {} };
+const EMPTY: ConfigBundle = { format: 'unify-config', version: 1, settings: {}, files: {}, toolpacks: {} };
 
 interface SyncState {
-  /** owner/dsh-sync */
+  /** owner/unify-sync */
   repo?: string;
   repoUrl?: string;
   cloneUrl?: string;
@@ -64,8 +64,8 @@ const hasMemory = (bundle: ConfigBundle): boolean => Object.keys(bundle.files).s
 const withoutMemory = (bundle: ConfigBundle): ConfigBundle => ({ ...bundle, files: Object.fromEntries(Object.entries(bundle.files).filter(([path]) => !path.startsWith('memory/'))) });
 
 /**
- * Keeps global rules, skills, toolpacks, `dsh.*` user settings and global memory in a private GitHub repository
- * (`dsh-sync`), one commit per sync. DSH works in its own clone; the merge happens item by item against the
+ * Keeps global rules, skills, toolpacks, `unify.*` user settings and global memory in a private GitHub repository
+ * (`unify-sync`), one commit per sync. Unify works in its own clone; the merge happens item by item against the
  * GitHub copy as of the last sync, exactly as before.
  */
 export class ConfigSync implements vscode.Disposable {
@@ -139,7 +139,7 @@ export class ConfigSync implements vscode.Disposable {
   }
 
   /**
-   * The memory folder to sync: memory on and the folder present. With memory off, or a folder deleted outside DSH,
+   * The memory folder to sync: memory on and the folder present. With memory off, or a folder deleted outside Unify,
    * this PC leaves GitHub's notes alone rather than reading that as "all notes deleted".
    */
   private memoryRoot(): string | undefined {
@@ -147,9 +147,14 @@ export class ConfigSync implements vscode.Disposable {
     try { return root && statSync(root).isDirectory() ? root : undefined; } catch { return undefined; }
   }
 
+  /** The settings section holding the synced config. */
+  private section(): vscode.WorkspaceConfiguration {
+    return vscode.workspace.getConfiguration('unify');
+  }
+
   /** This PC's config in its portable form. */
   private async snapshot(): Promise<{ bundle: ConfigBundle; hash: string }> {
-    const config = vscode.workspace.getConfiguration('dsh');
+    const config = this.section();
     const accounts = this.host.accounts();
     const settings: Record<string, unknown> = {};
     for (const key of SYNCED_SETTINGS) {
@@ -164,7 +169,7 @@ export class ConfigSync implements vscode.Disposable {
     const files = await collectFiles(roots);
     // Without a memory folder here, this PC leaves GitHub's memory as it is rather than deleting it.
     if (!memory) for (const [path, file] of Object.entries((await this.readBase())?.files || {})) if (path.startsWith('memory/')) files[path] = file;
-    const bundle: ConfigBundle = { format: 'dsh-config', version: 1, settings, files, toolpacks: await collectToolpacks(roots.toolpacks) };
+    const bundle: ConfigBundle = { format: 'unify-config', version: 1, settings, files, toolpacks: await collectToolpacks(roots.toolpacks) };
     return { bundle, hash: hashBundle(bundle) };
   }
 
@@ -206,7 +211,7 @@ export class ConfigSync implements vscode.Disposable {
   private async apply(bundle: ConfigBundle): Promise<string[]> {
     this.applying = true;
     try {
-      const config = vscode.workspace.getConfiguration('dsh');
+      const config = this.section();
       const accounts = this.host.accounts();
       for (const key of SYNCED_SETTINGS) {
         const current = config.inspect(key)?.globalValue;
@@ -236,7 +241,7 @@ export class ConfigSync implements vscode.Disposable {
     for (const [id, pack] of Object.entries(remote)) {
       try {
         if (local[id]?.source !== pack.source) {
-          const staging = join(tmpdir(), `dsh-sync-${randomUUID()}`);
+          const staging = join(tmpdir(), `unify-sync-${randomUUID()}`);
           await fs.mkdir(staging, { recursive: true });
           try {
             await fs.writeFile(join(staging, `${id}.ts`), pack.source);
@@ -263,7 +268,7 @@ export class ConfigSync implements vscode.Disposable {
   }
 
   /**
-   * Signs in, finds or creates the private dsh-sync repository, and combines this PC's config with what is there
+   * Signs in, finds or creates the private unify-sync repository, and combines this PC's config with what is there
    * (or with a config from the earlier gist sync). Items that differ on both sides are asked about once.
    */
   public connect(): Promise<unknown> {
@@ -281,7 +286,7 @@ export class ConfigSync implements vscode.Disposable {
         let combined = mergeBundles(EMPTY, local.bundle, remote);
         if (combined.conflicts.length) {
           const items = combined.conflicts;
-          const choice = await vscode.window.showWarningMessage(`Your GitHub sync already has DSH config from another computer, and ${items.length === 1 ? '1 item differs' : `${items.length} items differ`} from this PC.`, {
+          const choice = await vscode.window.showWarningMessage(`Your GitHub sync already has Unify config from another computer, and ${items.length === 1 ? '1 item differs' : `${items.length} items differ`} from this PC.`, {
             modal: true,
             detail: `Different on each: ${items.slice(0, 6).join(', ')}${items.length > 6 ? ` and ${items.length - 6} more` : ''}. Everything else from both, including all memory notes, is combined. Choose which version of these to keep.`,
           }, 'Keep GitHub copy', 'Keep this PC');
@@ -313,8 +318,8 @@ export class ConfigSync implements vscode.Disposable {
       const clone = await this.clone();
       const remote = treeToBundle(await clone.read(auth));
       if (!remote) throw new Error('The sync repository is empty. Upload to fill it.');
-      const choice = confirmed ? 'Download' : await vscode.window.showWarningMessage('Replace this PC\'s DSH config with the GitHub copy?', {
-        modal: true, detail: 'Global rules, skills, toolpacks, memory and DSH settings are replaced. API keys and MCP secrets on this PC are kept.',
+      const choice = confirmed ? 'Download' : await vscode.window.showWarningMessage('Replace this PC\'s Unify config with the GitHub copy?', {
+        modal: true, detail: 'Global rules, skills, toolpacks, memory and Unify settings are replaced. API keys and MCP secrets on this PC are kept.',
       }, 'Download');
       if (choice === 'Download') await this.download(remote);
     });
@@ -423,8 +428,8 @@ export class ConfigSync implements vscode.Disposable {
     const key = items.join('\n') || '*';
     if (key === this.notified) return;
     this.notified = key;
-    const detail = items.length ? `Changed on both: ${items.slice(0, 5).join(', ')}${items.length > 5 ? ` and ${items.length - 5} more` : ''}.` : 'DSH config changed both on this PC and on GitHub.';
-    void vscode.window.showWarningMessage(`DSH sync is paused. ${detail}`, 'Keep GitHub copy', 'Keep this PC').then(choice => {
+    const detail = items.length ? `Changed on both: ${items.slice(0, 5).join(', ')}${items.length > 5 ? ` and ${items.length - 5} more` : ''}.` : 'Unify config changed both on this PC and on GitHub.';
+    void vscode.window.showWarningMessage(`Unify sync is paused. ${detail}`, 'Keep GitHub copy', 'Keep this PC').then(choice => {
       if (choice === 'Keep GitHub copy') void this.resolve('remote');
       else if (choice === 'Keep this PC') void this.resolve('local');
     });

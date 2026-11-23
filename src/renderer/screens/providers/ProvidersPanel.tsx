@@ -9,12 +9,12 @@
  * Rows only select; every action lives on the account page, except "Sign in" on a signed-out row.
  */
 import { For, Show, type JSX } from 'solid-js';
-import { Icon, IconButton } from '../../components';
+import { Icon, IconButton, ProviderGlyph } from '../../components';
 import { Collapse, createSpring, pressable } from '../../motion';
+import { RollingNumber } from '../../motion/organic';
 import { clampPercent, usageSummary } from '../../store/usage';
 import type { AccountView, ProviderGroup } from './adapter';
 import { accountStateLabel, providerGroups, providerTitle, signIn } from './adapter';
-import { ProviderGlyph } from './glyphs';
 import { providerOpen, select, selection, setAddProviderOpen, setProviderOpen } from './selection';
 
 function UsageRow(): JSX.Element {
@@ -32,7 +32,9 @@ function UsageRow(): JSX.Element {
       <span class="pv-row-chevron-slot" />
       <Icon name="usage" size={16} class="pv-row-icon" />
       <span class="pv-row-label">Usage</span>
-      <span class="pv-row-meta">{summary().entries.length ? `${summary().combined}%` : '–'}</span>
+      <span class="pv-row-meta">
+        <RollingNumber value={summary().entries.length ? `${summary().combined}%` : '–'} data-motion="providers-usage" />
+      </span>
     </button>
   );
 }
@@ -45,6 +47,15 @@ function StatusMark(props: { account: AccountView }): JSX.Element {
     >
       <span class="pv-status-dot" classList={{ warn: props.account.status !== 'loading' }} />
     </Show>
+  );
+}
+
+function MiniMeter(props: { used: number; color: string }): JSX.Element {
+  const width = createSpring(() => clampPercent(props.used), 'panel', { precision: 10 });
+  return (
+    <span class="pv-mini-meter" aria-hidden="true">
+      <span class="pv-mini-fill" style={{ width: `${width()}%`, background: props.color }} />
+    </span>
   );
 }
 
@@ -82,14 +93,7 @@ function AccountRow(props: { account: AccountView }): JSX.Element {
             when={account().binding}
             fallback={<span class="pv-account-caption">{accountStateLabel(account())}</span>}
           >
-            {binding => (
-              <span class="pv-mini-meter" aria-hidden="true">
-                <span
-                  class="pv-mini-fill"
-                  style={{ width: `${clampPercent(binding().usedPercent)}%`, background: account().color }}
-                />
-              </span>
-            )}
+            {binding => <MiniMeter used={binding().usedPercent} color={account().color} />}
           </Show>
         }
       >
@@ -113,6 +117,8 @@ function ProviderFolder(props: { group: ProviderGroup }): JSX.Element {
   const group = () => props.group;
   const open = () => providerOpen(group().provider);
   const rotation = createSpring(() => (open() ? 0 : -90), 'indicator', { precision: 100 });
+  // Keyed by id: usage updates hand over new account objects, which must not remount the rows.
+  const accountIds = () => group().accounts.map(account => account.id);
   return (
     <div class="pv-provider">
       <button
@@ -128,7 +134,9 @@ function ProviderFolder(props: { group: ProviderGroup }): JSX.Element {
       </button>
       <Collapse open={open()} class="pv-account-children">
         <div class="pv-account-list">
-          <For each={group().accounts}>{account => <AccountRow account={account} />}</For>
+          <For each={accountIds()}>
+            {id => <Show when={group().accounts.find(account => account.id === id)}>{account => <AccountRow account={account()} />}</Show>}
+          </For>
         </div>
       </Collapse>
     </div>
@@ -136,6 +144,7 @@ function ProviderFolder(props: { group: ProviderGroup }): JSX.Element {
 }
 
 export function ProvidersPanel(): JSX.Element {
+  const providers = () => providerGroups().map(group => group.provider);
   return (
     <aside class="side-panel providers-panel" aria-label="Providers">
       <header class="providers-panel-header">
@@ -144,7 +153,9 @@ export function ProvidersPanel(): JSX.Element {
       </header>
       <div class="providers-panel-list">
         <UsageRow />
-        <For each={providerGroups()}>{group => <ProviderFolder group={group} />}</For>
+        <For each={providers()}>
+          {provider => <Show when={providerGroups().find(group => group.provider === provider)}>{group => <ProviderFolder group={group()} />}</Show>}
+        </For>
         <Show when={!providerGroups().length}>
           <p class="pv-panel-empty type-caption">No providers connected yet.</p>
         </Show>

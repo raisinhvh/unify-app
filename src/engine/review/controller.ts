@@ -39,7 +39,7 @@ export class ReviewController implements vscode.TextDocumentContentProvider, vsc
   public constructor(
     private readonly root: vscode.Uri,
     private readonly acknowledge: (path: string, text?: string) => Promise<void>,
-    scheme = 'dsh-review',
+    scheme = 'unify-review',
     private readonly restore?: (path: string, text?: string) => Promise<void>,
     /** The agent edits the real workspace, so changes are already on disk and only need recording. */
     private readonly direct = false,
@@ -75,7 +75,7 @@ export class ReviewController implements vscode.TextDocumentContentProvider, vsc
       this.proposalsChanged.fire(this.list());
       for (const proposal of this.pending()) {
         try { await this.applyBatch([proposal]); }
-        catch (error) { void vscode.window.showWarningMessage(`DSH could not auto-apply ${proposal.path}: ${error instanceof Error ? error.message : String(error)}`); }
+        catch (error) { void vscode.window.showWarningMessage(`Unify could not auto-apply ${proposal.path}: ${error instanceof Error ? error.message : String(error)}`); }
       }
     });
   }
@@ -198,7 +198,7 @@ export class ReviewController implements vscode.TextDocumentContentProvider, vsc
     if (!proposal) throw new Error('Review item no longer exists.');
     const base = this.virtualUri(proposal.path, 'base');
     const proposed = this.virtualUri(proposal.path, 'proposed');
-    await vscode.commands.executeCommand('vscode.diff', base, proposed, `DSH Review: ${proposal.fromPath ? `${proposal.fromPath} → ` : ''}${proposal.path}`, { preview: true });
+    await vscode.commands.executeCommand('vscode.diff', base, proposed, `Unify Review: ${proposal.fromPath ? `${proposal.fromPath} → ` : ''}${proposal.path}`, { preview: true });
   }
 
   public async openAll(): Promise<void> {
@@ -209,7 +209,7 @@ export class ReviewController implements vscode.TextDocumentContentProvider, vsc
       this.virtualUri(proposal.path, 'base'),
       this.virtualUri(proposal.path, 'proposed'),
     ] as const);
-    try { await vscode.commands.executeCommand('vscode.changes', 'DSH Proposed Edits', resources); }
+    try { await vscode.commands.executeCommand('vscode.changes', 'Unify Proposed Edits', resources); }
     catch { await this.open(pending[0].id); }
   }
 
@@ -304,7 +304,7 @@ export class ReviewController implements vscode.TextDocumentContentProvider, vsc
   private async applyBatch(proposals: ReviewProposal[]): Promise<void> {
     if (!proposals.length) return;
     if (this.direct) { for (const proposal of proposals) await this.markApplied(proposal); return; }
-    if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace before applying DSH edits.');
+    if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace before applying Unify edits.');
     const edit = new vscode.WorkspaceEdit();
     const newParents = new Set<string>();
     for (const proposal of proposals) {

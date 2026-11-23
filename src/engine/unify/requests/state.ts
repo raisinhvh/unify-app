@@ -1,26 +1,30 @@
 /**
  * Paths and small JSON stores shared by the Unify request handlers.
  *
- * Everything here is plain Node: no `vscode` import, so tests can point `dshHome`/`unifyRoot` at a temporary
- * folder and the same code runs inside the Electron shim. The defaults match the shim's paths:
- * state root `~/.dsh/unify`, global storage `~/.dsh/unify/storage`.
+ * Everything here is plain Node: no `vscode` import, so tests can point `unifyHome`/`unifyRoot` at a temporary
+ * folder and the same code runs inside the Electron shim.
+ *
+ * The defaults are Unify's own data folder (`unifyHome()`: `~/.unify`, `UNIFY_HOME` overrides it).
+ * Knowledge (rules, memory) lives in that home and Unify state (settings, setup, providers,
+ * knowledge metadata, Hub data) lives in the same folder.
  */
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { unifyHome } from '../settings';
 import type { UnifyRequestContext } from './types';
 
 export interface RequestPaths {
   workspaceRoot: string | undefined;
-  /** DSH's shared home: rules, skills, memory, accounts. */
-  dshHome: string;
-  /** Unify's own state: settings, setup, providers, knowledge metadata. */
+  /** Unify's data home: rules, skills, memory and the stores below. */
+  unifyHome: string;
+  /** Unify's own state: settings, setup, providers, knowledge metadata, Hub data. */
   unifyRoot: string;
   /** Extension globalStorage inside Unify. */
   storageRoot: string;
   /** Installed toolpacks (`storage/toolpacks`). */
   toolpacksDir: string;
-  /** DSH's shared agent skills (`~/.agents`). */
+  /** Shared agent skills (`~/.agents`). */
   agentsHome: string;
   settingsFile: string;
   stateFile: string;
@@ -31,12 +35,12 @@ export interface RequestPaths {
 }
 
 export function requestPaths(context: UnifyRequestContext): RequestPaths {
-  const dshHome = path.resolve(context.dshHome || process.env.DSH_HOME || path.join(os.homedir(), '.dsh'));
-  const unifyRoot = path.resolve(context.unifyRoot || process.env.UNIFY_HOME || path.join(dshHome, 'unify'));
+  const dataHome = path.resolve(context.unifyHome || process.env.UNIFY_HOME || unifyHome());
+  const unifyRoot = path.resolve(context.unifyRoot || process.env.UNIFY_HOME || dataHome);
   const storageRoot = path.join(unifyRoot, 'storage');
   return {
     workspaceRoot: context.workspaceRoot ? path.resolve(context.workspaceRoot) : undefined,
-    dshHome,
+    unifyHome: dataHome,
     unifyRoot,
     storageRoot,
     toolpacksDir: path.join(storageRoot, 'toolpacks'),

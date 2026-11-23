@@ -2,9 +2,9 @@ import * as vscode from "vscode";
 import { randomBytes } from "crypto";
 import { AccountRecord, AddAccountInput } from "./types";
 
-const ACCOUNTS_KEY = "dsh.accounts.v1";
-const DEFAULTS_KEY = "dsh.accountDefaults.v1";
-const SECRET_PREFIX = "dsh.account.secret.v1.";
+const ACCOUNTS_KEY = "unify.accounts.v1";
+const DEFAULTS_KEY = "unify.accountDefaults.v1";
+const SECRET_PREFIX = "unify.account.secret.v1.";
 
 type DefaultMap = Record<string, string>;
 

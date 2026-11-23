@@ -18,12 +18,54 @@
   -webkit-app-region: no-drag;
 }
 
-.titlebar-controls {
+/* Right end of the strip: the armed indicator (when on), then the window controls. */
+.titlebar-trailing {
   position: absolute;
   top: 0;
   right: 0;
   display: flex;
+  align-items: center;
+  height: var(--titlebar-height);
+  pointer-events: none;
+}
+
+.titlebar.mac .titlebar-trailing {
+  right: 8px;
+}
+
+.titlebar-controls {
+  display: flex;
   pointer-events: auto;
+}
+
+/* "Shut down when done" armed: a small glyph, quiet until hovered; warmer while the countdown runs. */
+.titlebar-armed-slot {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: var(--titlebar-height);
+  transform-origin: center;
+}
+
+.titlebar-armed {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
+  border-radius: var(--radius-control);
+  color: var(--text3);
+  pointer-events: auto;
+  background-color: rgb(from var(--hover) r g b / 0);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.titlebar-armed:hover {
+  color: var(--text);
+  background-color: var(--hover);
+}
+
+.titlebar-armed.counting {
+  color: var(--warn);
 }
 
 .titlebar-button {

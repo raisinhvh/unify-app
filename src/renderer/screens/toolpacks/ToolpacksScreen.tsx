@@ -1,9 +1,10 @@
 /**
  * Toolpacks (Figma 22 · Toolpacks 306:3562): one installed pack, picked in the side panel (ToolpacksPanel).
+ * Exports `ToolpacksPanel` (side-panel slot), `ToolpacksContent` (content card) and the composite `ToolpacksScreen`.
  *
  *   breadcrumb + more menu (reload, logs, remove)
  *   title row     glyph tile, name, description
- *   meta strip    version · source · synced devices          Enabled switch
+ *   meta strip    version, source, synced devices            Enabled switch
  *   Tools         "22 of 24 enabled", filter; groups Read / Write / Run with a permission picker each,
  *                 one row per tool with its own switch
  *
@@ -13,6 +14,7 @@
 import { createMemo, createSignal, For, Index, Show, type JSX } from 'solid-js';
 import { Button, Icon, IconButton, Menu, Select, Toggle } from '../../components';
 import { Collapse, createSpring, pressable } from '../../motion';
+import { RollingNumber } from '../../motion/organic';
 import { navigate } from '../../router';
 import { feature } from '../../store/features';
 import {
@@ -29,6 +31,7 @@ import {
   type ToolPolicy,
 } from './adapter';
 import { ConfirmBar } from './ConfirmBar';
+import { ToolpacksPanel } from './ToolpacksPanel';
 import { GlyphTile } from './glyphs';
 import { currentPack, selectPack } from './selection';
 import './toolpacks.css';
@@ -72,8 +75,9 @@ function ToolGroup(props: { pack: InstalledPack; kind: ToolKind; tools: PackTool
         >
           <Icon name="chevron" size={12} class="tp-group-chevron" style={{ rotate: `${rotation()}deg` }} />
           <span class="tp-group-name">{kindLabels[props.kind]}</span>
-          {/* organic: RollingNumber */}
-          <span class="tp-group-count type-caption">{props.tools.length}</span>
+          <span class="tp-group-count type-caption">
+            <RollingNumber value={props.tools.length} />
+          </span>
         </button>
         <span class="tp-group-permission type-caption">Permission</span>
         <Select
@@ -105,11 +109,13 @@ function PackDetail(props: { pack: InstalledPack }): JSX.Element {
       ? props.pack.tools.filter(tool => tool.name.toLowerCase().includes(text) || tool.description.toLowerCase().includes(text))
       : props.pack.tools;
   });
-  const groups = createMemo(() =>
-    toolKinds
-      .map(kind => ({ kind, tools: filtered().filter(tool => tool.kind === kind) }))
-      .filter(group => group.tools.length > 0),
-  );
+  const toolsByKind = createMemo(() => {
+    const groups: Record<ToolKind, PackTool[]> = { read: [], write: [], run: [] };
+    for (const tool of filtered()) groups[tool.kind].push(tool);
+    return groups;
+  });
+  const groupTools = (kind: ToolKind): PackTool[] => toolsByKind()[kind];
+  const hasTools = () => filtered().length > 0;
 
   const sourceLabel = () => (props.pack.source === 'hub' ? 'Toolpack Hub' : props.pack.source === 'local' ? 'a folder' : undefined);
 
@@ -196,9 +202,9 @@ function PackDetail(props: { pack: InstalledPack }): JSX.Element {
 
       <div class="tp-tools-header">
         <h2 class="type-heading">Tools</h2>
-        {/* organic: RollingNumber (enabled count) */}
         <span class="type-caption tp-tools-count">
-          {enabledCount()} of {props.pack.tools.length} enabled
+          <RollingNumber value={enabledCount()} data-motion="toolpacks-enabled" /> of{' '}
+          <RollingNumber value={props.pack.tools.length} /> enabled
         </span>
         <span class="tp-spacer" />
         <label class="tp-filter">
@@ -241,7 +247,10 @@ function PackDetail(props: { pack: InstalledPack }): JSX.Element {
   );
 }
 
-export function ToolpacksScreen(): JSX.Element {
+export { ToolpacksPanel } from './ToolpacksPanel';
+
+/** The content card: the selected installed pack, or the empty state. Scrolls itself. */
+export function ToolpacksContent(): JSX.Element {
   return (
     <div class="tp-screen">
       <Show
@@ -261,8 +270,22 @@ export function ToolpacksScreen(): JSX.Element {
         }
       >
         {/* Keyed by id: switching packs starts fresh (filter, menus); updates to the same pack flow in. */}
-        {() => <PackDetail pack={currentPack()!} />}
+        {(_id: string) => <PackDetail pack={currentPack()!} />}
       </Show>
+    </div>
+  );
+}
+
+/** Composite: side panel + content, for when the screen owns both (like Providers). */
+export function ToolpacksScreen(): JSX.Element {
+  return (
+    <div class="toolpacks-screen">
+      <div class="toolpacks-screen-panel">
+        <ToolpacksPanel />
+      </div>
+      <div class="toolpacks-screen-content">
+        <ToolpacksContent />
+      </div>
     </div>
   );
 }

@@ -1,16 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const bundle = await build({ entryPoints: ['src/engine/runtime/dependencies.ts'], bundle: true, platform: 'node', format: 'esm', write: false });
 const { WindowsDependencies } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 
-test('Windows setup reuses a compatible explicit Node and npm without downloading', { skip: process.platform !== 'win32' }, async () => {
-  const manager = new WindowsDependencies(tmpdir(), () => process.execPath);
-  assert.equal(await manager.ensureNode(), process.execPath);
+function nodeWithNpm() {
+  const candidates = [process.execPath, join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs', 'node.exe')];
+  return candidates.find(candidate => existsSync(candidate) && existsSync(join(dirname(candidate), 'node_modules', 'npm', 'bin', 'npm-cli.js')));
+}
+
+test('Windows setup reuses a compatible explicit Node and npm without downloading', { skip: process.platform !== 'win32' }, async t => {
+  const nodePath = nodeWithNpm();
+  if (!nodePath) { t.skip('No local Node with bundled npm available'); return; }
+  const manager = new WindowsDependencies(tmpdir(), () => nodePath);
+  assert.equal(await manager.ensureNode(), nodePath);
 });
 
 test('Windows setup rejects a bad custom Node path without replacing it', { skip: process.platform !== 'win32' }, async () => {

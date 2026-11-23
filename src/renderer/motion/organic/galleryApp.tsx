@@ -102,7 +102,7 @@ function RenameCard(): JSX.Element {
       <div class="gallery-status type-label">
         <span class="gallery-status-dot" />
         <RetypeText value={status()} speed="fast" data-motion="status-label" />
-        <span class="gallery-row-meta">· 12s</span>
+        <span class="gallery-row-meta">12s</span>
       </div>
     </Card>
   );
@@ -137,7 +137,7 @@ function CreateDeleteCard(): JSX.Element {
   };
   return (
     <Card
-      title="Created · Deleted"
+      title="Created and deleted"
       hint="New names type in while the row opens. Deleted names get a select-all sweep, then collapse."
       actions={
         <>
@@ -256,7 +256,7 @@ function CounterCard(): JSX.Element {
           <span class="type-label gallery-edits">
             <span class="gallery-add"><RollingNumber value={`+${added()}`} data-motion="counter-added" /></span>
             <span class="gallery-del"><RollingNumber value={`−${removed()}`} data-motion="counter-removed" /></span>
-            <span class="gallery-row-meta">· 3 files</span>
+            <span class="gallery-row-meta">3 files</span>
           </span>
         </div>
         <div class="gallery-counter">

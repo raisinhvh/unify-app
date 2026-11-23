@@ -1,6 +1,7 @@
 /**
- * DEV ONLY. Answers Hub requests with a fake catalogue and a fake download until the engine implements them
- * (hubAdapter.ts imports this only under import.meta.env.DEV). Never contacts GitHub; publish only logs.
+ * DEV ONLY. Answers Hub requests with a fake catalogue and a fake download in a plain-browser preview
+ * (hubAdapter.ts imports this only under import.meta.env.DEV with no host bridge). Never contacts GitHub;
+ * publish only logs. Unity Editor ships an install script, so installing it shows the consent dialog.
  */
 import type { SidebarHostMessage } from '../../protocol';
 import { viewState } from '../../store';
@@ -43,13 +44,14 @@ function pack(
     updatedAt: now - ((installs % 9) + 1) * day,
     publishedAt: now - ageDays * day,
     license: installs % 3 ? 'MIT' : 'Apache-2.0',
+    description,
   };
 }
 
 const packs: HubPack[] = [
-  pack('roblox-studio', 'Roblox Studio', 'dsh', 'studio', 'roblox', 12400, 24, 'Read and edit the open place: explorer, properties, scripts and playtests.', 300),
-  pack('figma-bridge', 'Figma bridge', 'dsh', 'design', 'figma', 8100, 8, 'Run plugin code, inspect nodes and capture frames from the open file.', 280),
-  pack('imaging', 'Imaging', 'dsh', 'media', 'imaging', 6700, 17, 'Resize, trim, composite and remove backgrounds without leaving the chat.', 260),
+  pack('roblox-studio', 'Roblox Studio', 'unify', 'studio', 'roblox', 12400, 24, 'Read and edit the open place: explorer, properties, scripts and playtests.', 300),
+  pack('figma-bridge', 'Figma bridge', 'unify', 'design', 'figma', 8100, 8, 'Run plugin code, inspect nodes and capture frames from the open file.', 280),
+  pack('imaging', 'Imaging', 'unify', 'media', 'imaging', 6700, 17, 'Resize, trim, composite and remove backgrounds without leaving the chat.', 260),
   pack('blender', 'Blender', 'mira.tools', 'studio', 'blender', 4200, 11, 'Build and render scenes, apply modifiers and export assets.', 200),
   pack('unity-editor', 'Unity Editor', 'northbeam', 'studio', 'engine', 3900, 14, 'Inspect scenes, edit prefabs and components, and enter play mode from an agent. Works with Unity 2022.3 and later.', 40),
   pack('postgres', 'Postgres', 'dataloom', 'data', 'database', 3100, 9, 'Query a database, read-only by default.', 90),
@@ -59,20 +61,55 @@ const packs: HubPack[] = [
   pack('containers', 'Containers', 'dockyard', 'dev', 'containers', 5200, 16, 'Build, run and inspect containers and read their logs.', 14),
   pack('spreadsheets', 'Spreadsheets', 'gridworks', 'data', 'sheet', 2400, 12, 'Read and edit sheets, formulas and charts in xlsx and csv.', 10),
   pack('screen-recorder', 'Screen recorder', 'sonar', 'media', 'recorder', 1100, 5, 'Record a window or region and hand the clip to an agent.', 6),
-  pack('git-helpers', 'Git helpers', 'dsh', 'dev', 'git', 3300, 6, 'Blame, bisect and summarise history without leaving the chat.', 240),
-  pack('web-search', 'Web search', 'dsh', 'web', 'web', 7300, 3, 'Search the web and read pages as clean text.', 310),
+  pack('git-helpers', 'Git helpers', 'unify', 'dev', 'git', 3300, 6, 'Blame, bisect and summarise history without leaving the chat.', 240),
+  pack('web-search', 'Web search', 'unify', 'web', 'web', 7300, 3, 'Search the web and read pages as clean text.', 310),
 ];
 
 const state: HubState = {
   packs,
   categories,
   featured: ['containers', 'spreadsheets', 'screen-recorder'],
-  authors: 74,
+  authors: new Set(packs.map(entry => entry.author)).size,
   devices: [
     { id: 'desktop', label: 'Desktop', current: true },
     { id: 'laptop', label: 'Laptop', current: false },
   ],
   fetchedAt: now,
+};
+
+/** Packs that ship an install script: the first hubInstall asks for consent, `allowScript: true` installs. */
+const installScripts: Record<string, { name: string; text: string }> = {
+  'unity-editor': {
+    name: 'install.ps1',
+    text: [
+      '# Unity Editor toolpack: installs the editor bridge package into each Unity project it finds.',
+      '$ErrorActionPreference = "Stop"',
+      '$hub = Join-Path $env:APPDATA "UnityHub"',
+      'if (-not (Test-Path $hub)) { throw "Unity Hub is not installed." }',
+      '',
+      '$projects = Get-Content (Join-Path $hub "projectDir.json") | ConvertFrom-Json',
+      'foreach ($project in $projects.data.PSObject.Properties.Value) {',
+      '  $manifest = Join-Path $project.path "Packages/manifest.json"',
+      '  if (-not (Test-Path $manifest)) { continue }',
+      '  $json = Get-Content $manifest -Raw | ConvertFrom-Json',
+      '  $json.dependencies | Add-Member -Force -NotePropertyName "com.northbeam.agent-bridge" -NotePropertyValue "https://github.com/northbeam/unity-agent-bridge.git#v1.4.2"',
+      '  $json | ConvertTo-Json -Depth 8 | Set-Content $manifest -Encoding UTF8',
+      '  Write-Host "Added the bridge to $($project.path)"',
+      '}',
+      '',
+      '# The bridge listens on a local port; open it for loopback only.',
+      'New-NetFirewallRule -DisplayName "Unity agent bridge" -Direction Inbound -LocalPort 47321 -Protocol TCP -RemoteAddress 127.0.0.1 -Action Allow | Out-Null',
+      '',
+      '# Cache the editor version list so the toolpack can pick a matching bridge build.',
+      '$editors = Get-ChildItem "C:/Program Files/Unity/Hub/Editor" -Directory | Select-Object -ExpandProperty Name',
+      '$cache = Join-Path $PSScriptRoot "editors.json"',
+      '$editors | ConvertTo-Json | Set-Content $cache -Encoding UTF8',
+      'Write-Host "Found $($editors.Count) editor versions: $($editors -join ", ")"',
+      '',
+      ...Array.from({ length: 24 }, (_, index) => `Write-Host "Step ${index + 1} of 24: verifying bridge assembly ${index + 1}"`),
+      'Write-Host "Done."',
+    ].join('\n'),
+  },
 };
 
 const running = new Map<string, number>();
@@ -106,6 +143,14 @@ export function answer(request: HubRequest, reply: (message: HubReply) => void):
       break;
     case 'hubInstall': {
       if (running.has(request.id)) return;
+      const script = installScripts[request.id];
+      if (script && !request.allowScript) {
+        window.setTimeout(() => {
+          reply({ type: 'hubInstallProgress', id: request.id, percent: 60, state: 'installing' });
+          reply({ type: 'hubInstallResult', ok: false, id: request.id, needsScriptConsent: true, scriptName: script.name, scriptText: script.text });
+        }, 600);
+        return;
+      }
       let percent = 0;
       const timer = window.setInterval(() => {
         percent = Math.min(100, percent + 7 + Math.random() * 9);
@@ -119,13 +164,15 @@ export function answer(request: HubRequest, reply: (message: HubReply) => void):
           window.clearInterval(timer);
           running.delete(request.id);
           announceInstalled(request.id);
+          reply({ type: 'hubInstallResult', ok: true, id: request.id });
         }
       }, 400);
       running.set(request.id, timer);
       break;
     }
     case 'hubPublish':
-      console.info('[hub mock] publish requested; nothing is uploaded in dev');
+      // Mirrors the engine: a hubState carrying why publishing is not possible. Nothing is uploaded.
+      window.setTimeout(() => reply({ type: 'hubState', hub: { ...state, error: 'Publishing is limited to approved accounts.' } }), 500);
       break;
   }
 }

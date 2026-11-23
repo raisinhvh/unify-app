@@ -1,7 +1,7 @@
 {
   "name": "unify",
   "displayName": "Unify",
-  "description": "The DeepSeek Harness agent engine in a native desktop app.",
+  "description": "A native desktop app for AI agents.",
   "version": "0.1.0",
   "license": "MIT",
   "private": true,
@@ -16,14 +16,15 @@
     "dev": "node scripts/dev.mjs",
     "start": "electron .",
     "build:renderer": "vite build src/renderer",
-    "build:test": "esbuild src/engine/review/hunks.ts src/engine/review/guards.ts src/engine/review/renames.ts src/engine/sidebar/view.ts src/engine/sidebar/questions.ts src/engine/update/version.ts src/engine/update/plan.ts src/engine/update/extensionUpdate.ts src/engine/toolpacks/registry.ts src/engine/runtime/models.ts src/engine/runtime/naming.ts src/engine/runtime/limits.ts src/engine/instructions/store.ts src/engine/instructions/share.ts src/engine/sync/configSync.ts src/engine/sync/gitRepo.ts src/engine/runtime/git.ts src/engine/slash/registry.ts src/engine/goal/parse.ts src/engine/goal/prompts.ts src/engine/goal/runner.ts src/engine/summaries/store.ts src/engine/toolpacks/access.ts src/engine/runtime/handoff.ts src/engine/runtime/transcriptParts.ts src/engine/runtime/batch.ts src/engine/runtime/memory.ts src/engine/runtime/explorer.ts src/engine/runtime/promptPrefix.ts src/engine/runtime/delegation.ts src/engine/runtime/checkpoint.ts src/engine/runtime/midTurnCompact.ts src/engine/runtime/imageTrim.ts src/engine/runtime/keepAlive.ts src/engine/runtime/editorContext.ts src/engine/runtime/smartAuto.ts src/engine/runtime/imageGen.ts src/engine/runtime/piAi.ts src/engine/runtime/selfHosted.ts src/engine/runtime/rustTools.ts src/engine/runtime/toolDisplay.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist --out-extension:.js=.mjs && esbuild src/engine/toolpacks/worker.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/toolpack-worker.js",
-    "test": "npm run build:test && node test/run.mjs",
+    "build:test": "esbuild src/engine/review/hunks.ts src/engine/review/guards.ts src/engine/review/renames.ts src/engine/sidebar/view.ts src/engine/sidebar/questions.ts src/engine/update/version.ts src/engine/update/plan.ts src/engine/toolpacks/registry.ts src/engine/runtime/models.ts src/engine/runtime/naming.ts src/engine/runtime/limits.ts src/engine/instructions/store.ts src/engine/instructions/share.ts src/engine/sync/configSync.ts src/engine/sync/gitRepo.ts src/engine/runtime/git.ts src/engine/slash/registry.ts src/engine/goal/parse.ts src/engine/goal/prompts.ts src/engine/goal/runner.ts src/engine/summaries/store.ts src/engine/toolpacks/access.ts src/engine/runtime/handoff.ts src/engine/runtime/transcriptParts.ts src/engine/runtime/batch.ts src/engine/runtime/memory.ts src/engine/runtime/explorer.ts src/engine/runtime/promptPrefix.ts src/engine/runtime/delegation.ts src/engine/runtime/checkpoint.ts src/engine/runtime/midTurnCompact.ts src/engine/runtime/imageTrim.ts src/engine/runtime/keepAlive.ts src/engine/runtime/editorContext.ts src/engine/runtime/smartAuto.ts src/engine/runtime/imageGen.ts src/engine/runtime/piAi.ts src/engine/runtime/selfHosted.ts src/engine/runtime/rustTools.ts src/engine/runtime/toolDisplay.ts src/engine/runtime/rangeEdit.ts src/engine/unify/media/store.ts src/engine/unify/knowledgeAudience.ts src/engine/instructions/audiences.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist --out-extension:.js=.mjs && esbuild src/engine/toolpacks/worker.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/toolpack-worker.js",
+    "test": "npm run build:test && node --test-timeout=120000 --test-force-exit test/run.mjs",
     "dist": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.2.0-rc.2",
+    "electron-updater": "^6.8.11",
     "esbuild": "^0.25.0"
   },
   "devDependencies": {
@@ -42,16 +43,16 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "dsh",
-          "title": "DeepSeek Harness",
-          "icon": "media/dsh.svg"
+          "id": "unify",
+          "title": "Unify",
+          "icon": "media/unify.svg"
         }
       ]
     },
     "views": {
-      "dsh": [
+      "unify": [
         {
-          "id": "dsh.sidebar",
+          "id": "unify.sidebar",
           "name": "Agent",
           "type": "webview"
         }
@@ -59,105 +60,105 @@
     },
     "commands": [
       {
-        "command": "dsh.newChat",
-        "title": "DSH: New Chat"
+        "command": "unify.newChat",
+        "title": "Unify: New Chat"
       },
       {
-        "command": "dsh.continue",
-        "title": "DSH: Continue Chat"
+        "command": "unify.continue",
+        "title": "Unify: Continue Chat"
       },
       {
-        "command": "dsh.cancel",
-        "title": "DSH: Cancel"
+        "command": "unify.cancel",
+        "title": "Unify: Cancel"
       },
       {
-        "command": "dsh.pickModel",
-        "title": "DSH: Pick Model"
+        "command": "unify.pickModel",
+        "title": "Unify: Pick Model"
       },
       {
-        "command": "dsh.manageModels",
-        "title": "DSH: Manage Models"
+        "command": "unify.manageModels",
+        "title": "Unify: Manage Models"
       },
       {
-        "command": "dsh.manageAccounts",
-        "title": "DSH: Manage Accounts"
+        "command": "unify.manageAccounts",
+        "title": "Unify: Manage Accounts"
       },
       {
-        "command": "dsh.applyAll",
-        "title": "DSH: Apply All Diffs"
+        "command": "unify.applyAll",
+        "title": "Unify: Apply All Diffs"
       },
       {
-        "command": "dsh.rejectAll",
-        "title": "DSH: Reject All Diffs"
+        "command": "unify.rejectAll",
+        "title": "Unify: Reject All Diffs"
       },
       {
-        "command": "dsh.openRuntimeLogs",
-        "title": "DSH: Open Runtime Logs"
+        "command": "unify.openRuntimeLogs",
+        "title": "Unify: Open Runtime Logs"
       },
       {
-        "command": "dsh.restartRuntime",
-        "title": "DSH: Restart Runtime"
+        "command": "unify.restartRuntime",
+        "title": "Unify: Restart Runtime"
       },
       {
-        "command": "dsh.checkForUpdates",
-        "title": "DSH: Check for Updates"
+        "command": "unify.checkForUpdates",
+        "title": "Unify: Check for Updates"
       },
       {
-        "command": "dsh.reviewNext",
-        "title": "DSH: Review Next File"
+        "command": "unify.reviewNext",
+        "title": "Unify: Review Next File"
       },
       {
-        "command": "dsh.reviewAll",
-        "title": "DSH: Review All Files"
+        "command": "unify.reviewAll",
+        "title": "Unify: Review All Files"
       },
       {
-        "command": "dsh.openWorkingCopyTerminal",
-        "title": "DSH: Open Working Copy Terminal"
+        "command": "unify.openWorkingCopyTerminal",
+        "title": "Unify: Open Working Copy Terminal"
       },
       {
-        "command": "dsh.applyHunk",
-        "title": "DSH: Apply Hunk"
+        "command": "unify.applyHunk",
+        "title": "Unify: Apply Hunk"
       },
       {
-        "command": "dsh.rejectHunk",
-        "title": "DSH: Reject Hunk"
+        "command": "unify.rejectHunk",
+        "title": "Unify: Reject Hunk"
       }
     ],
     "keybindings": [
       {
-        "command": "dsh.newChat",
+        "command": "unify.newChat",
         "key": "ctrl+alt+n",
         "mac": "cmd+alt+n"
       }
     ],
     "configuration": {
-      "title": "DeepSeek Harness",
+      "title": "Unify",
       "properties": {
-        "dsh.checkpointHint": {
+        "unify.checkpointHint": {
           "type": "number",
           "default": 80000,
           "minimum": 10000,
-          "description": "Context size at which DSH suggests a checkpoint and keeps idle Claude sessions warm."
+          "description": "Context size at which Unify suggests a checkpoint and keeps idle Claude sessions warm."
         },
-        "dsh.keepAliveMax": {
+        "unify.keepAliveMax": {
           "type": "number",
           "default": 3,
           "minimum": 0,
           "description": "Maximum hidden Claude cache refreshes between user messages. Set to 0 to turn them off."
         },
-        "dsh.updates.check": {
+        "unify.updates.check": {
           "type": "boolean",
           "default": true,
           "scope": "application",
-          "description": "Offer optional DSH-IDE and DSH updates when the editor starts. A DSH update that has a newer DSH-IDE release is always required, regardless of this setting."
+          "description": "Check for optional Unify updates when the app starts."
         },
-        "dsh.updates.repository": {
+        "unify.updates.repository": {
           "type": "string",
-          "default": "raisinhvh/DSH-IDE",
+          "default": "raisinhvh/unify",
           "scope": "application",
-          "description": "Public GitHub repository hosting DSH-IDE releases, in owner/repository form. Leave empty to disable DSH-IDE update checks."
+          "description": "Public GitHub repository hosting Unify releases, in owner/repository form. Leave empty to disable Unify update checks."
         },
-        "dsh.runtime.processPriority": {
+        "unify.runtime.processPriority": {
           "type": "string",
           "enum": [
             "normal",
@@ -173,37 +174,37 @@
           "scope": "machine",
           "description": "CPU priority for agent harnesses and every command they run (shells, builds, searches). Applies to agents started after the change."
         },
-        "dsh.runtime.powershellSpeedups": {
+        "unify.runtime.powershellSpeedups": {
           "type": "boolean",
           "default": true,
           "scope": "machine",
           "description": "Start agent PowerShells without telemetry or update checks, and tell agents the fast PowerShell patterns (no += in loops, parallel jobs, no progress bars). Applies to agents started after the change."
         },
-        "dsh.runtime.rustTools": {
+        "unify.runtime.rustTools": {
           "type": "boolean",
           "default": true,
           "scope": "machine",
-          "description": "Download ripgrep, fd and sd (checked against their release SHA-256) into DSH's storage, put them on agents' PATH, and steer agent shells to them instead of grep, find and sed. Applies to agents started after the change."
+          "description": "Download ripgrep, fd and sd (checked against their release SHA-256) into Unify's storage, put them on agents' PATH, and steer agent shells to them instead of grep, find and sed. Applies to agents started after the change."
         },
-        "dsh.runtime.gitPath": {
+        "unify.runtime.gitPath": {
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Git executable for Settings > Sync. Empty finds Git on PATH or in the usual install folders, or uses the copy DSH installs."
+          "description": "Git executable for Settings > Sync. Empty finds Git on PATH or in the usual install folders, or uses the copy Unify installs."
         },
-        "dsh.memory.enabled": {
+        "unify.memory.enabled": {
           "type": "boolean",
           "default": true,
           "scope": "machine",
-          "description": "Give agents memory: global notes, conventions and scripts in ~/.dsh/memory (seen in every project as .dsh/global-memory/), plus each project's .dsh/memory. Turn it off from Settings > Behavior, which warns before deleting this PC's global memory."
+          "description": "Give agents memory: global notes, conventions and scripts in ~/.unify/memory (seen in every project as .unify/global-memory/), plus each project's .unify/memory. Turn it off from Settings > Behavior, which warns before deleting this PC's global memory."
         },
-        "dsh.experimental.autoCompact": {
+        "unify.experimental.autoCompact": {
           "type": "boolean",
           "default": false,
           "scope": "application",
-          "markdownDescription": "Experimental. When a chat's conversation passes `#dsh.experimental.autoCompactTokens#` (not counting the session's system prompt and tools), the next message starts a fresh agent session. Earlier messages, including which tools each turn used, are split by topic into parts saved under `.dsh/transcripts/`. The new session opens with every part's summary plus the latest exchange, and the agent reads a part's file when it needs the detail."
+          "markdownDescription": "Experimental. When a chat's conversation passes `#unify.experimental.autoCompactTokens#` (not counting the session's system prompt and tools), the next message starts a fresh agent session. Earlier messages, including which tools each turn used, are split by topic into parts saved under `.unify/transcripts/`. The new session opens with every part's summary plus the latest exchange, and the agent reads a part's file when it needs the detail."
         },
-        "dsh.experimental.autoCompactTokens": {
+        "unify.experimental.autoCompactTokens": {
           "type": "number",
           "default": 70000,
           "minimum": 20000,
@@ -211,67 +212,67 @@
           "scope": "application",
           "description": "Experimental. Conversation size, in tokens, at which auto compaction starts a fresh session."
         },
-        "dsh.experimental.trimTools": {
+        "unify.experimental.trimTools": {
           "type": "boolean",
           "default": true,
           "scope": "application",
-          "description": "Experimental. Leave out Claude Code built-in tools that cannot work inside DSH or that DSH replaces (native subagents and workflows, scheduled wake-ups and cron, worktrees, claude.ai artifacts and cards), so their definitions are not sent with every request."
+          "description": "Experimental. Leave out Claude Code built-in tools that cannot work inside Unify or that Unify replaces (native subagents and workflows, scheduled wake-ups and cron, worktrees, claude.ai artifacts and cards), so their definitions are not sent with every request."
         },
-        "dsh.experimental.batching": {
+        "unify.experimental.batching": {
           "type": "boolean",
           "default": false,
           "scope": "application",
-          "description": "Experimental. Gives agents a batch tool that runs several DSH tool calls (subagents, file summaries, chat history, toolpacks) plus batch-only read_file, search and list_dir in parallel, or chained when one call uses another's result, and returns one combined result."
+          "description": "Experimental. Gives agents a batch tool that runs several Unify tool calls (subagents, file summaries, chat history, toolpacks) plus batch-only read_file, search and list_dir in parallel, or chained when one call uses another's result, and returns one combined result."
         },
-        "dsh.features.activityRail": {
+        "unify.features.activityRail": {
           "type": "boolean",
           "default": true,
           "scope": "application",
           "description": "Show the activity rail to the left of the chat: running chats stay gray, chats waiting on you turn amber, and chats that finished while you were elsewhere turn blue until you open them. When off, the top chat tabs return."
         },
-        "dsh.features.autoName": {
+        "unify.features.autoName": {
           "type": "boolean",
           "default": true,
           "scope": "application",
-          "description": "Name new chats with the model in dsh.nameModel. Without a name model, or when off, chats are named after the first message."
+          "description": "Name new chats with the model in unify.nameModel. Without a name model, or when off, chats are named after the first message."
         },
-        "dsh.features.reviewAgent": {
+        "unify.features.reviewAgent": {
           "type": "boolean",
           "default": false,
           "scope": "application",
-          "description": "Review /job rounds with a separate read-only agent running the model in dsh.reviewModel. When off, the chat agent reviews its own work in the same chat."
+          "description": "Review /job rounds with a separate read-only agent running the model in unify.reviewModel. When off, the chat agent reviews its own work in the same chat."
         },
-        "dsh.features.fileSummaries": {
+        "unify.features.fileSummaries": {
           "type": "boolean",
           "default": true,
           "scope": "application",
-          "description": "Generate outlines from supported code files in the background. The model in dsh.summaryModel is used only for other languages. Agents can read summaries before opening whole files. Summaries are kept in DSH's extension storage, per workspace."
+          "description": "Generate outlines from supported code files in the background. The model in unify.summaryModel is used only for other languages. Agents can read summaries before opening whole files. Summaries are kept in Unify's extension storage, per workspace."
         },
-        "dsh.features.smartAuto": {
+        "unify.features.smartAuto": {
           "type": "boolean",
           "default": false,
           "scope": "application",
-          "description": "Offer Smart Auto in the model menu. For each message you send, the model in dsh.deciderModel picks a model and effort from dsh.smartAutoRanks."
+          "description": "Offer Smart Auto in the model menu. For each message you send, the model in unify.deciderModel picks a model and effort from unify.smartAutoRanks."
         },
-        "dsh.features.shareRules": {
+        "unify.features.shareRules": {
           "type": "boolean",
           "default": true,
           "scope": "application",
-          "description": "Before each Claude Code turn, copy global rules (~/.dsh/AGENTS.md) and global skills into that account's private configuration directory. Turning this off removes the copies on the next turn."
+          "description": "Before each Claude Code turn, copy global rules (~/.unify/AGENTS.md) and global skills into that account's private configuration directory. Turning this off removes the copies on the next turn."
         },
-        "dsh.features.editorContext": {
+        "unify.features.editorContext": {
           "type": "boolean",
           "default": true,
           "scope": "application",
           "description": "Add open files, cursor position, selection and diagnostics to each message."
         },
-        "dsh.features.voice": {
+        "unify.features.voice": {
           "type": "boolean",
           "default": true,
           "scope": "application",
           "description": "Show a microphone button next to Send that types what you say, using local Whisper speech recognition. The first use downloads Whisper and an English model (about 157 MB, once); after that it runs offline. Windows only."
         },
-        "dsh.voice.commands": {
+        "unify.voice.commands": {
           "type": "array",
           "scope": "application",
           "description": "Spoken keywords that edit the message during voice input instead of being typed.",
@@ -334,17 +335,17 @@
             }
           }
         },
-        "dsh.features.reduceMotion": {
+        "unify.features.reduceMotion": {
           "type": "boolean",
           "default": false,
           "scope": "application",
           "description": "Turn off sidebar animations."
         },
-        "dsh.accessibility": {
+        "unify.accessibility": {
           "type": "object",
           "default": {},
           "scope": "application",
-          "description": "Sidebar display preferences from Settings → Accessibility. Reduce motion is dsh.features.reduceMotion.",
+          "description": "Sidebar display preferences from Settings → Accessibility. Reduce motion is unify.features.reduceMotion.",
           "properties": {
             "textScale": {
               "type": "number",
@@ -399,7 +400,7 @@
             }
           }
         },
-        "dsh.nameModel": {
+        "unify.nameModel": {
           "type": "object",
           "default": {},
           "scope": "application",
@@ -407,7 +408,7 @@
           "properties": {
             "model": {
               "type": "string",
-              "description": "Name of an entry from dsh.models (or a Cursor model)."
+              "description": "Name of an entry from unify.models (or a Cursor model)."
             },
             "effort": {
               "type": "string",
@@ -419,15 +420,15 @@
             }
           }
         },
-        "dsh.reviewModel": {
+        "unify.reviewModel": {
           "type": "object",
           "default": {},
           "scope": "application",
-          "description": "Model for the separate /job review agent (used when dsh.features.reviewAgent is on). Example: { \"model\": \"Codex Default\", \"effort\": \"high\" }.",
+          "description": "Model for the separate /job review agent (used when unify.features.reviewAgent is on). Example: { \"model\": \"Codex Default\", \"effort\": \"high\" }.",
           "properties": {
             "model": {
               "type": "string",
-              "description": "Name of an entry from dsh.models (or a Cursor model)."
+              "description": "Name of an entry from unify.models (or a Cursor model)."
             },
             "effort": {
               "type": "string",
@@ -439,15 +440,15 @@
             }
           }
         },
-        "dsh.summaryModel": {
+        "unify.summaryModel": {
           "type": "object",
           "default": {},
           "scope": "application",
-          "description": "Model that writes file summaries (used when dsh.features.fileSummaries is on). Example: { \"model\": \"DeepSeek V4 Flash\" }.",
+          "description": "Model that writes file summaries (used when unify.features.fileSummaries is on). Example: { \"model\": \"DeepSeek V4 Flash\" }.",
           "properties": {
             "model": {
               "type": "string",
-              "description": "Name of an entry from dsh.models (or a Cursor model)."
+              "description": "Name of an entry from unify.models (or a Cursor model)."
             },
             "effort": {
               "type": "string",
@@ -459,7 +460,7 @@
             }
           }
         },
-        "dsh.explorerModel": {
+        "unify.explorerModel": {
           "type": "object",
           "default": {},
           "scope": "application",
@@ -467,7 +468,7 @@
           "properties": {
             "model": {
               "type": "string",
-              "description": "Name of an entry from dsh.models (or a Cursor model)."
+              "description": "Name of an entry from unify.models (or a Cursor model)."
             },
             "effort": {
               "type": "string",
@@ -479,15 +480,15 @@
             }
           }
         },
-        "dsh.deciderModel": {
+        "unify.deciderModel": {
           "type": "object",
           "default": {},
           "scope": "application",
-          "description": "Model that picks Smart Auto's model for each message (used when dsh.features.smartAuto is on). Example: { \"model\": \"DeepSeek V4 Flash\", \"effort\": \"low\" }.",
+          "description": "Model that picks Smart Auto's model for each message (used when unify.features.smartAuto is on). Example: { \"model\": \"DeepSeek V4 Flash\", \"effort\": \"low\" }.",
           "properties": {
             "model": {
               "type": "string",
-              "description": "Name of an entry from dsh.models (or a Cursor model)."
+              "description": "Name of an entry from unify.models (or a Cursor model)."
             },
             "effort": {
               "type": "string",
@@ -499,7 +500,7 @@
             }
           }
         },
-        "dsh.smartAutoRanks": {
+        "unify.smartAutoRanks": {
           "type": "array",
           "default": [],
           "scope": "application",
@@ -513,7 +514,7 @@
             "properties": {
               "model": {
                 "type": "string",
-                "description": "Name of an entry from dsh.models (or a Cursor model)."
+                "description": "Name of an entry from unify.models (or a Cursor model)."
               },
               "effort": {
                 "type": "string",
@@ -527,7 +528,7 @@
             }
           }
         },
-        "dsh.models": {
+        "unify.models": {
           "type": "array",
           "default": [
             {
@@ -581,39 +582,39 @@
             }
           }
         },
-        "dsh.runtime.nodePath": {
+        "unify.runtime.nodePath": {
           "type": "string",
           "default": "",
-          "description": "Optional Node executable for the pinned local DSH runtime."
+          "description": "Optional Node executable for the pinned local agent runtime."
         },
-        "dsh.runtime.cursorAgentPath": {
+        "unify.runtime.cursorAgentPath": {
           "type": "string",
           "default": "agent",
           "description": "Path to the official Cursor Agent CLI used for Cursor account models through ACP."
         },
-        "dsh.runtime.claudePath": {
+        "unify.runtime.claudePath": {
           "type": "string",
           "default": "",
           "description": "Optional Claude Code executable for Claude subscription browser sign-in and model runs."
         },
-        "dsh.runtime.maxWorkspaceFiles": {
+        "unify.runtime.maxWorkspaceFiles": {
           "type": "integer",
           "default": 4000,
           "minimum": 1,
           "description": "Maximum files copied into the isolated edit review workspace."
         },
-        "dsh.runtime.maxWorkspaceBytes": {
+        "unify.runtime.maxWorkspaceBytes": {
           "type": "integer",
           "default": 104857600,
           "minimum": 1024,
           "description": "Maximum total bytes copied into the isolated edit review workspace."
         },
-        "dsh.runtime.mirror": {
+        "unify.runtime.mirror": {
           "type": "boolean",
           "default": true,
           "markdownDescription": "Give each new chat a private copy of the workspace to edit. Turn off to let agents edit the real workspace directly, so they always see your changes and each other's. Edits made during a turn are still listed for review and can be undone with Reject. Applies to chats created after the change."
         },
-        "dsh.subagents": {
+        "unify.subagents": {
           "type": "array",
           "default": [],
           "description": "Subagent profiles the main chat can delegate to (from any provider). Example: { \"name\": \"luna-low\", \"model\": \"Luna\", \"effort\": \"low\", \"speed\": \"Standard\", \"mode\": \"read-only\" }.",
@@ -634,7 +635,7 @@
               },
               "model": {
                 "type": "string",
-                "description": "Name of an entry from dsh.models (or a Cursor model)."
+                "description": "Name of an entry from unify.models (or a Cursor model)."
               },
               "effort": {
                 "type": "string",
@@ -665,10 +666,10 @@
             }
           }
         },
-        "dsh.mcpServers": {
+        "unify.mcpServers": {
           "type": "array",
           "default": [],
-          "description": "ACP MCP server declarations passed to DSH sessions. Commands and URLs require workspace trust."
+          "description": "ACP MCP server declarations passed to Unify sessions. Commands and URLs require workspace trust."
         }
       }
     }

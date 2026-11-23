@@ -30,7 +30,7 @@ const PROFILE_CLAIMS = 'https://api.openai.com/profile';
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 const TOKEN_TIMEOUT_MS = 30 * 1000;
 const ORIGINATOR = 'codex_cli_rs';
-/** The Codex CLI version DSH identifies as in User-Agent and `version` headers. */
+/** The Codex CLI version Unify identifies as in User-Agent and `version` headers. */
 export const CODEX_CLIENT_VERSION = '0.169.0';
 
 export interface CodexTokens {
@@ -149,7 +149,7 @@ export function codexHeaders(tokens: CodexTokens): Record<string, string> {
     Authorization: `Bearer ${tokens.access}`,
     'ChatGPT-Account-ID': tokens.accountId,
     originator: ORIGINATOR,
-    'User-Agent': `${ORIGINATOR}/${CODEX_CLIENT_VERSION} (${type()} ${release()}; ${arch()}) dsh-ide`,
+    'User-Agent': `${ORIGINATOR}/${CODEX_CLIENT_VERSION} (${type()} ${release()}; ${arch()}) unify`,
     ...(tokens.fedramp ? { 'X-OpenAI-Fedramp': 'true' } : {}),
   };
 }
@@ -225,7 +225,7 @@ async function requestTokens(form: Record<string, string>, operation: 'refresh' 
   };
 }
 
-/** Rewrites auth.json atomically in the Codex CLI format, keeping fields DSH does not know about. */
+/** Rewrites auth.json atomically in the Codex CLI format, keeping fields Unify does not know about. */
 async function writeAuth(home: string, issued: IssuedTokens): Promise<void> {
   const path = authPath(home);
   let existing: Json = {};
@@ -270,7 +270,7 @@ async function writeAuth(home: string, issued: IssuedTokens): Promise<void> {
 /** Serves the localhost callback, opens the browser, and resolves with the authorization code. */
 function waitForCallback(state: string, authorizeUrl: string, options: { openUrl(url: string): Promise<void>; signal?: AbortSignal }): Promise<string> {
   return new Promise((resolveCode, reject) => {
-    const page = (message: string): string => `<!doctype html><meta charset="utf-8"><title>DSH</title><body style="font:16px system-ui;margin:3em">${message}</body>`;
+    const page = (message: string): string => `<!doctype html><meta charset="utf-8"><title>Unify</title><body style="font:16px system-ui;margin:3em">${message}</body>`;
     let settled = false;
     const finish = (error: Error | undefined, code?: string): void => {
       if (settled) return;
@@ -295,7 +295,7 @@ function waitForCallback(state: string, authorizeUrl: string, options: { openUrl
       }
       if (url.searchParams.get('state') !== state) {
         response.statusCode = 400;
-        response.end(page('This sign-in link is out of date. Start the sign-in again from DSH.'));
+        response.end(page('This sign-in link is out of date. Start the sign-in again from Unify.'));
         return;
       }
       const error = url.searchParams.get('error');
@@ -307,7 +307,7 @@ function waitForCallback(state: string, authorizeUrl: string, options: { openUrl
         finish(new Error(`Codex sign-in failed${description ? `: ${description.slice(0, 200)}` : error ? ` (${error.slice(0, 80)})` : '.'}`));
         return;
       }
-      response.end(page('Signed in to ChatGPT. You can close this window and return to DSH.'));
+      response.end(page('Signed in to ChatGPT. You can close this window and return to Unify.'));
       finish(undefined, code);
     });
     server.on('error', error => {

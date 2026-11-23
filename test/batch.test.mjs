@@ -177,6 +177,22 @@ test('batch file tools read, search and list inside the working copy only', asyn
   }
 });
 
+test('range reads include context, merge nearby windows and respect the feature toggle', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'unify-ranges-'));
+  try {
+    await writeFile(join(root, 'lines.txt'), Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join('\n'));
+    const plain = await runBatchFileTool(root, 'read_file', { path: 'lines.txt' });
+    assert.equal(plain.text, Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join('\n'));
+    const result = await runBatchFileTool(root, 'read_file', { path: 'lines.txt', ranges: [
+      { startLine: 3, endLine: 4 }, { startLine: 7, endLine: 7 }, { startLine: 18, endLine: 18 },
+    ] });
+    assert.match(result.text, /^lines\.txt lines 1-9 of 20 \(range 3-7, hash [a-f0-9]{12}\)\nline 1/);
+    assert.match(result.text, /\n\nlines\.txt lines 16-20 of 20 \(range 18-18, hash [a-f0-9]{12}\)/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('chat history keeps tool lines and can be searched', () => {
   const history = [
     { role: 'user', text: 'Fix the parser' },
@@ -210,7 +226,7 @@ test('transcript parts are split where the model says, within the window', () =>
   for (let index = 1; index < windows.length; index += 1) assert.equal(windows[index].from, windows[index - 1].to);
   assert.match(partsPrompt(windows[0]), /The first part starts at 11\./);
   const handoff = buildPartsHandoff('chat', history.slice(0, 4), [{ from: 0, to: 2, title: 'Start', summary: 'Did a thing.' }]);
-  assert.match(handoff, /\.dsh\/transcripts\/chat\//);
+  assert.match(handoff, /\.unify\/transcripts\/chat\//);
   assert.match(handoff, /- part-01\.md \(messages 1-2\), Start: Did a thing\./);
 });
 

@@ -12,19 +12,19 @@ export interface MirrorChange {
   proposed?: string;
 }
 
-const DSH_CONTENT_DIRS = ['skills', 'memory'];
+const UNIFY_CONTENT_DIRS = ['skills', 'memory'];
 const excluded = new Set(['.git', 'node_modules', '.venv', 'venv', 'dist', 'build', '.next', '.turbo', '.npm-cache']);
 const skippedFile = (name: string): boolean => name === '.env' || name.startsWith('.env.') || name.endsWith('.key') || name.endsWith('.pem') ||
   /\.tmp\.\d+\.[0-9a-f]+$/i.test(name);
 
-/** True when a workspace-relative path is outside the DSH mirror scope. */
+/** True when a workspace-relative path is outside the Unify mirror scope. */
 export function mirrorPathExcluded(relPath: string): boolean {
   const normalized = relPath.replaceAll('\\', '/');
   const segments = normalized.split('/').filter(Boolean);
   for (let index = 0; index < segments.length; index += 1) {
     const part = segments[index];
-    // Under .dsh only skills and the repo's memory vault are workspace content; the rest (including the global memory copy) is DSH's own.
-    if (part === '.dsh' && !DSH_CONTENT_DIRS.includes(segments[index + 1])) return true;
+    // Under .unify only skills and the repo's memory vault are workspace content; the rest (including the global memory copy) is Unify's own.
+    if (part === '.unify' && !UNIFY_CONTENT_DIRS.includes(segments[index + 1])) return true;
     if (excluded.has(part) || skippedFile(part)) return true;
   }
   return false;
@@ -59,7 +59,7 @@ async function gitIgnored(root: string, paths: string[]): Promise<Set<string>> {
 }
 
 /**
- * A private copy in extension storage: DSH edits here; VS Code applies reviewed proposals to the real workspace.
+ * A private copy in extension storage: the agent edits here; VS Code applies reviewed proposals to the real workspace.
  * In direct mode the agent edits the real workspace instead, and the baseline is a snapshot taken at the start
  * of each turn, so the agent always sees the current files and review only lists what changed during the turn.
  */
@@ -84,7 +84,7 @@ export class WorkspaceMirror implements vscode.Disposable {
     private readonly onChanges: (changes: MirrorChange[]) => void,
     public readonly direct = false,
   ) {
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new Error('Invalid DSH mirror ID.');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new Error('Invalid Unify mirror ID.');
     this.id = id;
     const workspaceKey = createHash('sha256').update(root.fsPath).digest('hex').slice(0, 16);
     const home = join(storage, 'mirrors', workspaceKey, id);
@@ -98,12 +98,12 @@ export class WorkspaceMirror implements vscode.Disposable {
     const mirror = new WorkspaceMirror(root, storage, id, onChanges, direct);
     if (direct) { mirror.startWatching(); return mirror; }
     await fs.mkdir(mirror.cwd, { recursive: true });
-    const config = vscode.workspace.getConfiguration('dsh');
+    const config = vscode.workspace.getConfiguration('unify');
     const maxFiles = config.get<number>('runtime.maxWorkspaceFiles', 4000);
     const maxBytes = config.get<number>('runtime.maxWorkspaceBytes', 104857600);
     const realRoot = await fs.realpath(root.fsPath);
     const uris = await vscode.workspace.findFiles(new vscode.RelativePattern(root, '**/*'), '**/{.git,node_modules,.venv,venv,dist,build,.next,.turbo,.npm-cache}/**', maxFiles + 1);
-    if (uris.length > maxFiles) throw new Error(`Workspace has more than ${maxFiles} files in the DSH review scope. Increase dsh.runtime.maxWorkspaceFiles or narrow the workspace.`);
+    if (uris.length > maxFiles) throw new Error(`Workspace has more than ${maxFiles} files in the Unify review scope. Increase unify.runtime.maxWorkspaceFiles or narrow the workspace.`);
     const ignored = await gitIgnored(root.fsPath, uris.map(uri => relative(root.fsPath, uri.fsPath).replaceAll('\\', '/')));
     let bytes = 0;
     for (const uri of uris) {
@@ -118,7 +118,7 @@ export class WorkspaceMirror implements vscode.Disposable {
       const realRel = relative(realRoot, realFile);
       if (realRel === '..' || realRel.startsWith('..' + sep)) continue;
       bytes += stat.size;
-      if (bytes > maxBytes) throw new Error(`Workspace exceeds the ${maxBytes} byte DSH review scope. Increase dsh.runtime.maxWorkspaceBytes or narrow the workspace.`);
+      if (bytes > maxBytes) throw new Error(`Workspace exceeds the ${maxBytes} byte Unify review scope. Increase unify.runtime.maxWorkspaceBytes or narrow the workspace.`);
       const destination = join(mirror.cwd, rel);
       await fs.mkdir(resolve(destination, '..'), { recursive: true });
       const open = vscode.workspace.textDocuments.find(doc => doc.uri.toString() === uri.toString() && doc.isDirty);
@@ -210,8 +210,8 @@ export class WorkspaceMirror implements vscode.Disposable {
         if (entry.isSymbolicLink()) continue;
         const full = join(directory, entry.name);
         if (entry.isDirectory()) {
-          if (entry.name === '.dsh') {
-            for (const name of DSH_CONTENT_DIRS) {
+          if (entry.name === '.unify') {
+            for (const name of UNIFY_CONTENT_DIRS) {
               const inner = join(full, name);
               try { if ((await fs.lstat(inner)).isDirectory()) await walk(inner); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
             }

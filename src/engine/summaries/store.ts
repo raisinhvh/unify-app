@@ -34,7 +34,7 @@ export const SUMMARY_TOOL = {
   _meta: { 'anthropic/alwaysLoad': true },
 };
 
-export const SUMMARY_INSTRUCTIONS = 'DSH file summaries: read_file_summaries gives each file\'s purpose and definitions. Check it (several files per call) before reading whole files; find candidates with search first. Read a whole file only to edit it or for exact code the summary lacks, and never twice unless it changed.';
+export const SUMMARY_INSTRUCTIONS = 'Unify file summaries: read_file_summaries gives each file\'s purpose and definitions. Check it (several files per call) before reading whole files; find candidates with search first. Read a whole file only to edit it or for exact code the summary lacks, and never twice unless it changed.';
 
 const MAX_FILE_CHARS = 150_000;
 const BATCH_CHARS = 120_000;

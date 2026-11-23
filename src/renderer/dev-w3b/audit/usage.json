@@ -1,0 +1,10 @@
+[
+  { "wait": 3500 },
+  { "eval": "document.querySelector('.pv-panel-usage').click()" },
+  { "wait": 1200 },
+  { "mark": "usage 67%" },
+  { "eval": "__w3b.setUsage(67)" },
+  { "wait": 1200 },
+  { "mark": "usage 12%" },
+  { "eval": "__w3b.setUsage(12)" }
+]

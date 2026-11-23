@@ -5,15 +5,14 @@
  *   1. `featureDefinitions` (store/features.ts), the Unify feature toggles. Generated, never listed by hand:
  *      a new feature appears in Settings as soon as it is added there (boolean → toggle, string with options →
  *      select, number → stepper), in the section named by its `group`.
- *   2. The settings the engine already had in DSH (SidebarFeatures, accessibility, auto compaction, process
- *      priority). Their labels are DSH's own (media/sidebar.js), shortened where DSH-specific.
+ *   2. The settings the engine already had (SidebarFeatures, accessibility, auto compaction, process priority).
  *
  * A row whose `parent` toggle is off collapses away, so turning a feature off never leaves its options behind.
  * Children are found by id prefix (`motion.organic.rename` hangs under `motion.organic`) plus `extraParents`.
  */
 import { post } from '../../bridge';
 import type { SidebarFeatures } from '../../protocol';
-import { viewState } from '../../store';
+import { setShutdownArmed, shutdownArmed, viewState } from '../../store';
 import { feature, featureDefinitions, setFeature, type FeatureDefinition, type FeatureId, type FeatureValue } from '../../store/features';
 
 export type SectionId =
@@ -27,6 +26,7 @@ export type SectionId =
   | 'usage'
   | 'toolpacks'
   | 'notifications'
+  | 'power'
   | 'accessibility'
   | 'accounts'
   | 'sync'
@@ -45,16 +45,17 @@ export const sections: SectionInfo[] = [
   { id: 'appearance', title: 'Appearance', lede: 'How Unify looks on this device.', keywords: 'theme colour color dark light walnut graphite paper slate moss ink oled density size text' },
   { id: 'motion', title: 'Motion', lede: 'How things move. The real value always changes at once; motion is only for show.' },
   { id: 'chats', title: 'Chats', lede: 'The Chats panel, panes and what each message carries.' },
-  { id: 'agents', title: 'Agents', lede: 'How agents run, review and talk to each other.' },
+  { id: 'agents', title: 'Agents', lede: 'How agents run, review and talk to each other.', keywords: 'models decider smart auto rank subagent profile' },
   { id: 'runtime', title: 'Runtime', lede: 'Tools and speedups for agent processes. Applies to agents started after a change.' },
   { id: 'knowledge', title: 'Knowledge', lede: 'Rules, skills and memory.' },
   { id: 'editor', title: 'Editor', lede: 'The Files screen and its code editor.' },
   { id: 'usage', title: 'Usage', lede: 'Plan limits and the usage meter.' },
   { id: 'toolpacks', title: 'Toolpacks', lede: 'Toolpacks and the Hub.' },
   { id: 'notifications', title: 'Notifications', lede: 'When Unify gets your attention.' },
+  { id: 'power', title: 'Power', lede: 'Shut the PC down when agents finish.', keywords: 'shutdown shut down idle sleep' },
   { id: 'accessibility', title: 'Accessibility', lede: 'Reading comfort and larger targets.' },
   { id: 'accounts', title: 'Accounts', lede: 'Provider accounts Unify can run agents with.', keywords: 'provider sign in login api key claude codex cursor setup' },
-  { id: 'sync', title: 'Sync', lede: 'Back up settings, rules and memory to a private GitHub repository.', keywords: 'github backup upload download' },
+  { id: 'sync', title: 'Sync', lede: 'Back up settings, rules and memory to a private GitHub repository.', keywords: 'github backup upload download token sign in login' },
   { id: 'about', title: 'About', lede: 'Version, updates and setup.', keywords: 'version update release setup wizard data folder' },
 ];
 
@@ -95,6 +96,7 @@ const groupSection: Record<FeatureDefinition['group'], SectionId> = {
   Usage: 'usage',
   Toolpacks: 'toolpacks',
   Notifications: 'notifications',
+  Power: 'power',
 };
 
 /** Parents the id prefix cannot express. */
@@ -105,7 +107,25 @@ const extraParents: Partial<Record<FeatureId, FeatureId>> = {
 /** Ranges for number features (default 0–999, step 1). */
 const numberRanges: Partial<Record<FeatureId, { min: number; max: number; step?: number }>> = {
   'agents.maxParallel': { min: 1, max: 16 },
+  'agents.stuckCommandMinutes': { min: 0, max: 120 },
   'chats.maxPerProject': { min: 1, max: 50 },
+};
+
+/** Shorter Settings wording where the definition's own text is long. */
+const descriptionOverrides: Partial<Record<FeatureId, string>> = {
+  'power.shutdownWhenIdle': 'Once every chat and subagent is idle, counts down 60 s and turns the PC off. Turns itself off after.',
+  'power.rememberArmed': 'Keep it armed if Unify restarts.',
+};
+
+/**
+ * Features whose switch shows live engine state instead of the stored value. Turning on
+ * `power.shutdownWhenIdle` is what arms the shutdown, so its switch follows the armed state.
+ */
+const liveFeatures: Partial<Record<FeatureId, Pick<SettingRow, 'read' | 'write'>>> = {
+  'power.shutdownWhenIdle': {
+    read: () => shutdownArmed(),
+    write: value => setShutdownArmed(!!value),
+  },
 };
 
 /** Labels for option values; anything missing is humanised ("same-chat" → "Same chat"). */
@@ -142,7 +162,7 @@ function featureRows(): SettingRow[] {
       key: `feature:${id}`,
       section: groupSection[definition.group],
       label: definition.label,
-      description: definition.description,
+      description: descriptionOverrides[id] ?? definition.description,
       kind,
       options: definition.options?.map(value => ({ value, label: optionLabels[value] ?? humanize(value) })),
       min: range.min,
@@ -151,11 +171,12 @@ function featureRows(): SettingRow[] {
       parent: featureParent(id),
       read: () => feature<FeatureValue>(id),
       write: value => setFeature(id, value),
+      ...liveFeatures[id],
     };
   });
 }
 
-/* 2. Engine settings that already exist (DSH). */
+/* 2. Engine settings that already exist. */
 
 type EngineFeatureKey = keyof SidebarFeatures;
 
@@ -191,7 +212,7 @@ function engineFeatureRows(): SettingRow[] {
   }));
 }
 
-/* Accessibility (DSH SidebarAccessibility; the renderer starts with an empty object until customizeState arrives). */
+/* Accessibility (SidebarAccessibility; the renderer starts with an empty object until customizeState arrives). */
 
 type Accessibility = typeof viewState.accessibility;
 

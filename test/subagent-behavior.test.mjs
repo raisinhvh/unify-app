@@ -27,10 +27,11 @@ function fixture(mode = 'edit') {
   const events = [];
   const host = Object.create(ExtensionHost.prototype);
   Object.assign(host, {
-    childRuns: new Set(), sidebar: { postMessage: event => events.push(event) },
+    childRuns: new Set(), placesByChat: new Map(), sidebar: { postMessage: event => events.push(event) },
     subagentProfiles: () => [{ name: 'test-agent', model: 'test-model', mode }],
     availableModel: () => ({ name: 'test-model', enabled: true, backend: 'test', provider: 'deepseek-official' }),
-    resolveRoute: async () => ({ model: {} }), releaseRuntime: async () => {}, mcpServers: () => [], summariesOn: () => false, autoCompactAt: () => undefined,
+    resolveRoute: async () => ({ model: {} }), releaseRuntime: async () => {}, mcpServers: () => [],
+    summariesOn: () => false, memorySettings: () => ({ enabled: false }), autoCompactAt: () => undefined,
   });
   const chat = {
     record: { id: 'chat', modelName: 'test-model' }, turnEntryId: 'turn', mirror: { cwd: process.cwd() },
@@ -97,7 +98,7 @@ test('an ACP subagent past the compaction threshold is stopped, checkpoints and 
   const result = await host.runSubagent(chat, { agent: 'test-agent', task: 'Do two steps' });
   assert.equal(interrupted, 1);
   assert.deepEqual(prompts.map(item => item.id), ['session-1', 'session-1', 'session-2']);
-  assert.match(prompts[1].prompt, /^DSH stopped your last step[\s\S]*CHECKPOINT/);
+  assert.match(prompts[1].prompt, /^Unify stopped your last step[\s\S]*CHECKPOINT/);
   assert.match(prompts[2].prompt, /Do two steps[\s\S]*- Next: step 2/);
   assert.equal(result.text, 'All steps done.');
 });
@@ -130,9 +131,11 @@ test('cancelling a subagent reports its reply so far and the tools it ran', asyn
   } });
   const entry = { id: 'task-1', label: 'test-agent', afterTurn: 'resume', done: false };
   chat.background = new Map([[entry.id, entry]]);
+  let startupError;
   entry.finished = host.runSubagentCore(chat, host.subagentProfiles()[0], 'Build it', [], run => { entry.run = run; })
-    .then(result => { entry.done = true; entry.result = result; });
-  while (!release) await new Promise(resolve => setTimeout(resolve, 5));
+    .then(result => { entry.done = true; entry.result = result; }, error => { startupError = error; });
+  while (!release && !startupError && !entry.done) await new Promise(resolve => setTimeout(resolve, 5));
+  if (startupError) throw startupError;
   const report = await host.cancelSubagent(chat, { id: 'task-1' });
   assert.match(report.text, /^Cancelled background subagent task-1 \(test-agent\)\.\n\nThe subagent was cancelled\.\n\nIts reply so far:\nBuilt the base part\.\n\nTools it ran:\n- roblox_execute$/);
   assert.equal(chat.background.size, 0);

@@ -9,6 +9,10 @@
  * The dispatcher (./index.ts) answers them; every reply echoes the request's `requestId`.
  */
 
+import type { GithubAuth } from '../github';
+
+export type { GithubAuth };
+
 /** A request from the renderer: an open bag of fields, keyed by `type`. */
 export interface UnifyRequestMessage {
   type: string;
@@ -20,16 +24,33 @@ export type UnifyReply = (message: unknown) => void;
 
 /**
  * Engine facts a request may need. `workspaceRoot` is the open folder; the rest are optional so tests can
- * point the dispatcher at a temporary home instead of the user's real `~/.dsh`.
+ * point the dispatcher at a temporary home instead of the user's real `~/.unify`.
+ *
+ * The `refresh*`/`openExternal`/`getGithubAuth` callbacks let a request reach engine services that only the
+ * extension (or Electron host) owns. A missing callback is reported, never silently ignored.
  */
 export interface UnifyRequestContext {
   workspaceRoot: string | undefined;
-  /** `~/.dsh` by default. */
-  dshHome?: string;
-  /** `~/.dsh/unify` by default. */
+  /** Extra open folders, watched alongside `workspaceRoot`. */
+  workspaceRoots?: string[];
+  /** Unify's data home (`~/.unify`) by default. */
+  unifyHome?: string;
+  /** Unify's state folder; the same as `unifyHome` by default. */
   unifyRoot?: string;
   /** App version reported by getAppInfo; read from package.json when missing. */
   version?: string;
+  /** Rebuilds and posts `modelState` (the extension's `refreshModels`). */
+  refreshModelState?: () => void;
+  /** Refreshes one account's usage, or all of them (the extension's `refreshUsage`). */
+  refreshUsageState?: (accountId?: string) => void;
+  /** Rebuilds and posts `toolpacksState` (the extension's `postToolpacks`). */
+  refreshToolpacks?: () => void;
+  /** Adds a freshly installed pack file to the registry so `refreshToolpacks` sees it. */
+  installToolpack?: (sourcePath: string) => Promise<void>;
+  /** Opens a URL in the user's browser. */
+  openExternal?: (url: string) => void | Promise<void>;
+  /** The signed-in GitHub account, if any. */
+  getGithubAuth?: () => Promise<GithubAuth | undefined>;
 }
 
 /* ---------------------------------------------------------------------------------------------------------------
@@ -131,6 +152,7 @@ export type KnowledgeRequest =
   | { type: 'removeKnowledge'; requestId: string; id: string }
   | { type: 'setKnowledgeAudience'; id: string; audiences: Audience[] }
   | { type: 'importSkillFolder'; requestId: string; scope: KnowledgeScope; name: string; files: ImportedFile[] }
+  | { type: 'undoKnowledgeChange'; id: string }
   | { type: 'openKnowledge'; id: string; file?: string };
 
 export type KnowledgeReply =
@@ -196,22 +218,11 @@ export interface ToolStatus {
   required: boolean;
 }
 
-export interface DshImportScan {
-  toolpacks: string[];
-  rules: number;
-  skills: number;
-  memoryNotes: number;
-}
-
-export type ImportKind = 'toolpacks' | 'knowledge';
-
 export interface SetupSummary {
   accounts: string[];
   project?: { name: string; path: string };
   tools: string[];
   theme: string;
-  toolpacks: 'imported' | 'skipped';
-  knowledge: 'imported' | 'skipped';
 }
 
 export interface SetupState {

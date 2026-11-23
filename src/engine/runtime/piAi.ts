@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { SELF_HOSTED } from './selfHosted';
 
 /**
- * The OpenAI-compatible endpoint of each provider DSH routes through llm-pi-ai. OpenRouter's serves every model it
+ * The OpenAI-compatible endpoint of each provider Unify routes through llm-pi-ai. OpenRouter's serves every model it
  * lists; OpenCode Go's serves its Chat Completions models, which are most of the Go lineup. Mistral's catalog models
  * use pi-ai's native Mistral adapter; only a model missing from the catalog falls back to its OpenAI-compatible endpoint.
  * A Vibe (Le Chat Pro or student) subscription key and a La Plateforme API key both authenticate the same endpoint.
@@ -29,12 +29,12 @@ export function isPiAiProvider(provider: string): boolean {
 }
 
 /**
- * Model ids in `provider`'s catalog of the pi-ai copy the DSH at `dshBin` loads, found the way Node resolves it
- * (dsh-llm-pi-ai's own node_modules first, then each ancestor's). Undefined when no catalog can be read.
+ * Model ids in `provider`'s catalog of the pi-ai copy the agent runtime at `runtimeBin` loads, found the way Node
+ * resolves it (dsh-llm-pi-ai's own node_modules first, then each ancestor's). Undefined when no catalog can be read.
  */
-export async function piAiCatalog(provider: string, dshBin: string): Promise<Set<string> | undefined> {
+export async function piAiCatalog(provider: string, runtimeBin: string): Promise<Set<string> | undefined> {
   if (!isPiAiProvider(provider) || provider === SELF_HOSTED) return undefined;
-  for (let dir = dirname(dshBin); ; dir = dirname(dir)) {
+  for (let dir = dirname(runtimeBin); ; dir = dirname(dir)) {
     for (const base of [join(dir, 'node_modules', '@deepseek-ai', 'dsh-llm-pi-ai', 'node_modules'), join(dir, 'node_modules')]) {
       let text: string;
       try { text = await readFile(join(base, ...CATALOG_DIR, `${provider}.json`), 'utf8'); }
@@ -49,7 +49,7 @@ export async function piAiCatalog(provider: string, dshBin: string): Promise<Set
 }
 
 /**
- * The llm-pi-ai entry for a DSH patch. dsh-base mounts llm-pi-ai with no routes, so OpenRouter and OpenCode Go have
+ * The llm-pi-ai entry for an agent-runtime patch. dsh-base mounts llm-pi-ai with no routes, so OpenRouter and OpenCode Go have
  * no adapter until this declares one. A model missing from the installed catalog (or when the catalog cannot be read)
  * is declared by hand on the provider's OpenAI-compatible endpoint, with the model's effort choices as its reasoning
  * levels.

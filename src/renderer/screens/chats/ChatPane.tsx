@@ -10,13 +10,13 @@
  * Pop out is a stub until the backend has a window API for it.
  */
 import { createSignal, For, Show, type JSX } from 'solid-js';
-import { Button, Icon, IconButton, Loader, Menu, Select, actionLabel, actionLoader, chatAction, type MenuEntry } from '../../components';
+import { Button, Icon, IconButton, Loader, Menu, actionLabel, actionLoader, chatAction, type MenuEntry } from '../../components';
 import { Collapse } from '../../motion';
 import { post } from '../../bridge';
 import type { PaneContext } from '../../shell/PaneGrid';
 import { markRead, viewState } from '../../store';
+import { ModelPicker } from '../../components/ModelPicker';
 import { Composer } from './Composer';
-import { modelOptions, selectedModelLabel, selectedModelValue, selectModel } from './models';
 import { Timeline } from './Timeline';
 import './chat-pane.css';
 
@@ -37,6 +37,8 @@ function StatusLine(props: { chatId: string }): JSX.Element {
   );
 }
 
+const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
+
 /** Pending edits from the engine (DSH renderChanges). Diffs are global in the protocol, so only the focused pane shows them. */
 function ChangesBar(props: { visible: boolean }): JSX.Element {
   const [expanded, setExpanded] = createSignal(false);
@@ -49,9 +51,26 @@ function ChangesBar(props: { visible: boolean }): JSX.Element {
         <div class="changes-head">
           <button type="button" class="changes-toggle" aria-expanded={expanded()} onClick={() => setExpanded(!expanded())}>
             <Icon name="chevronRight" size={12} style={{ rotate: expanded() ? '90deg' : '0deg' }} class="changes-chevron" />
-            <span>{pending().length === 1 ? '1 file changed' : `${pending().length} files changed`}</span>
-            <span class="diff-add">+{additions()}</span>
-            <span class="diff-del">−{deletions()}</span>
+            <Show
+              when={pending().length <= 2}
+              fallback={
+                <span class="changes-file">
+                  <span class="changes-name">Multiple files</span>
+                  <span class="diff-add">+{additions()}</span>
+                  <span class="diff-del">−{deletions()}</span>
+                </span>
+              }
+            >
+              <For each={pending()}>
+                {diff => (
+                  <span class="changes-file" title={diff.path}>
+                    <span class="changes-name">{fileName(diff.path)}</span>
+                    <span class="diff-add">+{diff.additions || 0}</span>
+                    <span class="diff-del">−{diff.deletions || 0}</span>
+                  </span>
+                )}
+              </For>
+            </Show>
           </button>
           <Button variant="text" onClick={() => post({ type: 'reviewAll' })}>Review</Button>
           <Button variant="text" onClick={() => post({ type: 'rejectAll' })}>Reject all</Button>
@@ -139,14 +158,13 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
           </h3>
         </Show>
         <span class="chat-pane-spacer" onPointerDown={event => props.context.startDrag(event)} />
-        <Select
+        <ModelPicker
           class="chat-pane-model"
-          value={selectedModelValue()}
-          display={selectedModelLabel()}
-          options={modelOptions()}
-          onChange={value => selectModel(value, chatId())}
+          chatId={chatId()}
+          variant="compact"
+          effortSpeed={false}
           placement="bottom-end"
-          title="Choose model"
+          title="Model"
         />
         <IconButton icon="pop" label="Pop out (coming soon)" size="small" disabled />
         <IconButton ref={setMoreAnchor} icon="more" label="More" size="small" active={moreOpen()} onClick={() => setMoreOpen(!moreOpen())} />

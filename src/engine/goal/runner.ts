@@ -51,7 +51,7 @@ export async function runJob(job: JobState, host: JobHost): Promise<void> {
     if ('error' in parsed) {
       const error = parsed.error;
       // The repair prompt has no decisions log, so a turn that logged your message reruns the full drafting prompt.
-      parsed = parseChecklist(await turn(runTurn, noted => noted ? prompt() : repairChecklistPrompt(error), '/job · fixing checklist format'));
+      parsed = parseChecklist(await turn(runTurn, noted => noted ? prompt() : repairChecklistPrompt(error), 'Fixing the job checklist format'));
     }
     if ('error' in parsed) { await stop(`The agent did not return a checklist: ${parsed.error}`); return false; }
     if ('blocked' in parsed) { await stop(`Blocked: ${parsed.blocked}`); return false; }
@@ -61,10 +61,10 @@ export async function runJob(job: JobState, host: JobHost): Promise<void> {
   };
   try {
     checkpoint();
-    if (!await draft(() => draftPrompt(job), '/job · drafting checklist')) return;
+    if (!await draft(() => draftPrompt(job), 'Drafting the job checklist')) return;
     while (true) {
       const answers = await step(() => host.ask([{
-        header: 'Checklist', question: 'Approve the job checklist shown in the job bar? Approving also lets DSH run its check commands without asking.',
+        header: 'Checklist', question: 'Approve the job checklist shown in the job bar? Approving also lets Unify run its check commands without asking.',
         options: [{ label: 'Approve', description: 'Start working' }, { label: 'Stop job', description: 'End the job without working' }],
       }]));
       // A message sent instead of answering is checklist feedback.
@@ -75,7 +75,7 @@ export async function runJob(job: JobState, host: JobHost): Promise<void> {
       if (answer === 'Approve') break;
       addDecision(job, 'Checklist feedback', answer);
       await update();
-      if (!await draft(() => revisePrompt(job, answer), '/job · revising checklist')) return;
+      if (!await draft(() => revisePrompt(job, answer), 'Revising the job checklist')) return;
     }
     for (let round = 1; round <= job.maxRounds; round++) {
       checkpoint();
@@ -83,7 +83,7 @@ export async function runJob(job: JobState, host: JobHost): Promise<void> {
       job.round = round;
       await update();
       const failingIds = job.criteria.filter(criterion => criterion.status === 'fail').map(criterion => criterion.id);
-      const label = `/job · round ${round}${round > 1 ? ` · fixing ${failingIds.join(', ')}` : ''}`;
+      const label = `Round ${round} of the job${round > 1 ? `, fixing ${failingIds.join(', ')}` : ''}`;
       const reply = await turn(runTurn, () => round === 1 ? workPrompt(job) : fixPrompt(job), label);
       const blocked = parseBlocked(reply);
       if (blocked) { await stop(`Blocked: ${blocked}`); return; }
@@ -96,7 +96,7 @@ export async function runJob(job: JobState, host: JobHost): Promise<void> {
         checks.push({ id: criterion.id, command: criterion.check, ...result });
       }
       const ids = job.criteria.map(criterion => criterion.id);
-      const reviewLabel = `/job · review ${round}`;
+      const reviewLabel = `Reviewing job round ${round}`;
       let verdict = parseVerdict(await turn(review, () => verifyPrompt(job, checks), reviewLabel), ids);
       if ('error' in verdict) {
         const note = `Your previous reply had invalid verdict JSON (${verdict.error}). Return the required JSON block.`;

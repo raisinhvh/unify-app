@@ -6,24 +6,24 @@
  *   search      while the field has text, a results page lists matching rows from every section, plus links to
  *               hand-drawn sections whose keywords match ("walnut" → Appearance)
  *
- * Rows are generated from catalog.ts (featureDefinitions plus the engine's own settings); Appearance, Accounts,
- * Sync and About add hand-drawn parts. Every change is posted at once and shows as soon as the engine echoes it.
+ * Rows are generated from catalog.ts (featureDefinitions plus the engine's own settings); Appearance, Agents,
+ * Power, Accounts, Sync and About add hand-drawn parts. Every change is posted at once and shows as soon as the engine echoes it.
  *
  * Two ways to mount it:
  *   <SettingsScreen />               nav inside the content card (default)
  *   <SettingsPanel /> + <SettingsScreen nav={false} />   nav in the Shell's side-panel slot, as in Figma
  * Both share the section and query signals below.
  */
-import { createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, type JSX } from 'solid-js';
 import { post } from '../../bridge';
-import { Button, Icon, IconButton, Toggle } from '../../components';
+import { Button, Icon, IconButton, ModelPicker, ProviderGlyph, Toggle } from '../../components';
 import { Collapse, createSpring, pressable } from '../../motion';
 import { readPersisted, writePersisted } from '../../persist';
 import { navigate } from '../../router';
 import { viewState } from '../../store';
-import { providerColor, providerNames } from '../../store/providers';
+import { providerNames } from '../../store/providers';
 import { relativeAge } from '../chats/projects';
-import { appInfo, checkForUpdates, installUpdate, requestAppInfo } from './adapters';
+import { appInfo, canCheckForUpdates, checkForUpdates, installUpdate, requestAppInfo } from './adapters';
 import { rowMatches, rowsIn, sectionById, sectionMatches, sections, settingRows, type SectionId } from './catalog';
 import { PageStack } from './PageStack';
 import { SettingRows } from './SettingControls';
@@ -227,11 +227,19 @@ function AccountsPage(): JSX.Element {
       <For each={accounts()} fallback={<p class="settings-empty type-caption">No accounts yet. Add one in Providers.</p>}>
         {account => (
           <InfoRow
-            leading={<span class="account-swatch" style={{ background: providerColor(account.provider) }} />}
+            leading={<ProviderGlyph provider={account.provider} size={16} />}
             label={account.label}
-            caption={[providerNames[account.provider] ?? account.provider, account.email, account.isDefault ? 'default' : '']
-              .filter(Boolean)
-              .join(' · ')}
+            caption={
+              <span class="setting-caption-parts">
+                <span>{providerNames[account.provider] ?? account.provider}</span>
+                <Show when={account.email}>
+                  <span class="setting-caption-muted">{account.email}</span>
+                </Show>
+                <Show when={account.isDefault}>
+                  <span class="setting-caption-muted">Default</span>
+                </Show>
+              </span>
+            }
           >
             <Show when={signedOut(account.id)} fallback={<span class="settings-status type-caption">Signed in</span>}>
               <span class="settings-status warn type-caption">Signed out</span>
@@ -241,7 +249,7 @@ function AccountsPage(): JSX.Element {
         )}
       </For>
       <InfoRow
-        leading={<span class="account-swatch" style={{ background: providerColor('cursor-acp') }} />}
+        leading={<ProviderGlyph provider="cursor-acp" size={16} />}
         label="Cursor"
         caption={viewState.cursor?.label || 'Not connected'}
       >
@@ -250,6 +258,86 @@ function AccountsPage(): JSX.Element {
         </Show>
       </InfoRow>
       <p class="settings-note type-caption">Add, remove and set default accounts in Providers.</p>
+    </>
+  );
+}
+
+/** GitHub sign-in (viewState.github): the GitHub CLI's login, or a pasted personal access token. */
+function GitHubAccount(): JSX.Element {
+  const github = () => viewState.github;
+  const signedIn = () => !!github()?.signedIn;
+  const [token, setToken] = createSignal('');
+  const [saving, setSaving] = createSignal(false);
+  const [checking, setChecking] = createSignal(false);
+  // Any new state from the engine ends a save or a CLI check.
+  createEffect(on(() => [github()?.signedIn, github()?.login, github()?.error, github()?.source], () => {
+    setSaving(false);
+    setChecking(false);
+  }, { defer: true }));
+  const saveToken = () => {
+    const value = token().trim();
+    if (!value || saving()) return;
+    setSaving(true);
+    post({ type: 'githubSetToken', token: value });
+    setToken('');
+  };
+  const sourceCaption = () => (github()?.source === 'token' ? 'From a pasted token' : 'From the GitHub CLI');
+  return (
+    <>
+      <SectionHead title="GitHub account" />
+      <InfoRow
+        label={signedIn() ? <>Signed in as <span class="settings-strong">{github()?.login ?? 'GitHub'}</span></> : 'Not signed in'}
+        caption={signedIn() ? sourceCaption() : 'Sign in with the GitHub CLI, or paste a personal access token.'}
+      >
+        <Show
+          when={signedIn()}
+          fallback={
+            <Button
+              variant="text"
+              icon="refresh"
+              disabled={checking()}
+              onClick={() => {
+                setChecking(true);
+                post({ type: 'githubRefresh' });
+              }}
+            >
+              {checking() ? 'Checking…' : 'Check GitHub CLI again'}
+            </Button>
+          }
+        >
+          <Show when={github()?.source === 'token'}>
+            <Button variant="text" onClick={() => post({ type: 'githubSignOut' })}>Sign out</Button>
+          </Show>
+        </Show>
+      </InfoRow>
+      <Collapse open={!signedIn()}>
+        <div class="setting-row github-token-row">
+          <div class="setting-row-text">
+            <label class="settings-field">
+              <input
+                type="password"
+                placeholder="Paste a personal access token"
+                autocomplete="off"
+                spellcheck={false}
+                value={token()}
+                onInput={event => setToken(event.currentTarget.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') saveToken();
+                }}
+              />
+            </label>
+            <div class="setting-row-description type-caption">Create a classic token with the repo and read:user scopes.</div>
+          </div>
+          <div class="setting-row-control">
+            <Button variant="secondary" disabled={!token().trim() || saving()} onClick={saveToken}>
+              {saving() ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
+        </div>
+      </Collapse>
+      <Collapse open={!!github()?.error}>
+        <p class="settings-calm-error type-caption">{github()?.error}</p>
+      </Collapse>
     </>
   );
 }
@@ -270,10 +358,12 @@ function SyncPage(): JSX.Element {
   };
   return (
     <>
-      <SectionHead title="GitHub" />
+      <GitHubAccount />
+      <div class="settings-gap" />
+      <SectionHead title="Backup" />
       <InfoRow
-        label={sync()?.connected ? sync()!.account ?? 'Connected' : 'GitHub'}
-        caption={sync()?.connected ? sync()!.repo ?? status() : 'Connect to create a private dsh-sync repository.'}
+        label={sync()?.connected ? sync()!.account ?? 'Connected' : 'Backup repository'}
+        caption={sync()?.connected ? sync()!.repo ?? status() : 'Connect to create a private backup repository on GitHub.'}
       >
         <Show
           when={sync()?.connected}
@@ -319,11 +409,11 @@ function updateCaption(): string {
     case 'checking':
       return 'Checking…';
     case 'current':
-      return `Up to date · checked ${relativeAge(update.checkedAt)}`;
+      return `Up to date, checked ${relativeAge(update.checkedAt)}`;
     case 'available':
       return `Version ${update.version} is available.`;
     case 'downloading':
-      return `Downloading ${update.version} · ${Math.round(update.progress * 100)}%`;
+      return `Downloading ${update.version}, ${Math.round(update.progress * 100)}%`;
     case 'ready':
       return `Version ${update.version} is ready. Restart to install.`;
     case 'error':
@@ -344,23 +434,124 @@ function AboutPage(): JSX.Element {
         <Show
           when={update()?.state === 'available' || update()?.state === 'ready'}
           fallback={
-            <Button variant="text" icon="refresh" disabled={update()?.state === 'checking' || update()?.state === 'downloading'} onClick={checkForUpdates}>
-              Check now
-            </Button>
+            <Show when={canCheckForUpdates()}>
+              <Button variant="text" icon="refresh" disabled={update()?.state === 'checking' || update()?.state === 'downloading'} onClick={checkForUpdates}>
+                Check for updates
+              </Button>
+            </Show>
           }
         >
           <Button variant="text" onClick={installUpdate}>{update()?.state === 'ready' ? 'Restart' : 'Install'}</Button>
         </Show>
       </InfoRow>
       <SettingRows rows={rowsIn('about')} />
-      <InfoRow label="Data folder" caption="Settings, rules and memory. Shared with DSH.">
-        <span class="settings-value type-mono" title={appInfo()?.dataFolder}>{appInfo()?.dataFolder ?? '~/.dsh'}</span>
+      <InfoRow label="Data folder" caption="Settings, rules and memory.">
+        <span class="settings-value type-mono" title={appInfo()?.dataFolder}>~/.unify</span>
       </InfoRow>
       <div class="settings-gap" />
       <SectionHead title="Setup" />
       <InfoRow label="Run setup again" caption="Providers, project folder, tools and extras. Nothing is lost.">
         <Button variant="text" onClick={() => navigate('setup')}>Open setup</Button>
       </InfoRow>
+    </>
+  );
+}
+
+/* Models (Agents). */
+
+function AgentsPage(): JSX.Element {
+  const smartAuto = () => !!viewState.features.smartAuto;
+  const ranks = () => viewState.smartAutoRanks ?? [];
+  const profiles = () => viewState.subagentProfiles ?? [];
+  const setRank = (index: number, model: string) => {
+    const next = ranks().map((rank, position) => (position === index ? { ...rank, model } : rank));
+    post({ type: 'saveSmartAutoRanks', ranks: next });
+  };
+  return (
+    <>
+      <SettingRows rows={rowsIn('agents')} />
+      <div class="settings-gap" />
+      <SectionHead title="Models" />
+      <Collapse open={smartAuto()}>
+        <InfoRow label="Decider model" caption="Picks a model and effort for each Smart Auto message.">
+          <ModelPicker
+            variant="regular"
+            smartAuto={false}
+            placement="bottom-end"
+            value={viewState.deciderModel?.model}
+            placeholder="Choose a model"
+            onChange={model => post({ type: 'saveDeciderModel', deciderModel: { ...viewState.deciderModel, model } })}
+          />
+        </InfoRow>
+        <For each={ranks()}>
+          {(rank, index) => (
+            <InfoRow label={`Smart Auto rank ${index() + 1}`} caption={rank.note || (index() === 0 ? 'Smartest' : undefined)}>
+              <ModelPicker
+                variant="regular"
+                smartAuto={false}
+                placement="bottom-end"
+                value={rank.model}
+                placeholder="Choose a model"
+                onChange={model => setRank(index(), model)}
+              />
+            </InfoRow>
+          )}
+        </For>
+      </Collapse>
+      <For each={profiles()} fallback={<p class="settings-empty type-caption">No subagent profiles yet.</p>}>
+        {profile => (
+          <InfoRow label={profile.name} caption={profile.description || (profile.mode === 'edit' ? 'Can edit files' : 'Read-only')}>
+            <ModelPicker
+              variant="regular"
+              smartAuto={false}
+              placement="bottom-end"
+              value={profile.model}
+              placeholder="Choose a model"
+              onChange={model => post({ type: 'saveSubagent', originalName: profile.name, profile: { ...profile, model } })}
+            />
+          </InfoRow>
+        )}
+      </For>
+    </>
+  );
+}
+
+interface ShutdownStatus {
+  label: string;
+  caption: string;
+  warn?: boolean;
+}
+
+function shutdownStatus(): ShutdownStatus | undefined {
+  const shutdown = viewState.shutdown;
+  if (!shutdown) return undefined;
+  // The store writes 'armed' / 'idle' / 'failed'; a reload starts from the engine's own phases
+  // ('waiting', 'settling', 'shuttingDown', 'disarmed'), so anything armed that is not counting down is waiting.
+  switch (shutdown.phase) {
+    case 'countdown':
+      return { label: `Shutting down in ${shutdown.secondsLeft ?? 0} s`, caption: 'Every chat and subagent is idle.', warn: true };
+    case 'shuttingDown':
+      return { label: 'Shutting down', caption: 'Saving chats, then turning the PC off.', warn: true };
+    case 'failed':
+      return { label: 'The shutdown did not go through', caption: 'The system refused it. Turn the switch on again to retry.', warn: true };
+    default:
+      return shutdown.armed ? { label: 'Armed', caption: 'Waiting for every chat and subagent to finish.' } : undefined;
+  }
+}
+
+function PowerPage(): JSX.Element {
+  // While it only waits, the switch above disarms; a countdown gets its own Cancel.
+  const cancellable = () => viewState.shutdown?.phase === 'countdown';
+  return (
+    <>
+      <SettingRows rows={rowsIn('power')} />
+      <Collapse open={!!shutdownStatus()}>
+        <InfoRow label={<span classList={{ warn: !!shutdownStatus()?.warn }}>{shutdownStatus()?.label}</span>} caption={shutdownStatus()?.caption}>
+          <Show when={cancellable()}>
+            <Button variant="text" onClick={() => post({ type: 'cancelShutdown' })}>Cancel shutdown</Button>
+          </Show>
+        </InfoRow>
+      </Collapse>
     </>
   );
 }
@@ -375,6 +566,10 @@ function SectionPage(props: { id: SectionId }): JSX.Element {
     switch (props.id) {
       case 'appearance':
         return <AppearancePage />;
+      case 'agents':
+        return <AgentsPage />;
+      case 'power':
+        return <PowerPage />;
       case 'accounts':
         return <AccountsPage />;
       case 'sync':

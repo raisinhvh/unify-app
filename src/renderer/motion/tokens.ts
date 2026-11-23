@@ -11,6 +11,7 @@
  *   Sheet      large surfaces sliding in, dragged panes settling
  *   Modal      full-window layers
  */
+import { feature } from '../store/features';
 
 export interface SpringToken {
   period: number;
@@ -33,6 +34,15 @@ export const springs = {
 
 export type SpringTokenName = keyof typeof springs;
 
+/**
+ * Resolves a token name, then calms the spring while `motion.bounce` is off: overshooting presets
+ * (damping ratio below 1) are clamped to 1 so they settle without wobble, keeping the same period.
+ * Read at spring creation/start, so toggling the feature takes effect on the next animation.
+ */
 export function resolveToken(token: SpringToken | SpringTokenName): SpringToken {
-  return typeof token === 'string' ? springs[token] : token;
+  const resolved = typeof token === 'string' ? springs[token] : token;
+  if (resolved.damping < 1 && !feature<boolean>('motion.bounce')) {
+    return { period: resolved.period, damping: 1 };
+  }
+  return resolved;
 }

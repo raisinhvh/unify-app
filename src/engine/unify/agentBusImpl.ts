@@ -11,6 +11,9 @@ import { getUnifyFeature, type AgentMessagingScope } from './settings';
 
 type AgentBusListener = (event: AgentBusEvent) => void;
 
+/** Each inbox keeps only the newest messages, so a long-running agent cannot grow it forever. */
+const MAX_INBOX_MESSAGES = 100;
+
 const roster = new Map<string, AgentInfo>();
 const inboxes = new Map<string, AgentMessage[]>();
 const listeners = new Set<AgentBusListener>();
@@ -73,6 +76,33 @@ function requireAgent(agentId: string): AgentInfo {
   return agent;
 }
 
+/** Adds a message to an inbox, dropping the oldest when the inbox is full. */
+function deliver(toId: string, message: AgentMessage): void {
+  const inbox = inboxes.get(toId) ?? [];
+  inbox.push(message);
+  if (inbox.length > MAX_INBOX_MESSAGES) inbox.splice(0, inbox.length - MAX_INBOX_MESSAGES);
+  inboxes.set(toId, inbox);
+  emit({ kind: 'message', message: { ...message } });
+}
+
+/** Tells each sender that a stopped agent never read their message. */
+function returnUndelivered(stopped: AgentInfo, messages: AgentMessage[]): void {
+  for (const message of messages) {
+    const sender = roster.get(message.fromId);
+    if (!sender) continue;
+    deliver(sender.id, {
+      id: randomUUID(),
+      fromId: stopped.id,
+      fromName: stopped.name,
+      toId: sender.id,
+      toName: sender.name,
+      text: `Message not delivered: "${stopped.name}" stopped before reading it. Your message was: ${message.text}`,
+      sentAt: Date.now(),
+      replyToId: message.id,
+    });
+  }
+}
+
 export const agentBus: AgentBus = {
   register(agent: AgentInfo): void {
     if (!agent.id) throw new Error('An agent needs an id before it can be registered.');
@@ -90,8 +120,12 @@ export const agentBus: AgentBus = {
   },
 
   unregister(agentId: string): void {
-    if (!roster.delete(agentId)) return;
+    const agent = roster.get(agentId);
+    if (!agent || !roster.delete(agentId)) return;
+    const undelivered = inboxes.get(agentId) ?? [];
     inboxes.delete(agentId);
+    // Deliver the bounce before the roster event so the roster stays the last thing listeners see.
+    returnUndelivered(agent, undelivered);
     emitRoster();
   },
 
@@ -118,10 +152,7 @@ export const agentBus: AgentBus = {
       sentAt: Date.now(),
       ...(replyToId ? { replyToId } : {}),
     };
-    const inbox = inboxes.get(to.id) ?? [];
-    inbox.push(message);
-    inboxes.set(to.id, inbox);
-    emit({ kind: 'message', message: { ...message } });
+    deliver(to.id, message);
     return message;
   },
 

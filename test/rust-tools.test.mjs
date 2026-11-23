@@ -19,7 +19,7 @@ try {
   activateRustTools(bin);
   const env = withRustTools({ Path: 'existing', BASH_ENV: 'user-env' });
   assert.equal(env.Path, `${bin}${delimiter}existing`);
-  assert.equal(env.DSH_USER_BASH_ENV, 'user-env');
+  assert.equal(env.UNIFY_USER_BASH_ENV, 'user-env');
   assert.equal(env.BASH_ENV, join(storage, 'dependencies', 'rust-tools', 'bash-env.sh'));
   assert.match(readFileSync(env.BASH_ENV, 'utf8'), /case \$- in/);
 } finally {

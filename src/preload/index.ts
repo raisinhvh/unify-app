@@ -2,7 +2,7 @@
  * Preload bridge for the Unify renderer.
  *
  * Exposes `window.unify` (the documented API), an optional UI-request channel
- * for the new renderer, and `acquireVsCodeApi()` so the legacy DSH sidebar
+ * for the new renderer, and `acquireVsCodeApi()` so the legacy sidebar
  * runs unchanged. Engine messages are also re-posted on `window` because the
  * legacy sidebar listens with `window.addEventListener('message', ...)`.
  */
@@ -25,7 +25,7 @@ ipcRenderer.on('unify:message', (_event, message: HostMessage) => {
       console.error('[unify] message listener failed', error);
     }
   }
-  // The legacy DSH sidebar was written for a VS Code webview, where the host's
+  // The legacy sidebar was written for a VS Code webview, where the host's
   // postMessage surfaces as a window message event.
   window.postMessage(message, '*');
 });
@@ -99,6 +99,11 @@ const api = {
 
   setupStatus(): Promise<unknown> {
     return ipcRenderer.invoke('unify:setup-status') as Promise<unknown>;
+  },
+
+  /** Asks the main-process updater to check GitHub Releases now. */
+  checkForUpdates(): Promise<unknown> {
+    return ipcRenderer.invoke('unify:check-for-updates') as Promise<unknown>;
   },
 
   /** New renderer: receive native UI requests and answer them by id. */

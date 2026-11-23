@@ -26,7 +26,7 @@ async function probe(path: string): Promise<boolean> {
 
 const managedGit = (storage: string): string => join(storage, 'dependencies', 'git', 'cmd', 'git.exe');
 
-/** The first working git: configured paths, then PATH, then the usual Windows locations, then the copy DSH installed. */
+/** The first working git: configured paths, then PATH, then the usual Windows locations, then the copy Unify installed. */
 export async function findGit(storage: string, configured: (string | undefined)[] = []): Promise<string | undefined> {
   const windows = process.platform === 'win32';
   const candidates = [
@@ -52,17 +52,17 @@ export function pickMinGit(assets: ReleaseAsset[], arch = process.arch): { url: 
   const url = String(asset.browser_download_url || '');
   if (!url.startsWith(DOWNLOAD_PREFIX)) throw new Error('Unexpected Git download address.');
   const sha256 = typeof asset.digest === 'string' ? asset.digest.match(/^sha256:([0-9a-f]{64})$/i)?.[1] : undefined;
-  if (!sha256) throw new Error('The Git release does not publish a SHA-256 checksum, so DSH will not install it.');
+  if (!sha256) throw new Error('The Git release does not publish a SHA-256 checksum, so Unify will not install it.');
   return { url, sha256: sha256.toLowerCase(), name: String(asset.name) };
 }
 
 /**
- * Installs MinGit (Git for Windows' minimal, portable build) into DSH's storage, after checking the SHA-256 that
- * GitHub publishes for the release file. Nothing outside DSH's storage changes. Windows only.
+ * Installs MinGit (Git for Windows' minimal, portable build) into Unify's storage, after checking the SHA-256 that
+ * GitHub publishes for the release file. Nothing outside Unify's storage changes. Windows only.
  */
 export async function installGit(storage: string, fetchImpl: typeof fetch = fetch): Promise<string> {
   if (process.platform !== 'win32') throw new Error(`Install Git from ${GIT_DOWNLOAD_PAGE}, then try again.`);
-  const response = await fetchImpl(RELEASE_API, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'dsh-ide' }, signal: AbortSignal.timeout(20_000) });
+  const response = await fetchImpl(RELEASE_API, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'unify' }, signal: AbortSignal.timeout(20_000) });
   if (!response.ok) throw new Error(`Could not look up the latest Git release (HTTP ${response.status}).`);
   const release = await response.json() as { assets?: ReleaseAsset[] };
   const asset = pickMinGit(release.assets || []);
@@ -76,8 +76,8 @@ export async function installGit(storage: string, fetchImpl: typeof fetch = fetc
     const extracted = join(stage, 'git');
     await mkdir(extracted);
     const expansion = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
-      "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:DSH_GIT_ZIP -DestinationPath $env:DSH_GIT_DEST -Force"],
-    180_000, { ...process.env, DSH_GIT_ZIP: zip, DSH_GIT_DEST: extracted });
+      "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:UNIFY_GIT_ZIP -DestinationPath $env:UNIFY_GIT_DEST -Force"],
+    180_000, { ...process.env, UNIFY_GIT_ZIP: zip, UNIFY_GIT_DEST: extracted });
     if (expansion.code !== 0) throw new Error(`Could not expand the Git archive: ${expansion.stderr.slice(-1000)}`);
     if (!existsSync(join(extracted, 'cmd', 'git.exe'))) throw new Error('The Git archive does not contain cmd\\git.exe.');
     const target = join(storage, 'dependencies', 'git');

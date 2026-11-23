@@ -1,13 +1,10 @@
 /**
  * Files data adapter: the only place the Files screen talks to the engine.
  *
- * The engine does not list folders or read/write files yet. The messages it needs are specified in
- * ./protocol-requests.md and typed below (FilesRequest / FilesReply). Until the engine answers them, the
- * adapter serves a mock workspace (the Figma "20 · Files + Editor" tree), so the screen works in vite dev and
- * in the app. Once the backend implements the messages, nothing in the components changes.
- *
- * How it picks: with the dev mock bridge it goes straight to the mock. With a real host it sends the request
- * and falls back to the mock when no reply arrives within `replyTimeout` (remembered for the session).
+ * The engine answers the messages typed below (FilesRequest / FilesReply, see ./protocol-requests.md and
+ * src/engine/unify/requests). With a real host bridge the adapter only ever shows what the engine sends: no
+ * reply means an empty listing or an error, never sample files. The mock workspace (the Figma
+ * "20 · Files + Editor" tree) is served only when there is no host bridge at all (vite dev, previews).
  *
  * Agent edits also come from the existing `viewState.diffs` (SidebarDiff: path, additions, deletions), so tree
  * rows and tabs show +N −M as soon as an agent touches a file, whatever the source of the listing.
@@ -76,11 +73,12 @@ export type FilesReply =
 // ---------------------------------------------------------------------------------------------------------------
 // Transport
 
-const replyTimeout = 1500;
-let engineSupported: boolean | undefined = hasHostBridge() ? undefined : false;
+const replyTimeout = 10000;
+/** Dev previews only: no host bridge means no engine, so the mock workspace answers instead. */
+const useMock = !hasHostBridge();
 const pending = new Map<string, (reply: FilesReply) => void>();
 const changeListeners = new Set<(change: Extract<FilesReply, { type: 'fileChanged' }>) => void>();
-const [workspace, setWorkspace] = createSignal<{ root: string; name: string }>({ root: '', name: 'DSH' });
+const [workspace, setWorkspace] = createSignal<{ root: string; name: string }>({ root: '', name: '' });
 export { workspace };
 
 let nextId = 0;
@@ -96,7 +94,6 @@ onHostMessage(raw => {
     return;
   }
   if ('requestId' in message && pending.has(message.requestId)) {
-    engineSupported = true;
     pending.get(message.requestId)!(message);
     pending.delete(message.requestId);
   }
@@ -105,12 +102,10 @@ onHostMessage(raw => {
 type RequestBody<T> = T extends { requestId: string } ? Omit<T, 'requestId'> : never;
 
 function request(body: RequestBody<FilesRequest>): Promise<FilesReply | undefined> {
-  if (engineSupported === false) return Promise.resolve(undefined);
   const requestId = `files:${Date.now()}:${nextId++}`;
   return new Promise(resolve => {
     const timer = window.setTimeout(() => {
       pending.delete(requestId);
-      if (engineSupported === undefined) engineSupported = false;
       resolve(undefined);
     }, replyTimeout);
     pending.set(requestId, reply => {
@@ -138,31 +133,35 @@ export function engineEdits(): Map<string, FileEdit> {
   return result;
 }
 
+/** An empty folder when the engine fails or does not answer; the tree shows it as empty, not as sample files. */
 export async function listDir(path: string): Promise<FileEntry[]> {
+  if (useMock) return sortEntries(mock.listDir(path));
   const reply = await request({ type: 'listDir', path });
   if (reply?.type === 'dirListing') return sortEntries(reply.entries);
-  return sortEntries(mock.listDir(path));
+  console.warn(`[files] listDir "${path}" failed: ${reply?.type === 'filesError' ? reply.message : 'the engine did not answer'}`);
+  return [];
 }
 
 export async function readFile(path: string): Promise<FileDocument> {
+  if (useMock) return withLanguage(mock.readFile(path));
   const reply = await request({ type: 'readFile', path });
   if (reply?.type === 'fileContent') return withLanguage(reply.file);
-  if (reply?.type === 'filesError') throw new Error(reply.message);
-  return withLanguage(mock.readFile(path));
+  throw new Error(reply?.type === 'filesError' ? reply.message : 'The engine did not answer');
 }
 
 export async function writeFile(path: string, content: string, version: string): Promise<WriteResult> {
+  if (useMock) return mock.writeFile(path, content);
   const reply = await request({ type: 'writeFile', path, content, version });
   if (reply?.type === 'fileSaved') return { ok: true, version: reply.version };
   if (reply?.type === 'fileConflict') return { ok: false, reason: 'conflict', current: withLanguage(reply.current) };
-  if (reply?.type === 'filesError') return { ok: false, reason: 'error', message: reply.message };
-  return mock.writeFile(path, content);
+  return { ok: false, reason: 'error', message: reply?.type === 'filesError' ? reply.message : 'The engine did not answer' };
 }
 
 export async function findFiles(query: string, limit = 50): Promise<string[]> {
+  if (useMock) return mock.findFiles(query).slice(0, limit);
   const reply = await request({ type: 'findFiles', query, limit });
   if (reply?.type === 'fileMatches') return reply.paths;
-  return mock.findFiles(query).slice(0, limit);
+  return [];
 }
 
 export function onFileChanged(listener: (change: Extract<FilesReply, { type: 'fileChanged' }>) => void): () => void {
@@ -241,7 +240,7 @@ function withLanguage(file: FileDocument): FileDocument {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Mock workspace (Figma 306:1623). Dev and fallback only.
+// Mock workspace (Figma 306:1623). Only when there is no host bridge (`useMock`).
 
 const registrySource = `import { ToolpackManifest, ToolDefinition } from "./types";
 import { startWorker } from "./worker";
@@ -338,8 +337,8 @@ const mockTree: Record<string, { name: string; kind: 'file' | 'dir'; edited?: Fi
 const mockContent = new Map<string, string>([
   ['src/toolpacks/registry.ts', registrySource],
   ['src/toolpacks/types.ts', typesSource],
-  ['README.md', '# DSH\n\nAgents for your editor.\n'],
-  ['package.json', '{\n  "name": "dsh",\n  "version": "1.1.5",\n  "main": "./out/extension.js"\n}\n'],
+  ['README.md', '# Unify\n\nAgents for your desktop.\n'],
+  ['package.json', '{\n  "name": "unify",\n  "version": "1.1.5",\n  "main": "./out/extension.js"\n}\n'],
 ]);
 
 const mockChanges: Record<string, FileLineChanges> = {
@@ -394,4 +393,43 @@ const mock = {
 /** For the dev preview: lets a test push a fake agent edit. */
 export function emitMockChange(change: Extract<FilesReply, { type: 'fileChanged' }>): void {
   for (const listener of changeListeners) listener(change);
+}
+
+/** For the dev preview: adds a file to the mock tree and reports it created, as an agent's write would. */
+export function mockCreateFile(path: string, content = ''): void {
+  const folder = parentPath(path);
+  const entries = mockTree[folder] ?? [];
+  if (!entries.some(entry => entry.name === baseName(path))) {
+    mockTree[folder] = [...entries, { name: baseName(path), kind: 'file' }];
+  }
+  mockContent.set(path, content);
+  emitMockChange({ type: 'fileChanged', path, kind: 'created' });
+}
+
+/** For the dev preview: removes a file from the mock tree and reports it deleted. */
+export function mockDeleteFile(path: string): void {
+  const folder = parentPath(path);
+  mockTree[folder] = (mockTree[folder] ?? []).filter(entry => entry.name !== baseName(path));
+  mockContent.delete(path);
+  emitMockChange({ type: 'fileChanged', path, kind: 'deleted' });
+}
+
+/** For the dev preview: a rename in one folder, which the engine reports as a delete and a create. */
+export function mockRenameFile(from: string, to: string): void {
+  const folder = parentPath(from);
+  const content = mockContent.get(from) ?? '';
+  mockTree[folder] = (mockTree[folder] ?? []).map(entry => (entry.name === baseName(from) ? { ...entry, name: baseName(to) } : entry));
+  mockContent.delete(from);
+  mockContent.set(to, content);
+  emitMockChange({ type: 'fileChanged', path: from, kind: 'deleted' });
+  emitMockChange({ type: 'fileChanged', path: to, kind: 'created' });
+}
+
+/** For the dev preview: replaces a file's text (and its changed lines) and reports it changed. */
+export function mockEditFile(path: string, content: string, changes?: FileLineChanges): void {
+  mockContent.set(path, content);
+  mockVersions.set(path, (mockVersions.get(path) ?? 1) + 1);
+  if (changes) mockChanges[path] = changes;
+  else delete mockChanges[path];
+  emitMockChange({ type: 'fileChanged', path, kind: 'changed' });
 }

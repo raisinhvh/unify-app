@@ -33,7 +33,7 @@ export async function readCursorUsage(): Promise<AccountUsage> {
   let token: unknown;
   try { token = record(JSON.parse(await readFile(authFile(), 'utf8')))?.accessToken; } catch { /* Missing credentials. */ }
   if (typeof token !== 'string' || !token)
-    return result('unavailable', [], "DSH can't find Cursor's sign-in on this computer. Check usage in your browser instead.", 'browser');
+    return result('unavailable', [], "Unify can't find Cursor's sign-in on this computer. Check usage in your browser instead.", 'browser');
   const expiry = expiresAt(token);
   if (Number.isFinite(expiry) && expiry <= Date.now()) return result('unavailable', [], EXPIRED, 'signin');
   const controller = new AbortController();

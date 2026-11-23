@@ -1,9 +1,12 @@
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { ToolpackContent } from '../toolpacks/types';
+import { getUnifyFeature } from '../unify/settings';
+import { isLineRange, mergeLineRanges, RANGE_CONTEXT_LINES, rangeHash } from './rangeEdit';
+import type { LineRange } from './rangeEdit';
 
 /**
- * Advanced batching: one `batch` call on the DSH bridge runs several tool calls and returns one result.
+ * Advanced batching: one `batch` call on the Unify bridge runs several tool calls and returns one result.
  * Besides the bridge's own tools it offers read-only file tools that exist only inside a batch.
  */
 export const BATCH_TOOL = 'batch';
@@ -18,17 +21,18 @@ const DEFAULT_READ_LINES = 2000;
 const MAX_SEARCH_FILES = 20_000;
 const MAX_SEARCH_FILE_BYTES = 1_000_000;
 const MAX_LIST_ENTRIES = 500;
-const SKIP_DIRS = new Set(['.git', 'node_modules', '.dsh', '.hg', '.svn', '__pycache__', '.venv', '.next', '.turbo']);
+const MAX_READ_RANGES = 50;
+const SKIP_DIRS = new Set(['.git', 'node_modules', '.unify', '.hg', '.svn', '__pycache__', '.venv', '.next', '.turbo']);
 
 /** Runs one forEach call may expand to, and how many of them run at once. */
 export const MAX_FOREACH_RUNS = 50;
 const FOREACH_CONCURRENCY = 4;
 
-export const BATCH_INSTRUCTIONS = `DSH batch: ${BATCH_TOOL} runs several calls in one go and returns one combined result. From the first step of a task, put any two or more file reads, searches or listings in one ${BATCH_TOOL} instead of separate native read, grep, glob or shell calls. Read a file natively only right before editing it (edit tools require that), and use the shell only to run commands. Do the same for two or more dsh-delegate or toolpack calls, including chains: an argument "{{1.id}}" is a field of call 1's result (the call waits for it), after:[1] only orders, and forEach:"{{1.nodes}}" runs a call once per item ({{item.id}}). Inside a batch only, read_file {path, offset?, limit?}, search {pattern, path?, glob?, ignore_case?, max_results?} and list_dir {path?} read the working copy; paths outside it need the user's approval unless DSH has full access, and read_file returns png, jpg and webp files as images.`;
+export const BATCH_INSTRUCTIONS = `Unify batch: ${BATCH_TOOL} runs several calls in one go and returns one combined result. From the first step of a task, put any two or more file reads, searches or listings in one ${BATCH_TOOL} instead of separate native read, grep, glob or shell calls. Read the part you are about to edit right before editing it: a range read with read_file ranges counts, so you need not read the whole file (edit tools require that). Use the shell only to run commands. Do the same for two or more Unify or toolpack calls, including chains: an argument "{{1.id}}" is a field of call 1's result (the call waits for it), after:[1] only orders, and forEach:"{{1.nodes}}" runs a call once per item ({{item.id}}). Inside a batch only, read_file {path, offset?, limit?, ranges?}, search {pattern, path?, glob?, ignore_case?, max_results?} and list_dir {path?} read the working copy; paths outside it need the user's approval unless Unify has full access, and read_file returns png, jpg and webp files as images.`;
 
 export const BATCH_TOOL_SCHEMA = {
   name: BATCH_TOOL,
-  description: `Run up to ${MAX_BATCH_CALLS} calls; one combined result, one entry per call in order. A call may name any other dsh-delegate tool (toolpack tools included), or a batch-only file tool: read_file {path, offset? (first line, 1-based), limit? (lines, default ${DEFAULT_READ_LINES})}, search {pattern (JS regex), path?, glob? (e.g. "*.ts"), ignore_case?, max_results? (default 100)}, list_dir {path?}. Paths are relative to the working copy; paths outside it ask the user first unless DSH has full access. read_file returns png, jpg and webp files as images. Calls run in parallel unless they depend on earlier ones:
+  description: `Run up to ${MAX_BATCH_CALLS} calls; one combined result, one entry per call in order. A call may name any other Unify tool (toolpack tools included), or a batch-only file tool: read_file {path, offset? (first line, 1-based), limit? (lines, default ${DEFAULT_READ_LINES}), ranges? (one or more {startLine, endLine}; 2 lines of context, merged when they overlap, with a short hash for edit_range)}, search {pattern (JS regex), path?, glob? (e.g. "*.ts"), ignore_case?, max_results? (default 100)}, list_dir {path?}. Paths are relative to the working copy; paths outside it ask the user first unless Unify has full access. read_file returns png, jpg and webp files as images. Calls run in parallel unless they depend on earlier ones:
 - "{{N.path}}" in any argument string is part of call N's JSON result, e.g. "{{1.id}}", "{{1.nodes[0].id}}", "{{1.nodes[*].id}}" (a list). As the whole string it keeps its type; inside a longer string it becomes text. "{{N}}" is the whole result, or its text when it is not JSON.
 - after: [N, ...] waits for those calls without using their results (e.g. a write, then a read).
 - forEach: "{{N.path}}" runs the call once per item of that list (at most ${MAX_FOREACH_RUNS}); "{{item}}" or "{{item.id}}" is the current item.
@@ -91,9 +95,9 @@ export function callDependencies(call: BatchCall): number[] {
   return [...new Set(sources.filter((source): source is number => source !== 'item'))].sort((a, b) => a - b);
 }
 
-/** MCP clients name a bridge tool bare or qualified with the server name. */
+/** MCP clients name a bridge tool bare or qualified with any server name. */
 export function isBatchTool(tool: string): boolean {
-  return /^(?:(?:mcp[._/]{1,2})?dsh[-_]delegate[._/]{1,2})?batch$/i.test(tool.trim());
+  return /^(?:(?:mcp[._/]{1,2}[\w-]+?[._/]{1,2})|(?:[\w-]+?[./]))?batch$/i.test(tool.trim());
 }
 
 export function isBatchFileTool(tool: string): tool is BatchFileTool {
@@ -106,7 +110,7 @@ export function parseBatchCalls(args: Record<string, unknown>): BatchCall[] {
   if (calls.length > MAX_BATCH_CALLS) throw new Error(`A batch takes at most ${MAX_BATCH_CALLS} calls.`);
   return calls.map((call, index) => {
     const item = call && typeof call === 'object' ? call as Record<string, unknown> : {};
-    const tool = typeof item.tool === 'string' ? item.tool.trim().replace(/^(?:mcp[._/]{1,2})?dsh[-_]delegate[._/]{1,2}/i, '') : '';
+    const tool = typeof item.tool === 'string' ? item.tool.trim().replace(/^(?:mcp[._/]{1,2}[\w-]+?[._/]{1,2}|[\w-]+?[./])/i, '') : '';
     if (!tool) throw new Error(`Call ${index + 1} has no tool name.`);
     if (isBatchTool(tool)) throw new Error('A batch cannot contain another batch.');
     const raw = item.args ?? item.arguments;
@@ -435,6 +439,40 @@ export function globPattern(glob: string): RegExp {
   return new RegExp(`^${out}$`);
 }
 
+function parseReadRanges(value: unknown): LineRange[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || !value.length) throw new Error('ranges must be a non-empty array of { startLine, endLine }.');
+  if (value.length > MAX_READ_RANGES) throw new Error(`A read takes at most ${MAX_READ_RANGES} ranges.`);
+  return value.map((item, index) => {
+    if (!isLineRange(item)) throw new Error(`Range ${index + 1} needs whole-number startLine and endLine with 1 <= startLine <= endLine.`);
+    return { startLine: Math.floor(item.startLine), endLine: Math.floor(item.endLine) };
+  });
+}
+
+/** Each requested range with 2 lines of context; nearby windows become one part. */
+function readRangeParts(lines: string[], requested: LineRange[]): { startLine: number; endLine: number; innerStart: number; innerEnd: number }[] {
+  const parts: { startLine: number; endLine: number; innerStart: number; innerEnd: number }[] = [];
+  for (const range of mergeLineRanges(requested)) {
+    const startLine = Math.max(1, range.startLine - RANGE_CONTEXT_LINES);
+    const endLine = Math.min(lines.length, range.endLine + RANGE_CONTEXT_LINES);
+    const last = parts[parts.length - 1];
+    if (last && startLine <= last.endLine + 1) {
+      last.endLine = Math.max(last.endLine, endLine);
+      last.innerEnd = Math.max(last.innerEnd, Math.min(range.endLine, lines.length));
+      continue;
+    }
+    parts.push({ startLine, endLine, innerStart: range.startLine, innerEnd: Math.min(range.endLine, lines.length) });
+  }
+  return parts;
+}
+
+function readRangesText(name: string, lines: string[], requested: LineRange[]): string {
+  return readRangeParts(lines, requested).map(part => {
+    const heading = `${name} lines ${part.startLine}-${part.endLine} of ${lines.length} (range ${part.innerStart}-${part.innerEnd}, hash ${rangeHash(lines, part.innerStart, part.innerEnd)})`;
+    return `${heading}\n${lines.slice(part.startLine - 1, part.endLine).join('\n')}`;
+  }).join('\n\n');
+}
+
 async function readFileTool(cwd: string, args: Record<string, unknown>, options: BatchFileOptions): Promise<BatchOutcome> {
   const file = await insidePath(cwd, args.path, options.outside);
   const info = await stat(file);
@@ -449,6 +487,13 @@ async function readFileTool(cwd: string, args: Record<string, unknown>, options:
   const buffer = await readFile(file);
   if (looksBinary(buffer)) return { text: `${display(cwd, file)} is a binary file.`, isError: true };
   const lines = buffer.toString('utf8').split(/\r?\n/);
+  const ranges = parseReadRanges(args.ranges);
+  if (ranges) {
+    if (!getUnifyFeature('tools.rangeEdits')) return { text: 'Range reads are turned off in Settings (tools.rangeEdits).', isError: true };
+    const beyond = ranges.find(range => range.startLine > lines.length);
+    if (beyond) return { text: `Range ${beyond.startLine}-${beyond.endLine} is past the end of ${display(cwd, file)} (${lines.length} lines).`, isError: true };
+    return { text: readRangesText(display(cwd, file), lines, ranges) };
+  }
   const start = Math.max(1, Math.floor(Number(args.offset) || 1));
   const count = Math.max(1, Math.floor(Number(args.limit) || DEFAULT_READ_LINES));
   const picked = lines.slice(start - 1, start - 1 + count);

@@ -3,8 +3,15 @@ import { join } from 'node:path';
 import { Disposable, EventEmitter } from './events';
 import { appendLog, nativeUi, outputChannel, onDidChangeWindowState, postToRenderer, registerWebviewViewProvider, requestUi, showDesktopNotification } from './host';
 import { Position, Range, Selection, Uri } from './uri';
-import { createTextEditor, getTextDocument, onDidSaveTextDocument, openTextDocument, TextDocument, workspace } from './workspace';
+import { onDidSaveTextDocument, openTextDocument, TextDocument, workspace } from './workspace';
 import { settingsSnapshot, shimPaths } from './state';
+import {
+  TabInputText, activeTextEditor, createEditor, onDidChangeActiveTextEditor, onDidChangeTextEditorSelection,
+  onDidChangeVisibleTextEditors, tabGroups, visibleTextEditors,
+} from './editor';
+import { GithubAuth, getGithubAuth, onGithubAuthChange } from '../../engine/unify/github';
+
+export { TabInputText };
 
 export enum StatusBarAlignment { Left = 1, Right = 2 }
 export enum ProgressLocation { SourceControl = 1, Window = 10, Notification = 15 }
@@ -12,9 +19,7 @@ export enum ConfigurationTarget { Global = 1, Workspace = 2, WorkspaceFolder = 3
 export enum TextEditorRevealType { Default = 0, InCenter = 1, InCenterIfOutsideViewport = 2, AtTop = 3 }
 export enum ViewColumn { Active = -1, Beside = -2, One = 1, Two = 2, Three = 3 }
 
-export class TabInputText {
-  public constructor(public readonly uri: Uri) {}
-}
+
 
 interface StatusBarItem extends Disposable {
   text: string;
@@ -58,10 +63,18 @@ function convertPicked<T>(picked: unknown, items: T[]): T | T[] | undefined {
   return picked as T;
 }
 
+function selectionFromOptions(options: unknown): Selection | undefined {
+  if (!options || typeof options !== 'object') return undefined;
+  const selection = (options as { selection?: unknown }).selection;
+  if (selection instanceof Selection) return selection;
+  if (selection instanceof Range) return new Selection(selection.start, selection.end);
+  return undefined;
+}
+
 export const window = {
-  get activeTextEditor(): undefined { return undefined; },
-  get visibleTextEditors(): unknown[] { return []; },
-  get tabGroups(): { all: unknown[] } { return { all: [] }; },
+  get activeTextEditor() { return activeTextEditor(); },
+  get visibleTextEditors() { return visibleTextEditors(); },
+  get tabGroups() { return tabGroups(); },
 
   showInformationMessage: (message: string, ...args: unknown[]) => showMessage('info', message, ...args),
   showWarningMessage: (message: string, ...args: unknown[]) => showMessage('warning', message, ...args),
@@ -90,11 +103,19 @@ export const window = {
 
   async showSaveDialog(): Promise<Uri | undefined> { return undefined; },
 
-  async showTextDocument(documentOrUri: TextDocument | Uri, _options?: unknown) {
+  async showTextDocument(documentOrUri: TextDocument | Uri, options?: unknown) {
     const document = documentOrUri instanceof TextDocument
       ? documentOrUri
       : await openTextDocument(documentOrUri);
-    return createTextEditor(document);
+    const selection = selectionFromOptions(options);
+    if (document.uri.scheme === 'file') {
+      postToRenderer({
+        type: 'editorOpen',
+        path: document.uri.fsPath,
+        ...(selection ? { startLine: selection.start.line + 1, endLine: selection.end.line + 1 } : {}),
+      });
+    }
+    return createEditor(document, selection);
   },
 
   async withProgress(_options: unknown, task: (progress: { report(value: unknown): void }, token: { isCancellationRequested: boolean; onCancellationRequested(): Disposable }) => PromiseLike<unknown> | unknown): Promise<unknown> {
@@ -133,9 +154,9 @@ export const window = {
 
   onDidChangeWindowState,
 
-  onDidChangeActiveTextEditor: new EventEmitter<unknown>().event,
-  onDidChangeVisibleTextEditors: new EventEmitter<unknown[]>().event,
-  onDidChangeTextEditorSelection: new EventEmitter<unknown>().event,
+  onDidChangeActiveTextEditor,
+  onDidChangeVisibleTextEditors,
+  onDidChangeTextEditorSelection,
   onDidCloseTerminal: new EventEmitter<unknown>().event,
 };
 
@@ -181,14 +202,35 @@ export const commandRegistry = {
   },
 };
 
+function diffPath(value: unknown): string | undefined {
+  if (value instanceof Uri) return value.scheme === 'file' ? value.fsPath : undefined;
+  if (typeof value !== 'string' || !value) return undefined;
+  const uri = Uri.parse(value);
+  return uri.scheme === 'file' ? uri.fsPath : undefined;
+}
+
 async function executeBuiltin(name: string, args: unknown[]): Promise<unknown> {
   if (name === 'vscode.open' && args[0] instanceof Uri) {
     await env.openExternal(args[0]);
     return undefined;
   }
-  if (name === 'vscode.diff' || name === 'vscode.changes') {
-    // The renderer's editor screen will take these later; the engine treats
-    // a missing command as a handled no-op.
+  if (name === 'vscode.diff') {
+    const leftPath = diffPath(args[0]);
+    const rightPath = diffPath(args[1]);
+    if (!leftPath || !rightPath) {
+      appendLog('vscode.diff ignored: both sides must be file URIs.');
+      return undefined;
+    }
+    postToRenderer({
+      type: 'editorDiff',
+      title: typeof args[2] === 'string' && args[2] ? args[2] : `${leftPath} ↔ ${rightPath}`,
+      leftPath,
+      rightPath,
+    });
+    return undefined;
+  }
+  if (name === 'vscode.changes') {
+    // A multi-file change view has no renderer counterpart yet.
     return undefined;
   }
   if (name === 'workbench.action.openSettings') {
@@ -196,7 +238,7 @@ async function executeBuiltin(name: string, args: unknown[]): Promise<unknown> {
     postToRenderer({ type: 'uiNotice', kind: 'settings', key: target });
     return undefined;
   }
-  if (name === 'workbench.view.extension.dsh') {
+  if (name === 'workbench.view.extension.unify') {
     postToRenderer({ type: 'uiNotice', kind: 'showSidebar' });
     return undefined;
   }
@@ -221,13 +263,52 @@ export const languages = {
   },
 };
 
+/**
+ * A VS Code `AuthenticationSession` for the account github.ts resolves. Sync
+ * and Hub publishing call `getSession('github', …)`, so a signed-in `gh` CLI or
+ * a pasted token in Settings is enough for both.
+ */
+function githubSession(auth: GithubAuth, scopes: readonly string[]): {
+  id: string;
+  accessToken: string;
+  account: { id: string; label: string };
+  scopes: readonly string[];
+} {
+  return {
+    id: `github:${auth.login}`,
+    accessToken: auth.token,
+    account: { id: auth.login, label: auth.login },
+    scopes,
+  };
+}
+
+const authSessions = new EventEmitter<{
+  providerId: string;
+  added: unknown[];
+  removed: unknown[];
+  changed: unknown[];
+}>();
+let currentGithubSession: ReturnType<typeof githubSession> | undefined;
+
+onGithubAuthChange(auth => {
+  const previous = currentGithubSession;
+  currentGithubSession = auth ? githubSession(auth, ['repo', 'gist']) : undefined;
+  if (currentGithubSession) {
+    authSessions.fire({ providerId: 'github', added: [currentGithubSession], removed: [], changed: previous ? [currentGithubSession] : [] });
+  } else if (previous) {
+    authSessions.fire({ providerId: 'github', added: [], removed: [previous], changed: [] });
+  }
+});
+
 export const authentication = {
-  async getSession(): Promise<undefined> {
-    // GitHub sync needs VS Code's auth provider. Unify reports it as
-    // unavailable rather than hanging the sync controller.
-    return undefined;
+  async getSession(providerId: string, scopes: readonly string[] = []): Promise<ReturnType<typeof githubSession> | undefined> {
+    if (providerId !== 'github') return undefined;
+    const auth = await getGithubAuth();
+    if (!auth) return undefined;
+    currentGithubSession = githubSession(auth, scopes.length ? scopes : ['repo', 'gist']);
+    return currentGithubSession;
   },
-  onDidChangeSessions: new EventEmitter<unknown>().event,
+  onDidChangeSessions: authSessions.event,
 };
 
 export function registerCommand(name: string, callback: (...args: unknown[]) => unknown): Disposable {

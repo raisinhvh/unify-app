@@ -1,3 +1,7 @@
+/*
+ * Switch: the button is the off track (border colour); the accent track on top fades in with the knob's travel.
+ * Knob width, position and colour are written by Toggle.tsx on springs.
+ */
 .toggle {
   position: relative;
   width: 28px;
@@ -5,6 +9,7 @@
   flex: none;
   border-radius: 8px;
   background: var(--border);
+  transition: opacity 120ms ease;
 }
 
 .toggle:disabled {
@@ -16,11 +21,8 @@
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: var(--border);
-}
-
-.toggle.on .toggle-track {
   background: var(--accent);
+  opacity: 0;
 }
 
 .toggle-knob {
@@ -31,8 +33,4 @@
   height: 12px;
   border-radius: 6px;
   background: var(--text);
-}
-
-.toggle.on .toggle-knob {
-  background: var(--on-accent);
 }

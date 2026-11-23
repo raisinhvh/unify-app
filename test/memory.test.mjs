@@ -16,17 +16,17 @@ async function setup() {
   await writeFile(join(vault, 'Home.md'), '# Home\n');
   await writeFile(join(vault, 'tools', 'rig.md'), 'Rig builder\n');
   await writeFile(join(vault, '.obsidian', 'app.json'), '{}');
-  return { base, vault, cwd, copy: join(cwd, '.dsh', 'global-memory') };
+  return { base, vault, cwd, copy: join(cwd, '.unify', 'global-memory') };
 }
 // Size and modification time decide whether a file changed, so edits in a test must move the time on.
 async function touch(path, text) { await writeFile(path, text); const later = new Date(Date.now() + 5000); await utimes(path, later, later); }
 
 test('global memory has a fixed home beside DSH\'s rules, and both memory folders are recognized', () => {
-  assert.equal(globalMemoryFolder(join('home', '.dsh')), join('home', '.dsh', 'memory'));
-  assert.ok(isMemoryPath('.dsh/global-memory/a.md'));
-  assert.ok(isMemoryPath('./.dsh/memory/notes.md'));
-  assert.ok(isMemoryPath('.dsh\\memory\\notes.md'));
-  assert.ok(!isMemoryPath('.dsh/memoryx/a.md'));
+  assert.equal(globalMemoryFolder(join('home', '.unify')), join('home', '.unify', 'memory'));
+  assert.ok(isMemoryPath('.unify/global-memory/a.md'));
+  assert.ok(isMemoryPath('./.unify/memory/notes.md'));
+  assert.ok(isMemoryPath('.unify\\memory\\notes.md'));
+  assert.ok(!isMemoryPath('.unify/memoryx/a.md'));
   assert.ok(!isMemoryPath('src/a.ts'));
   assert.equal(conflictName('tools/rig.md', new Date(2026, 10, 4, 15, 30)), 'tools/rig (conflict 2026-11-04 1530).md');
 });
@@ -98,7 +98,7 @@ test('the copy stays out of git and a vault containing the project is refused', 
     await writeFile(join(cwd, '.git', 'info', 'exclude'), '# local\n');
     await syncGlobalMemory(vault, cwd);
     await syncGlobalMemory(vault, cwd);
-    assert.equal(await read(join(cwd, '.git', 'info', 'exclude')), '# local\n/.dsh/global-memory/\n/.dsh/global-memory.json\n');
+    assert.equal(await read(join(cwd, '.git', 'info', 'exclude')), '# local\n/.unify/global-memory/\n/.unify/global-memory.json\n');
     const inside = join(vault, 'project');
     await mkdir(inside);
     assert.match((await syncGlobalMemory(vault, inside)).skipped, /contains this workspace/);
@@ -113,20 +113,20 @@ test('the memory instruction says where memory is and what is worth saving, and 
     const text = memoryInstructions(cwd, true);
     assert.match(text, /reusable code/);
     assert.doesNotMatch(text, /script|attachment|model/i);
-    assert.match(text, /Global, for every project: \.dsh\/global-memory\/ \(start at Home\.md\)\./);
-    assert.match(text, /This project: \.dsh\/memory\/ \(create it when needed\)\./);
+    assert.match(text, /Global, for every project: \.unify\/global-memory\/ \(start at Home\.md\)\./);
+    assert.match(text, /This project: \.unify\/memory\/ \(create it when needed\)\./);
     assert.match(text, /Save only what helps a future task/);
     assert.match(text, /Skip details that only matter to the current task/);
     assert.match(text, /Cross-project goes global; project-specific goes in the project/);
     assert.match(text, /project notes override global ones/);
     assert.ok(text.length < 650, String(text.length));
     // With memory off, nothing is said, even with a global copy or project memory in the working copy.
-    await mkdir(join(cwd, '.dsh', 'memory'), { recursive: true });
+    await mkdir(join(cwd, '.unify', 'memory'), { recursive: true });
     assert.equal(memoryInstructions(cwd, false), '');
     // With no global memory here, only the project's is described.
     await syncGlobalMemory(undefined, cwd);
     const projectOnly = memoryInstructions(cwd, true);
-    assert.match(projectOnly, /This project: \.dsh\/memory\/\./);
+    assert.match(projectOnly, /This project: \.unify\/memory\/\./);
     assert.doesNotMatch(projectOnly, /global|Cross-project/i);
   } finally { await rm(base, { recursive: true, force: true }); }
 });

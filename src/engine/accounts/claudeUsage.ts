@@ -11,7 +11,7 @@ const finite = (value: unknown): value is number => typeof value === 'number' &&
 const title = (value: string): string => value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 const result = (status: AccountUsage['status'], metrics: AccountUsageMetric[] = [], detail?: string, fix?: AccountUsage['fix']): AccountUsage =>
   ({ status, metrics, ...(detail ? { detail } : {}), ...(fix ? { fix } : {}), fetchedAt: Date.now() });
-const labels: Record<string, string> = { five_hour: '5-hour', seven_day: 'Weekly', seven_day_opus: 'Weekly · Opus', seven_day_sonnet: 'Weekly · Sonnet' };
+const labels: Record<string, string> = { five_hour: '5-hour', seven_day: 'Weekly', seven_day_opus: 'Weekly limit for Opus', seven_day_sonnet: 'Weekly limit for Sonnet' };
 
 function metric(label: string, percent: unknown, reset: unknown): AccountUsageMetric | undefined {
   if (!finite(percent) || percent < 0) return undefined;
@@ -77,7 +77,7 @@ export async function readClaudeUsage(account: OAuthCliAccount): Promise<Account
         const scope = record(item.scope); const model = record(scope?.model);
         const name = typeof model?.display_name === 'string' && model.display_name || typeof scope?.surface === 'string' && scope.surface || 'scoped';
         const label = item.kind === 'session' ? '5-hour' : item.kind === 'weekly_all' ? 'Weekly'
-          : item.kind === 'weekly_scoped' ? `Weekly · ${name}` : item.kind.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+          : item.kind === 'weekly_scoped' ? `Weekly limit for ${name}` : item.kind.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
         add(metric(label, item.percent, item.resets_at));
       }
     } else {

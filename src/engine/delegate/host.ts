@@ -49,7 +49,7 @@ export class DelegateHost {
 
     private async handle(handlers: DelegateHandlers, req: IncomingMessage, res: ServerResponse): Promise<void> {
         const send = (status: number, body: unknown): void => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
-        if (req.method !== 'POST' || req.headers['x-dsh-token'] !== this.token) { send(403, { error: 'forbidden' }); return; }
+        if (req.method !== 'POST' || req.headers['x-unify-token'] !== this.token) { send(403, { error: 'forbidden' }); return; }
         let raw = '';
         for await (const chunk of req) {
             raw += chunk;

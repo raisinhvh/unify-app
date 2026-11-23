@@ -36,7 +36,7 @@ export type UpdateStatus =
 export interface AppInfo {
   version: string;
   channel: 'stable' | 'beta' | 'dev';
-  /** Where settings, rules and memory live (shared with DSH), e.g. C:/Users/me/.dsh */
+  /** Where settings, rules and memory live, e.g. C:/Users/me/.unify */
   dataFolder: string;
   update: UpdateStatus;
 }
@@ -59,10 +59,22 @@ export function requestAppInfo(): void {
   postRequest({ type: 'getAppInfo' });
 }
 
+/** The preload's update check; missing in builds without the updater (and in the browser preview). */
+function bridgeUpdateCheck(): (() => unknown) | undefined {
+  const bridge = (window as unknown as { unify?: { checkForUpdates?: () => unknown } }).unify;
+  return typeof bridge?.checkForUpdates === 'function' ? bridge.checkForUpdates.bind(bridge) : undefined;
+}
+
+export function canCheckForUpdates(): boolean {
+  return !!bridgeUpdateCheck();
+}
+
 export function checkForUpdates(): void {
+  const check = bridgeUpdateCheck();
+  if (!check) return;
   const current = appInfo();
   if (current) setAppInfo({ ...current, update: { state: 'checking' } });
-  postRequest({ type: 'checkForUpdates' });
+  void check();
 }
 
 export function installUpdate(): void {

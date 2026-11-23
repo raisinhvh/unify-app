@@ -9,10 +9,15 @@
  *
  * Rules, skills and memory are one system: every item opens in the same document view on the right.
  * Dragging a folder anywhere over the panel lights the drop row; dropping imports it as a skill.
+ *
+ * Organic motion (motion.organic.*): a new item types its name into its row, a rename backspaces and retypes it,
+ * and a removed item gets a select-all sweep before its row collapses. Rows that only leave because of the
+ * search or the scope collapse at once (no sweep: nothing was deleted).
  */
-import { createMemo, createSignal, For, Show, type JSX } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from 'solid-js';
 import { Icon, IconButton, Menu, TreeFolder, TreeItem, type MenuEntry } from '../../components';
 import { AnimatedList, Collapse, createSpring } from '../../motion';
+import { OrganicList, RetypeText, type OrganicRow } from '../../motion/organic';
 import { importSkillFolder, knowledgeItems, saveKnowledge, type ImportedFile, type KnowledgeItem, type KnowledgeKind } from './adapter';
 import { Segmented } from './Segmented';
 import { openFolders, scope, select, selection, setFocusTitle, setFolderOpen, setMode, setScope } from './state';
@@ -73,14 +78,52 @@ async function readPickedFolder(list: FileList): Promise<{ name: string; files: 
 // ---------------------------------------------------------------------------------------------------------------
 // Rows
 
-function ItemRow(props: { item: KnowledgeItem; file?: string; label?: string; class?: string }): JSX.Element {
+/** Rows mounted before the first items arrive are placed; later ones type their names in. */
+const [knowledgePrimed, setKnowledgePrimed] = createSignal(false);
+
+/** How an item's row animates: created (type in) and leaving (sweep) from its OrganicList. */
+interface ItemMotion {
+  row: OrganicRow;
+  typeIn: boolean;
+}
+
+function itemMotion(row: OrganicRow): ItemMotion {
+  return { row, typeIn: row.created && untrack(knowledgePrimed) };
+}
+
+/**
+ * The item's name in the tree. Only a real removal sweeps: a row that leaves because of the search or the scope
+ * hands straight off to the collapse.
+ */
+function ItemName(props: { item: KnowledgeItem; motion: ItemMotion }): JSX.Element {
+  const removed = () => !knowledgeItems().some(item => item.id === props.item.id);
+  createEffect(() => {
+    if (props.motion.row.leaving() && !removed()) props.motion.row.swept();
+  });
+  // A refreshed list hands over new item objects; only a real rename may retype (each retype claims an organic slot).
+  const name = createMemo(() => props.item.name);
+  return (
+    <RetypeText
+      value={name()}
+      typeOnMount={props.motion.typeIn}
+      deleting={props.motion.row.leaving() && removed()}
+      onDeleted={props.motion.row.swept}
+      data-motion="knowledge-name"
+    />
+  );
+}
+
+function ItemRow(props: { item: KnowledgeItem; file?: string; label?: string; class?: string; motion?: ItemMotion }): JSX.Element {
   const selected = () => selection()?.id === props.item.id && selection()?.file === props.file;
-  // organic: an item an agent creates or renames should type its name in (backspace + retype on rename).
+  const label = (): JSX.Element => {
+    if (props.label !== undefined || !props.motion) return props.label ?? props.item.name;
+    return <ItemName item={props.item} motion={props.motion} />;
+  };
   return (
     <TreeItem
       class={`knowledge-file${props.class ? ' ' + props.class : ''}`}
       leading={<Icon name="file" size={14} />}
-      label={props.label ?? props.item.name}
+      label={label()}
       selected={selected()}
       title={props.label ?? props.item.name}
       onClick={() => select({ id: props.item.id, file: props.file })}
@@ -106,14 +149,14 @@ function skillTree(files: string[]): { loose: string[]; folders: SkillFolderNode
   return { loose, folders: [...folders].map(([name, list]) => ({ name, files: list })) };
 }
 
-function SkillRow(props: { item: KnowledgeItem; forceOpen: boolean }): JSX.Element {
+function SkillRow(props: { item: KnowledgeItem; forceOpen: boolean; motion: ItemMotion }): JSX.Element {
   const key = () => `skill:${props.item.id}`;
   const tree = () => skillTree(props.item.files ?? ['SKILL.md']);
   return (
     <TreeFolder
       class="knowledge-folder"
       icon="folder"
-      label={props.item.name}
+      label={<ItemName item={props.item} motion={props.motion} />}
       open={props.forceOpen || openFolders().includes(key())}
       onToggle={open => setFolderOpen(key(), open)}
     >
@@ -188,6 +231,15 @@ export function KnowledgePanel(): JSX.Element {
     const groups = new Map<string, KnowledgeItem[]>();
     for (const note of notes()) groups.set(note.folder ?? 'notes', [...(groups.get(note.folder ?? 'notes') ?? []), note]);
     return [...groups].map(([name, items]) => ({ name, items }));
+  });
+
+  // Primed once the first items are in (or shortly after mount when there are none yet).
+  onMount(() => {
+    const timer = window.setTimeout(() => setKnowledgePrimed(true), 1500);
+    onCleanup(() => window.clearTimeout(timer));
+  });
+  createEffect(() => {
+    if (knowledgeItems().length && !untrack(knowledgePrimed)) queueMicrotask(() => setKnowledgePrimed(true));
   });
 
   const forceOpen = () => !!searchText();
@@ -363,9 +415,9 @@ export function KnowledgePanel(): JSX.Element {
           open={folderOpen('rules')}
           onToggle={open => setFolderOpen('rules', open)}
         >
-          <AnimatedList each={rules()} key={item => item.id}>
-            {item => <ItemRow item={item()} />}
-          </AnimatedList>
+          <OrganicList each={rules()} key={item => item.id}>
+            {(item, row) => <ItemRow item={item()} motion={itemMotion(row)} />}
+          </OrganicList>
         </TreeFolder>
 
         <TreeFolder
@@ -376,9 +428,9 @@ export function KnowledgePanel(): JSX.Element {
           open={folderOpen('skills')}
           onToggle={open => setFolderOpen('skills', open)}
         >
-          <AnimatedList each={skills()} key={item => item.id}>
-            {item => <SkillRow item={item()} forceOpen={forceOpen()} />}
-          </AnimatedList>
+          <OrganicList each={skills()} key={item => item.id}>
+            {(item, row) => <SkillRow item={item()} forceOpen={forceOpen()} motion={itemMotion(row)} />}
+          </OrganicList>
           <DropRow dragging={dragging()} busy={importing()} message={dropMessage()} onPick={() => folderInput?.click()} />
         </TreeFolder>
 
@@ -400,9 +452,9 @@ export function KnowledgePanel(): JSX.Element {
                 open={folderOpen(`topic:${topic().name}`)}
                 onToggle={open => setFolderOpen(`topic:${topic().name}`, open)}
               >
-                <AnimatedList each={topic().items} key={item => item.id}>
-                  {item => <ItemRow item={item()} />}
-                </AnimatedList>
+                <OrganicList each={topic().items} key={item => item.id}>
+                  {(item, row) => <ItemRow item={item()} motion={itemMotion(row)} />}
+                </OrganicList>
               </TreeFolder>
             )}
           </AnimatedList>

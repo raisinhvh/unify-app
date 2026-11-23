@@ -22,6 +22,7 @@ const bundled = await build({
       const pc = () => globalThis.__dshSyncPcs.get(globalThis.__dshSyncPc);
       export const ConfigurationTarget = { Global: 1 };
       export const workspace = { getConfiguration: () => ({
+        has: key => key in pc().settings,
         inspect: key => ({ globalValue: pc().settings[key] }),
         update: async (key, value) => { if (value === undefined) delete pc().settings[key]; else pc().settings[key] = value; },
         get: (key, fallback) => pc().settings[key] ?? fallback,
@@ -42,23 +43,27 @@ async function world(t) {
   const home = join(base, 'home');
   await mkdir(home);
   // Forward slashes: git config reads backslashes in a Windows path as escapes.
-  await writeFile(join(home, '.gitconfig'), `[url "${resolve(remote).replace(/\\/g, '/')}"]\n\tinsteadOf = https://github.com/me/dsh-sync.git\n[init]\n\tdefaultBranch = main\n`);
-  const saved = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, fetch: globalThis.fetch };
+  await writeFile(join(home, '.gitconfig'), `[url "${resolve(remote).replace(/\\/g, '/')}"]\n\tinsteadOf = https://github.com/me/unify-sync.git\n[init]\n\tdefaultBranch = main\n`);
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, APPDATA: process.env.APPDATA, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, fetch: globalThis.fetch };
   process.env.HOME = home;
-  delete process.env.XDG_CONFIG_HOME;
+  process.env.USERPROFILE = home;
+  process.env.APPDATA = home;
+  process.env.XDG_CONFIG_HOME = home;
   let exists = false;
-  const repo = { private: true, full_name: 'me/dsh-sync', html_url: 'https://github.com/me/dsh-sync', clone_url: 'https://github.com/me/dsh-sync.git' };
+  const repo = { private: true, full_name: 'me/unify-sync', html_url: 'https://github.com/me/unify-sync', clone_url: 'https://github.com/me/unify-sync.git' };
   globalThis.fetch = async (url, init = {}) => {
     const path = new URL(url).pathname;
     const reply = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-    if (path === '/repos/me/dsh-sync') return exists ? reply(200, repo) : reply(404, { message: 'Not Found' });
+    if (path === '/repos/me/unify-sync') return exists ? reply(200, repo) : reply(404, { message: 'Not Found' });
     if (path === '/user/repos' && init.method === 'POST') { exists = true; return reply(201, repo); }
     if (path === '/gists') return reply(200, []);
     return reply(404, { message: 'unexpected' });
   };
   t.after(async () => {
-    process.env.HOME = saved.HOME;
-    if (saved.XDG_CONFIG_HOME !== undefined) process.env.XDG_CONFIG_HOME = saved.XDG_CONFIG_HOME;
+    for (const key of ['HOME', 'USERPROFILE', 'APPDATA', 'XDG_CONFIG_HOME']) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
     globalThis.fetch = saved.fetch;
     for (const pc of pcs.values()) pc.sync.dispose();
     pcs.clear();
@@ -69,7 +74,7 @@ async function world(t) {
     const root = join(base, name);
     const pc = {
       name, settings, state: new Map(), memory: join(root, 'memory'),
-      roots: { dshHome: join(root, 'dsh'), agentsHome: join(root, 'agents'), toolpacks: join(root, 'toolpacks') },
+      roots: { unifyHome: join(root, 'dsh'), agentsHome: join(root, 'agents'), toolpacks: join(root, 'toolpacks') },
     };
     await mkdir(pc.memory, { recursive: true });
     const context = {
@@ -100,13 +105,13 @@ const read = path => readFile(path, 'utf8');
 test('two PCs share settings, rules and memory through the sync repository without losing either side', { skip: !hasGit }, async t => {
   const { makePc, log, remoteFile, remoteFiles } = await world(t);
   const a = await makePc('a', { models: ['from A'] });
-  await mkdir(a.roots.dshHome, { recursive: true });
-  await writeFile(join(a.roots.dshHome, 'AGENTS.md'), '# A rules\n');
+  await mkdir(a.roots.unifyHome, { recursive: true });
+  await writeFile(join(a.roots.unifyHome, 'AGENTS.md'), '# A rules\n');
   await note(a, 'rig.md', 'Rig builder\n');
   await a.on(sync => sync.connect());
   assert.equal(a.posted.error, undefined);
   assert.equal(a.posted.connected, true);
-  assert.equal(a.posted.repo, 'me/dsh-sync');
+  assert.equal(a.posted.repo, 'me/unify-sync');
   assert.equal(remoteFile('memory/rig.md'), 'Rig builder\n');
   assert.equal(remoteFile('settings/models.json'), '[\n  "from A"\n]\n');
   assert.ok(remoteFiles().includes('README.md'));
@@ -118,7 +123,7 @@ test('two PCs share settings, rules and memory through the sync repository witho
   await b.on(sync => sync.connect());
   assert.equal(b.posted.error, undefined);
   assert.deepEqual(b.settings.models, ['from A']);
-  assert.equal(await read(join(b.roots.dshHome, 'AGENTS.md')), '# A rules\n');
+  assert.equal(await read(join(b.roots.unifyHome, 'AGENTS.md')), '# A rules\n');
   assert.deepEqual((await readdir(b.memory)).sort(), ['rig.md', 'units.md']);
   assert.equal(remoteFile('memory/units.md'), 'Use metric\n');
 

@@ -4,6 +4,13 @@ copyright: Copyright © 2026 raisinhvh
 asar: false
 npmRebuild: false
 
+# electron-updater reads GitHub Releases from this repository. It is private
+# until release, so update errors are logged and never shown to the user.
+publish:
+  provider: github
+  owner: raisinhvh
+  repo: unify
+
 directories:
   output: release
   buildResources: build
@@ -55,10 +62,22 @@ portable:
   artifactName: ${productName}-${version}-portable.${ext}
 
 mac:
+  # Windows is the shipping platform for now; this target is kept working for
+  # the Mac port. Unsigned by default: fill in `identity` (or CSC_LINK /
+  # CSC_KEY_PASSWORD) to sign and notarize later.
+  identity: null
   target:
-    - dmg
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
   category: public.app-category.developer-tools
-  icon: build/icon.png
+  icon: build/icon.icns
+  darkModeSupport: true
 
 dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}

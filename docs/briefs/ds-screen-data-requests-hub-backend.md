@@ -16,7 +16,7 @@ Contract you must export from `unify/src/engine/unify/requests/index.ts`:
 Implement, using existing engine modules wherever DSH already has the logic (instructions/, summaries/, toolpacks/, accounts/, runtime/dependencies.ts) instead of rewriting it:
 - Files: tree listing (lazy per folder, ignore node_modules/.git), read file, write file, watch notifications if the screens ask for them.
 - Knowledge: list/read/create/update/delete rules, skills, memory with audiences (Everyone / Main agent / Subagents / profile), import a skill folder.
-- Toolpacks/Providers/Settings/Setup: whatever their protocol-requests ask for that the existing sidebar protocol (unify/src/engine/sidebar/view.ts) doesn't already provide (e.g. tools check + fix actions via runtime/dependencies.ts, per-model enable toggles, account labels, setup-complete flag stored in ~/.dsh/unify/).
+- Toolpacks/Providers/Settings/Setup: whatever their protocol-requests ask for that the existing sidebar protocol (unify/src/engine/sidebar/view.ts) doesn't already provide (e.g. tools check + fix actions via runtime/dependencies.ts, per-model enable toggles, account labels, setup-complete flag stored in ~/.unify/).
 - Hub (`engine/hub/`): `HubRegistry` interface (list/search packs, pack detail, install = download + run its install script, publish), a GitHub implementation for registry repo `raisinhvh/unify-hub` (index JSON + releases) that is NOT used by default, and a local fake registry (fixtures under engine/hub/fixtures) used in dev. NEVER contact GitHub, create a repo, or publish anything.
 - Tests: node tests in the style of unify/test (check unify/package.json for how tests compile/run) for the dispatcher and the fake hub.
 

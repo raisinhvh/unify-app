@@ -1,0 +1,144 @@
+{
+  "extends": "base",
+  "persisted": {
+    "panelOpen": false,
+    "layout": { "preset": "single", "cells": ["s-media"], "splits": { "x": 0.5, "y": 0.5 }, "focused": 0 }
+  },
+  "messages": [
+    {
+      "type": "sessionState",
+      "activeSessionId": "s-media",
+      "sessions": [
+        { "id": "s-media", "name": "Settings screen against mockup", "updatedAt": -1, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } }
+      ]
+    },
+    { "type": "runState", "sessionId": "s-media", "state": "tool", "label": "Working" },
+    {
+      "type": "timelineState",
+      "sessionId": "s-media",
+      "subagents": {
+        "iris": {
+          "id": "iris",
+          "title": "Iris",
+          "model": "Sonnet 5.5",
+          "prompt": "Render the furniture set and send the renders back",
+          "state": "complete",
+          "messages": [
+            { "id": "im1", "role": "assistant", "text": "Rendering the chair and the lamp first, then three material studies." },
+            {
+              "id": "im2",
+              "role": "tool",
+              "text": "",
+              "tool": {
+                "title": "Rendered",
+                "detail": "scenes/chair.blend",
+                "kind": "other",
+                "media": [
+                  { "name": "chair.png", "mimeType": "image/svg+xml", "file": "dev/media/render-chair.svg", "hash": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1", "width": 1024, "height": 768 }
+                ]
+              }
+            },
+            {
+              "id": "im3",
+              "role": "tool",
+              "text": "",
+              "tool": { "title": "send_media", "detail": "3 images to the main agent", "kind": "other" },
+              "media": [
+                { "name": "chair.png", "mimeType": "image/svg+xml", "file": "dev/media/render-chair.svg", "hash": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1", "width": 1024, "height": 768 },
+                { "name": "lamp.png", "mimeType": "image/svg+xml", "file": "dev/media/render-lamp.svg", "hash": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2", "width": 800, "height": 800 },
+                { "name": "scene-graph.png", "mimeType": "image/svg+xml", "file": "dev/media/flow-diagram.svg", "hash": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3", "width": 1100, "height": 620 }
+              ]
+            },
+            { "id": "im4", "role": "assistant", "text": "All six are sent. The lamp shade reads warmer than the reference; the material studies are the last three." }
+          ],
+          "sentToParent": [
+            { "name": "chair.png", "mimeType": "image/svg+xml", "file": "dev/media/render-chair.svg", "hash": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1", "width": 1024, "height": 768 },
+            { "name": "lamp.png", "mimeType": "image/svg+xml", "file": "dev/media/render-lamp.svg", "hash": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2", "width": 800, "height": 800 },
+            { "name": "scene-graph.png", "mimeType": "image/svg+xml", "file": "dev/media/flow-diagram.svg", "hash": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3", "width": 1100, "height": 620 },
+            { "name": "latency.png", "mimeType": "image/svg+xml", "file": "dev/media/latency-chart.svg", "hash": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3", "width": 960, "height": 600 },
+            { "name": "mobile.png", "mimeType": "image/svg+xml", "file": "dev/media/mobile-screen.svg", "hash": "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4", "width": 450, "height": 900 },
+            { "name": "materials.png", "mimeType": "image/svg+xml", "file": "dev/media/texture-swatch.svg", "hash": "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5", "width": 900, "height": 600 },
+            { "name": "terrain.png", "mimeType": "image/svg+xml", "file": "dev/media/terrain.svg", "hash": "c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6", "width": 1200, "height": 675 }
+          ]
+        },
+        "wren": {
+          "id": "wren",
+          "title": "Wren",
+          "model": "Haiku 5.5",
+          "prompt": "Capture every settings page",
+          "state": "running",
+          "messages": [
+            { "id": "wm1", "role": "assistant", "text": "Capturing the settings pages one by one." }
+          ]
+        }
+      },
+      "timeline": [
+        { "id": "u1", "kind": "message", "role": "user", "text": "check the settings screen against the mockup, and get the furniture renders done" },
+        {
+          "id": "t1",
+          "kind": "tool",
+          "event": {
+            "id": "t1",
+            "kind": "read",
+            "title": "Took screenshots",
+            "detail": "settings screen and pane header",
+            "full": "screenshot({ targets: ['settings', 'pane-header'] })",
+            "state": "complete",
+            "media": [
+              { "name": "settings.png", "mimeType": "image/svg+xml", "file": "dev/media/settings-screen.svg", "hash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "width": 1280, "height": 800 },
+              { "name": "pane-header.png", "mimeType": "image/svg+xml", "file": "dev/media/header-diff.svg", "hash": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2", "width": 1200, "height": 400 }
+            ]
+          }
+        },
+        { "id": "a1", "kind": "message", "role": "assistant", "text": "The toggles sit 4px lower than the mockup, and the header's model pill drifts right once the title is short. Here is the latency check you asked for:" },
+        {
+          "id": "media:m1",
+          "kind": "media",
+          "items": [
+            { "name": "latency.png", "mimeType": "image/svg+xml", "file": "dev/media/latency-chart.svg", "hash": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3", "width": 960, "height": 600 }
+          ]
+        },
+        { "id": "subagent:iris", "kind": "subagent", "agentId": "iris" },
+        { "id": "subagent:wren", "kind": "subagent", "agentId": "wren" }
+      ]
+    }
+  ],
+  "timed": [
+    {
+      "after": 1200,
+      "message": {
+        "type": "subagentEvent",
+        "sessionId": "s-media",
+        "agentId": "wren",
+        "sentToParent": [
+          { "name": "icons.png", "mimeType": "image/svg+xml", "file": "dev/media/icon-sheet.svg", "hash": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "width": 800, "height": 600 }
+        ]
+      }
+    },
+    {
+      "after": 2400,
+      "message": {
+        "type": "subagentEvent",
+        "sessionId": "s-media",
+        "agentId": "wren",
+        "sentToParent": [
+          { "name": "icons.png", "mimeType": "image/svg+xml", "file": "dev/media/icon-sheet.svg", "hash": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "width": 800, "height": 600 },
+          { "name": "palette.png", "mimeType": "image/svg+xml", "file": "dev/media/palette.svg", "hash": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2", "width": 1000, "height": 500 }
+        ]
+      }
+    },
+    {
+      "after": 3600,
+      "message": {
+        "type": "subagentEvent",
+        "sessionId": "s-media",
+        "agentId": "wren",
+        "sentToParent": [
+          { "name": "icons.png", "mimeType": "image/svg+xml", "file": "dev/media/icon-sheet.svg", "hash": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "width": 800, "height": 600 },
+          { "name": "palette.png", "mimeType": "image/svg+xml", "file": "dev/media/palette.svg", "hash": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2", "width": 1000, "height": 500 },
+          { "name": "wireframe.png", "mimeType": "image/svg+xml", "file": "dev/media/wireframe.svg", "hash": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3", "width": 1000, "height": 700 }
+        ]
+      }
+    }
+  ]
+}

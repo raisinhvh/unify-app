@@ -10,7 +10,7 @@ import { compareVersions, isVersion } from '../dist/update/version.mjs';
 
 const source = await readFile('src/engine/extension.ts', 'utf8');
 const bundle = await build({
-  stdin: { contents: source + '\nexport { ExtensionHost, DshSidebarProvider };', resolveDir: resolve('src/engine'), loader: 'ts' },
+  stdin: { contents: source + '\nexport { ExtensionHost, UnifySidebarProvider };', resolveDir: resolve('src/engine'), loader: 'ts' },
   bundle: true, write: false, platform: 'node', format: 'esm',
   logOverride: { 'import-is-undefined': 'silent' },
   plugins: [{ name: 'vscode-stub', setup(builder) {
@@ -18,7 +18,7 @@ const bundle = await build({
     builder.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: 'export const workspace = { isTrusted: true }; export const window = {}; export const Uri = { file: path => ({ fsPath: path }) };' }));
   } }],
 });
-const { ExtensionHost, DshSidebarProvider } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+const { ExtensionHost, UnifySidebarProvider } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 
 test('a one-line edit in a large file is one small hunk, not a whole-file rewrite', () => {
   const base = Array.from({ length: 2400 }, (_, i) => `line ${i}\n`).join('');
@@ -71,77 +71,102 @@ test('version comparison follows semver precedence including release candidates'
   assert.ok(compareVersions('1.0.0-alpha.1', '1.0.0-beta') < 0);
 });
 
-test('delegate_tasks runs every subagent at the same time', async () => {
+test('concurrent delegate_task calls run independently and reject invalid requests', async () => {
   const host = Object.create(ExtensionHost.prototype);
   let active = 0;
   let peak = 0;
+  let started = 0;
+  let notifyStarted;
+  const bothStarted = new Promise(resolveStarted => { notifyStarted = resolveStarted; });
   let release;
   const gate = new Promise(resolveGate => { release = resolveGate; });
   Object.assign(host, {
-    childRuns: new Set(), sidebar: { postMessage() {} },
-    subagentProfiles: () => [{ name: 'a', model: 'm', mode: 'read-only' }, { name: 'b', model: 'm', mode: 'read-only' }],
+    childRuns: new Set(), placesByChat: new Map(), sidebar: { postMessage() {} },
+    delegationProfiles: () => [{ name: 'a', model: 'm', mode: 'read-only' }, { name: 'b', model: 'm', mode: 'read-only' }],
     subagentInfos: () => [{ name: 'a' }, { name: 'b' }],
     availableModel: () => ({ name: 'm', enabled: true, backend: 'x', provider: 'deepseek-official' }),
     resolveRoute: async () => ({ model: {} }), releaseRuntime: async () => {}, mcpServers: () => [],
+    summariesOn: () => false, memorySettings: () => ({ enabled: false }), autoCompactAt: () => undefined,
     ensureRuntime: async () => ({ key: 'k', runtime: {
       newSession: async () => 'session', closeSession: async () => {},
-      prompt: async () => { active += 1; peak = Math.max(peak, active); await gate; active -= 1; },
+      prompt: async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        if (++started === 2) notifyStarted();
+        await gate;
+        active -= 1;
+      },
     } }),
   });
   const chat = { record: { id: 'chat', modelName: 'm' }, turnEntryId: 't', mirror: { cwd: process.cwd() }, children: new Set(), locks: new Map() };
-  const pending = host.runSubagents(chat, { tasks: [{ agent: 'a', task: 'one' }, { agent: 'b', task: 'two' }, { agent: 'missing', task: 'three' }] });
-  await new Promise(resolveTick => setTimeout(resolveTick, 20));
-  assert.equal(peak, 2);
-  release();
-  const result = await pending;
-  assert.match(result.text, /## Task 1: a/);
-  assert.match(result.text, /## Task 3: missing \(failed\)/);
-  assert.notEqual(result.isError, true);
-  assert.equal((await host.runSubagents(chat, { tasks: [] })).isError, true);
+  const pending = Promise.all([
+    host.runSubagent(chat, { agent: 'a', task: 'one' }),
+    host.runSubagent(chat, { agent: 'b', task: 'two' }),
+  ]);
+  try {
+    await bothStarted;
+    assert.equal(peak, 2);
+  } finally { release(); }
+  const results = await pending;
+  assert.equal(results.length, 2);
+  for (const result of results) {
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /finished without a written report/);
+  }
+  const missing = await host.runSubagent(chat, { agent: 'missing', task: 'three' });
+  assert.equal(missing.isError, true);
+  assert.match(missing.text, /Unknown subagent "missing"/);
+  const empty = await host.runSubagent(chat, {});
+  assert.equal(empty.isError, true);
+  assert.match(empty.text, /Unknown subagent ""/);
+  const invalid = await host.runSubagent(chat, { agent: 'a', task: '  ' });
+  assert.equal(invalid.isError, true);
+  assert.match(invalid.text, /"task" is required/);
 });
 
 test('queue mode waits for the running turn while interrupt mode cancels it', async () => {
   for (const mode of ['queue', 'interrupt']) {
     const host = Object.create(ExtensionHost.prototype);
-    const chat = { running: true, record: { id: 'chat' }, queuedImages: [], queuedPrompt: 'earlier' };
+    const chat = { running: true, record: { id: 'chat' }, queue: [{ prompt: 'earlier', images: [] }] };
     const calls = [];
     Object.assign(host, {
-      active: { id: 'chat' }, chats: new Map([['chat', chat]]), saveImages: async () => [],
+      active: { id: 'chat' }, chats: new Map([['chat', chat]]), deletedSessions: new Set(), promptStarts: new Map(),
+      saveImages: async () => [], loadChat: async () => chat, replayTranscript: () => {},
       cancel: (clear, id) => calls.push(['cancel', clear, id]),
       sidebar: { postMessage: message => calls.push(message) },
     });
     await host.sendPrompt('next', undefined, undefined, undefined, mode);
-    assert.equal(chat.queuedPrompt, 'earlier\n\nnext');
+    assert.deepEqual(chat.queue.map(item => item.prompt), mode === 'queue' ? ['earlier', 'next'] : ['next', 'earlier']);
     assert.equal(calls.some(call => Array.isArray(call) && call[0] === 'cancel'), mode === 'interrupt');
     const queued = calls.find(call => call.type === 'queueState');
-    assert.equal(queued.text, 'earlier\n\nnext');
+    assert.deepEqual(queued.items, mode === 'queue' ? ['earlier', 'next'] : ['next', 'earlier']);
   }
 });
 
 test('the sidebar tracks queued messages and forgets deleted sessions', () => {
-  const sidebar = new DshSidebarProvider({});
+  const sidebar = new UnifySidebarProvider({});
   sidebar.postMessage({ type: 'userMessage', sessionId: 'chat', entryId: 'u', text: 'hi' });
-  sidebar.postMessage({ type: 'queueState', sessionId: 'chat', text: 'later' });
-  assert.equal(sidebar.state.queues.chat.text, 'later');
-  sidebar.postMessage({ type: 'queueState', sessionId: 'chat' });
-  assert.equal(sidebar.state.queues.chat, undefined);
+  sidebar.postMessage({ type: 'queueState', sessionId: 'chat', items: ['later'] });
+  assert.deepEqual(sidebar.state.queues.chat, ['later']);
+  sidebar.postMessage({ type: 'queueState', sessionId: 'chat', items: [] });
+  assert.deepEqual(sidebar.state.queues.chat, []);
   sidebar.postMessage({ type: 'sessionDeleted', sessionId: 'chat' });
   assert.equal(sidebar.hasTimeline('chat'), false);
 });
 
 test('deleting a chat removes its record, transcript, mirror and selects the next chat', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'dsh-delete-'));
+  const dir = await mkdtemp(join(tmpdir(), 'unify-delete-'));
   try {
     const mirrorId = '11111111-1111-4111-8111-111111111111';
     const host = Object.create(ExtensionHost.prototype);
-    const store = new Map([['dsh.ide.sessions.v1', [
+    const store = new Map([['unify.ide.sessions.v1', [
       { id: 'one', name: 'One', mirrorId },
       { id: 'two', name: 'Two', mirrorId: '22222222-2222-4222-8222-222222222222' },
-    ]], ['dsh.ide.activeSession.v1', 'one']]);
+    ]], ['unify.ide.activeSession.v1', 'one']]);
     const calls = [];
     Object.assign(host, {
-      deletedSessions: new Set(), chats: new Map(), transcripts: new Map([['one', []]]), active: { id: 'one' },
-      context: { workspaceState: { get: key => store.get(key), update: async (key, value) => { store.set(key, value); } }, globalStorageUri: { fsPath: dir } },
+      deletedSessions: new Set(), chats: new Map(), chatLoads: new Map(), transcripts: new Map([['one', []]]), active: { id: 'one' },
+      context: { workspaceState: { get: (key, fallback) => store.has(key) ? store.get(key) : fallback, update: async (key, value) => { store.set(key, value); } }, globalStorageUri: { fsPath: dir } },
       unloadChat: async id => { calls.push(['unload', id]); host.active = undefined; },
       saveTranscripts: async () => {}, refreshSessions: () => {}, syncActiveView: () => {}, updateStatus: () => {},
       continueChat: async id => { calls.push(['continue', id]); },
@@ -149,13 +174,13 @@ test('deleting a chat removes its record, transcript, mirror and selects the nex
       sidebar: { postMessage: message => calls.push(message) },
     });
     await host.deleteSession('one');
-    assert.deepEqual(store.get('dsh.ide.sessions.v1').map(item => item.id), ['two']);
-    assert.equal(store.get('dsh.ide.activeSession.v1'), 'two');
+    assert.deepEqual(store.get('unify.ide.sessions.v1').map(item => item.id), ['two']);
+    assert.equal(store.get('unify.ide.activeSession.v1'), 'two');
     assert.ok(host.deletedSessions.has('one'));
     assert.ok(calls.some(call => call.type === 'sessionDeleted' && call.sessionId === 'one'));
     assert.deepEqual(calls.filter(Array.isArray), [['unload', 'one'], ['continue', 'two']]);
     await host.saveSession({ id: 'one', name: 'One' });
-    assert.deepEqual(store.get('dsh.ide.sessions.v1').map(item => item.id), ['two']);
+    assert.deepEqual(store.get('unify.ide.sessions.v1').map(item => item.id), ['two']);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -168,19 +193,19 @@ test('memory folders are always allowed, and edits outside the project are never
   const edit = path => ({ tool: 'Edit', input: { file_path: path } });
   for (const mode of ['ask', 'auto']) {
     host.approvalMode = mode;
-    assert.equal(await host.decideApproval(chat, parent, 'Edit', edit('/copy/.dsh/global-memory/tools/rig.md')), true, mode);
-    assert.equal(await host.decideApproval(chat, parent, 'Edit', edit('.dsh/memory/notes.md')), true, mode);
+    assert.equal(await host.decideApproval(chat, parent, 'Edit', edit('/copy/.unify/global-memory/tools/rig.md')), true, mode);
+    assert.equal(await host.decideApproval(chat, parent, 'Edit', edit('.unify/memory/notes.md')), true, mode);
   }
   // With memory turned off, its folders are ordinary files again and ask like any other edit.
   host.approvalMode = 'ask';
   host.memorySettings = () => ({ enabled: false });
-  assert.equal(await host.decideApproval(chat, parent, 'Edit', edit('.dsh/memory/notes.md')), false);
+  assert.equal(await host.decideApproval(chat, parent, 'Edit', edit('.unify/memory/notes.md')), false);
   assert.deepEqual(asked.splice(0), ['Permission requested']);
   delete host.memorySettings;
   // Read-only subagents and read-only job phases still may not write memory.
-  assert.match(await host.decideApproval(chat, { owner: 'sub', label: 'explorer', readOnly: true }, 'Edit', edit('.dsh/memory/notes.md')), /read-only/);
+  assert.match(await host.decideApproval(chat, { owner: 'sub', label: 'explorer', readOnly: true }, 'Edit', edit('.unify/memory/notes.md')), /read-only/);
   chat.record.job = { phase: 'verify' };
-  assert.match(await host.decideApproval(chat, parent, 'Edit', edit('.dsh/memory/notes.md')), /read-only phase/);
+  assert.match(await host.decideApproval(chat, parent, 'Edit', edit('.unify/memory/notes.md')), /read-only phase/);
   chat.record.job = undefined;
   // Outside the working copy nothing reviews the edit: auto mode and Claude's auto-allow hint ask anyway; full access does not.
   host.approvalMode = 'auto';

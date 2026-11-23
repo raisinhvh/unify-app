@@ -7,7 +7,7 @@ import { listInstructions, readInstruction, removeInstruction, saveInstruction }
 
 async function roots() {
   const base = await mkdtemp(join(tmpdir(), 'dsh-instructions-'));
-  const result = { workspace: join(base, 'ws'), dshHome: join(base, 'dsh'), agentsHome: join(base, 'agents') };
+  const result = { workspace: join(base, 'ws'), unifyHome: join(base, 'dsh'), agentsHome: join(base, 'agents') };
   for (const dir of Object.values(result)) await mkdir(dir, { recursive: true });
   return result;
 }
@@ -23,13 +23,13 @@ test('lists workspace and global rules and skills with their descriptions', asyn
   await writeFile(join(r.workspace, '.agents', 'skills', 'review', 'SKILL.md'), '---\nname: review\ndescription: "Review a diff"\n---\nBody');
   await mkdir(join(r.agentsHome, 'skills', 'shared'), { recursive: true });
   await writeFile(join(r.agentsHome, 'skills', 'shared', 'SKILL.md'), '---\nname: shared\ndescription: Shared skill\n---\n');
-  await writeFile(join(r.dshHome, 'AGENTS.md'), 'global');
+  await writeFile(join(r.unifyHome, 'AGENTS.md'), 'global');
 
   const items = await listInstructions(r);
   assert.deepEqual(items.map(item => [item.id, item.kind, item.scope, item.name]), [
     ['ws:AGENTS.md', 'rule', 'workspace', 'AGENTS.md'],
     ['ws:.agents/skills/review/SKILL.md', 'skill', 'workspace', 'review'],
-    ['dsh:AGENTS.md', 'rule', 'global', 'AGENTS.md'],
+    ['unify:AGENTS.md', 'rule', 'global', 'AGENTS.md'],
     ['agents:skills/shared/SKILL.md', 'skill', 'global', 'shared'],
   ]);
   assert.equal(items[1].description, 'Review a diff');
@@ -58,7 +58,7 @@ test('adds a workspace rule and a skill, then edits and removes them', async () 
 test('adds global rules and skills outside the workspace', async () => {
   const r = await roots();
   await saveInstruction(r, { kind: 'rule', scope: 'global', file: 'AGENTS.md', content: '' });
-  assert.match(await readFile(join(r.dshHome, 'AGENTS.md'), 'utf8'), /^# Rules/);
+  assert.match(await readFile(join(r.unifyHome, 'AGENTS.md'), 'utf8'), /^# Rules/);
   const skill = await saveInstruction(r, { kind: 'skill', scope: 'global', name: 'helper', content: '' });
   assert.equal(skill.file, join(r.agentsHome, 'skills', 'helper', 'SKILL.md'));
   assert.match(await readFile(skill.file, 'utf8'), /# helper/);
@@ -85,5 +85,5 @@ test('works without an open workspace folder', async () => {
   r.workspace = undefined;
   await assert.rejects(saveInstruction(r, { kind: 'rule', scope: 'workspace', file: 'AGENTS.md', content: '' }), /Open a workspace/);
   await saveInstruction(r, { kind: 'rule', scope: 'global', file: 'AGENTS.md', content: 'g' });
-  assert.deepEqual((await listInstructions(r)).map(item => item.id), ['dsh:AGENTS.md']);
+  assert.deepEqual((await listInstructions(r)).map(item => item.id), ['unify:AGENTS.md']);
 });

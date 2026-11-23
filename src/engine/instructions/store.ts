@@ -3,9 +3,14 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 
 export type InstructionKind = 'rule' | 'skill';
 export type InstructionScope = 'workspace' | 'global';
-type Base = 'ws' | 'dsh' | 'agents';
+type Base = 'ws' | 'unify' | 'agents';
 
-export interface InstructionRoots { workspace?: string; dshHome: string; agentsHome: string }
+export interface InstructionRoots {
+  workspace?: string;
+  /** Unify's data home: the same folder as `unifyHome()`. */
+  unifyHome?: string;
+  agentsHome: string;
+}
 export interface InstructionItem {
   id: string;
   kind: InstructionKind;
@@ -32,8 +37,14 @@ const SKIPPED_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.venv', 
 const MAX_DEPTH = 6;
 const MAX_ITEMS = 500;
 
+const homeOf = (roots: InstructionRoots): string => {
+  const home = roots.unifyHome;
+  if (!home) throw new Error('Instruction roots have no data home.');
+  return home;
+};
+
 const baseDir = (roots: InstructionRoots, base: Base): string | undefined =>
-  base === 'ws' ? roots.workspace : base === 'dsh' ? roots.dshHome : roots.agentsHome;
+  base === 'ws' ? roots.workspace : base === 'unify' ? homeOf(roots) : roots.agentsHome;
 
 function skillDescription(text: string): string | undefined {
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1];
@@ -83,9 +94,9 @@ export async function listInstructions(roots: InstructionRoots): Promise<Instruc
       else items.push({ id: `ws:${rel}`, kind: 'rule', scope: 'workspace', name: rel, path: rel });
     }, budget);
   }
-  try { await fs.access(join(roots.dshHome, 'AGENTS.md')); items.push({ id: 'dsh:AGENTS.md', kind: 'rule', scope: 'global', name: 'AGENTS.md', path: 'AGENTS.md' }); }
+  try { await fs.access(join(homeOf(roots), 'AGENTS.md')); items.push({ id: 'unify:AGENTS.md', kind: 'rule', scope: 'global', name: 'AGENTS.md', path: 'AGENTS.md' }); }
   catch { /* no global rules yet */ }
-  for (const [base, root] of [['dsh', roots.dshHome], ['agents', roots.agentsHome]] as const) {
+  for (const [base, root] of [['unify', homeOf(roots)], ['agents', roots.agentsHome]] as const) {
     const skills = join(root, 'skills');
     await walk(skills, 0, async (file, name) => {
       if (name === 'SKILL.md') items.push(skillItem(base, 'global', toRel(root, file), await describe(file)));
@@ -99,7 +110,7 @@ function absolute(roots: InstructionRoots, id: string): string {
   const split = id.indexOf(':');
   const base = id.slice(0, split) as Base;
   const rel = id.slice(split + 1);
-  const root = split > 0 && (base === 'ws' || base === 'dsh' || base === 'agents') ? baseDir(roots, base) : undefined;
+  const root = split > 0 && (base === 'ws' || base === 'unify' || base === 'agents') ? baseDir(roots, base) : undefined;
   if (!root || !rel || rel.includes('\0') || rel.split('/').some(part => !part || part === '..')) throw new Error('Unknown rule or skill.');
   const file = resolve(root, ...rel.split('/'));
   if (!file.startsWith(resolve(root) + sep)) throw new Error('Unknown rule or skill.');
@@ -160,7 +171,7 @@ export async function saveInstruction(roots: InstructionRoots, request: Instruct
       id = `ws:${file}`;
     } else {
       if (file !== 'AGENTS.md') throw new Error('Global rules live in AGENTS.md.');
-      id = 'dsh:AGENTS.md';
+      id = 'unify:AGENTS.md';
     }
     if (!text.trim()) text = '# Rules\n\nAdd instructions here.\n';
   }

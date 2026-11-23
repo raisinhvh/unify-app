@@ -1,5 +1,25 @@
 /** The setup summary main sends to the renderer as { type: 'setupStatus' }. */
-import type { SetupStatus } from './importer';
+
+export interface MissingCredential {
+  kind: 'secret';
+  provider: string;
+  accountId: string;
+  label: string;
+  reason: string;
+}
+
+export interface SetupStatus {
+  needsSetup: boolean;
+  firstRun: boolean;
+  importedAccounts: number;
+  importedOAuthAccounts: number;
+  importedSettings: number;
+  importedWorkspace: boolean;
+  missing: MissingCredential[];
+  notes: string[];
+  dataRoot: string;
+  sources: string[];
+}
 
 let status: SetupStatus | undefined;
 

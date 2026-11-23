@@ -1,24 +1,13 @@
 /**
- * Setup wizard data: the CLI tools check and its fix actions, imports from an existing DSH install, the
- * setup-complete flag and the default project.
+ * Setup wizard data: the CLI tools check and its fix actions, the setup-complete flag and the default project.
  *
  * Tool fixes reuse `runtime/dependencies.ts`, the same installer the sidebar protocol uses for provider CLIs.
- * Imports only touch packs from `~/.dsh/toolpacks` that Unify does not have yet; rules, skills and memory are
- * already shared with DSH because both read `~/.dsh`, so importing "knowledge" only counts what is visible.
+ * The setup state lives in Unify's own home (`paths.unifyRoot`).
  */
-import * as fs from 'node:fs';
-import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 import { run, WindowsDependencies } from '../../runtime/dependencies';
-import { parseRuleSections } from './knowledge';
 import { RequestPaths, readJsonFile, writeJsonFile } from './state';
-import {
-  DshImportScan,
-  ImportKind,
-  SetupState,
-  SetupSummary,
-  ToolStatus,
-} from './types';
+import { SetupState, SetupSummary, ToolStatus } from './types';
 
 interface SetupFile {
   complete: boolean;
@@ -105,7 +94,7 @@ export function setDefaultProject(
 export function accountProviders(paths: RequestPaths): Set<string> {
   const state = readJsonFile<Record<string, unknown>>(paths.stateFile, {});
   const providers = new Set<string>();
-  for (const key of ['dsh.oauthCliAccounts.v1', 'dsh.accounts.v1']) {
+  for (const key of ['unify.oauthCliAccounts.v1', 'unify.accounts.v1']) {
     const list = state[key];
     if (!Array.isArray(list)) continue;
     for (const account of list) {
@@ -114,7 +103,7 @@ export function accountProviders(paths: RequestPaths): Set<string> {
       }
     }
   }
-  const cursor = state['dsh.cursor.v1'];
+  const cursor = state['unify.cursor.v1'];
   if (cursor && typeof cursor === 'object' && (cursor as { connected?: unknown }).connected === true) providers.add('cursor-acp');
   return providers;
 }
@@ -175,115 +164,4 @@ export async function fixTool(paths: RequestPaths, id: string): Promise<ToolStat
   }
   await new WindowsDependencies(paths.storageRoot).installProvider(provider);
   return checkTools(paths);
-}
-
-/* ---------------------------------------------------------------------------------------------------------------
- * Imports from an existing DSH install
- */
-
-async function countSkillFolders(root: string): Promise<number> {
-  let count = 0;
-  const walk = async (directory: string, depth: number): Promise<void> => {
-    if (depth > 6) return;
-    let entries;
-    try { entries = await fsp.readdir(directory, { withFileTypes: true }); }
-    catch { return; }
-    for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
-      const full = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (!entry.name.startsWith('.')) await walk(full, depth + 1);
-      } else if (entry.isFile() && entry.name === 'SKILL.md') {
-        count += 1;
-      }
-    }
-  };
-  await walk(root, 0);
-  return count;
-}
-
-async function countMemoryNotes(root: string): Promise<number> {
-  let count = 0;
-  const walk = async (directory: string, depth: number): Promise<void> => {
-    if (depth > 6) return;
-    let entries;
-    try { entries = await fsp.readdir(directory, { withFileTypes: true }); }
-    catch { return; }
-    for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
-      const full = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (!entry.name.startsWith('.')) await walk(full, depth + 1);
-      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
-        count += 1;
-      }
-    }
-  };
-  await walk(root, 0);
-  return count;
-}
-
-async function installedNames(paths: RequestPaths): Promise<Set<string>> {
-  try {
-    const entries = await fsp.readdir(paths.toolpacksDir, { withFileTypes: true });
-    return new Set(entries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.')).map(entry => entry.name));
-  } catch {
-    return new Set();
-  }
-}
-
-/** Toolpacks in `~/.dsh/toolpacks` Unify does not have, plus counts of shared knowledge. */
-export async function scanDshImports(paths: RequestPaths): Promise<DshImportScan> {
-  const installed = await installedNames(paths);
-  const available: string[] = [];
-  try {
-    const entries = await fsp.readdir(path.join(paths.dshHome, 'toolpacks'), { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith('.') || installed.has(entry.name)) continue;
-      available.push(entry.name);
-    }
-  } catch {
-    // No toolpacks folder: nothing to import.
-  }
-  let rules = 0;
-  try {
-    const text = await fsp.readFile(path.join(paths.dshHome, 'AGENTS.md'), 'utf8');
-    const parsed = parseRuleSections(text);
-    rules = parsed.sections.length || (parsed.preamble.trim() ? 1 : 0);
-  } catch {
-    // No global rules.
-  }
-  const skills = (await countSkillFolders(path.join(paths.dshHome, 'skills')))
-    + (await countSkillFolders(path.join(paths.agentsHome, 'skills')));
-  const memoryNotes = await countMemoryNotes(path.join(paths.dshHome, 'memory'));
-  return { toolpacks: available.sort(), rules, skills, memoryNotes };
-}
-
-export interface ImportResult {
-  type: 'dshImportResult';
-  what: ImportKind;
-  ok: boolean;
-  count: number;
-  error?: string;
-}
-
-/** Copies DSH toolpacks; knowledge is already shared through `~/.dsh`, so it only counts it. */
-export async function importFromDsh(paths: RequestPaths, what: ImportKind): Promise<ImportResult> {
-  const scan = await scanDshImports(paths);
-  if (what === 'toolpacks') {
-    let count = 0;
-    await fsp.mkdir(paths.toolpacksDir, { recursive: true });
-    for (const name of scan.toolpacks) {
-      const source = path.join(paths.dshHome, 'toolpacks', name);
-      const destination = path.join(paths.toolpacksDir, name);
-      if (fs.existsSync(destination)) continue;
-      await fsp.cp(source, destination, { recursive: true, force: false, errorOnExist: false });
-      count += 1;
-    }
-    return { type: 'dshImportResult', what, ok: true, count };
-  }
-  if (what === 'knowledge') {
-    return { type: 'dshImportResult', what, ok: true, count: scan.rules + scan.skills + scan.memoryNotes };
-  }
-  return { type: 'dshImportResult', what, ok: false, count: 0, error: 'Unknown import.' };
 }

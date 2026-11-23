@@ -1,0 +1,13 @@
+[
+  { "wait": 3500 },
+  { "eval": "__w3b.seedDocs()" },
+  { "wait": 1500 },
+  { "mark": "create doc" },
+  { "eval": "__w3b.createDoc('Ask before deleting files')" },
+  { "wait": 1600 },
+  { "mark": "rename doc" },
+  { "eval": "__w3b.renameDoc('Ask before deleting files', 'Confirm every delete')" },
+  { "wait": 1600 },
+  { "mark": "delete doc" },
+  { "eval": "__w3b.deleteDoc('Confirm every delete')" }
+]

@@ -25,7 +25,7 @@ export function appInfo(paths: RequestPaths, version?: string): AppInfo {
   return {
     version: version || packageVersion(),
     channel: 'stable',
-    dataFolder: paths.dshHome,
+    dataFolder: paths.unifyHome,
     update: { state: 'idle' },
   };
 }

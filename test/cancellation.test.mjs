@@ -15,11 +15,11 @@ const bundle = await build({
     builder.onResolve({ filter: /^node:child_process$/ }, () => ({ path: 'spawn', namespace: 'stub' }));
     builder.onResolve({ filter: /^vscode$/ }, () => ({ path: 'vscode', namespace: 'stub' }));
     builder.onResolve({ filter: /accounts\/oauthCli$/ }, () => ({ path: 'account', namespace: 'stub' }));
-    builder.onResolve({ filter: /\/dshUpdate$/ }, () => ({ path: 'update', namespace: 'stub' }));
+    builder.onResolve({ filter: /\/unifyUpdate$/ }, () => ({ path: 'update', namespace: 'stub' }));
     builder.onLoad({ filter: /.*/, namespace: 'stub' }, args => ({ contents: {
-      spawn: 'export const spawn = (...args) => globalThis.__dshCancellationSpawn(...args);',
+      spawn: 'export const spawn = (...args) => globalThis.__unifyCancellationSpawn(...args); export const execFile = (_file, _args, _opts, cb) => { if (typeof _opts === "function") _opts(null, ""); else if (typeof cb === "function") cb(null, ""); };',
       account: 'export const cliCommand = provider => provider; export const cliEnv = () => ({});',
-      update: 'export const dshBinFrom = () => "dsh";',
+      update: 'export const agentRuntimeBinFrom = () => "unify";',
       vscode: `import { EventEmitter as Emitter } from 'node:events';
         export const workspace = {};
         export const Uri = { file: path => ({ fsPath: path }) };
@@ -59,7 +59,7 @@ test('Windows cancellation kills the process tree once, including descendants', 
   const child = fakeChild();
   child.pid = 12345;
   const calls = [];
-  globalThis.__dshCancellationSpawn = (...args) => { calls.push(args); return fakeChild(); };
+  globalThis.__unifyCancellationSpawn = (...args) => { calls.push(args); return fakeChild(); };
   terminateProcessTree(child);
   terminateProcessTree(child);
   assert.equal(calls.length, 1);
@@ -71,14 +71,14 @@ test('Windows cancellation kills the process tree once, including descendants', 
 
 test('Claude cancellation releases the caller without waiting for inherited pipes to close', async () => {
   const child = fakeChild();
-  globalThis.__dshCancellationSpawn = () => child;
+  globalThis.__unifyCancellationSpawn = () => child;
   const runtime = new OAuthCliRuntime();
   const result = runtime.prompt(turn('claude-cli'));
   runtime.cancel();
   assert.equal(await result, undefined);
   assert.equal(child.stdout.destroyed, true);
   const nextChild = fakeChild();
-  globalThis.__dshCancellationSpawn = () => nextChild;
+  globalThis.__unifyCancellationSpawn = () => nextChild;
   const next = runtime.prompt(turn('claude-cli'));
   child.emit('close', 1);
   assert.equal(runtime.child, nextChild);
@@ -90,7 +90,7 @@ test('ACP cancellation has a deadline and can restart without an old exit invali
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const makeChild = () => fakeChild(frame => ({ initialize: {}, authenticate: {}, 'session/new': { sessionId: 'session' } })[frame.method]);
   const child = makeChild();
-  globalThis.__dshCancellationSpawn = () => child;
+  globalThis.__unifyCancellationSpawn = () => child;
   const runtime = new AcpRuntime({ appendLine() {} }, async () => undefined);
   const route = { kind: 'cursor', command: 'cursor', args: [], cwd: '.' };
   await runtime.start(route);
@@ -100,7 +100,7 @@ test('ACP cancellation has a deadline and can restart without an old exit invali
   await result;
   assert.equal(runtime.isRunning, false);
   const nextChild = makeChild();
-  globalThis.__dshCancellationSpawn = () => nextChild;
+  globalThis.__unifyCancellationSpawn = () => nextChild;
   await runtime.start(route);
   child.emit('exit', 1);
   assert.equal(runtime.isRunning, true);
@@ -145,9 +145,9 @@ test('direct mode edits the real workspace and only attributes changes made duri
   const { promises: fs } = await import('node:fs');
   const { join } = await import('node:path');
   const { tmpdir } = await import('node:os');
-  globalThis.__dshCancellationSpawn = () => { throw new Error('git unavailable'); };
-  const root = await fs.mkdtemp(join(tmpdir(), 'dsh-direct-root-'));
-  const storage = await fs.mkdtemp(join(tmpdir(), 'dsh-direct-storage-'));
+  globalThis.__unifyCancellationSpawn = () => { throw new Error('git unavailable'); };
+  const root = await fs.mkdtemp(join(tmpdir(), 'unify-direct-root-'));
+  const storage = await fs.mkdtemp(join(tmpdir(), 'unify-direct-storage-'));
   const reports = [];
   let mirror;
   try {

@@ -85,6 +85,37 @@ function persistTabs(): void {
   writePersisted('files.active', activePath());
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Organic hand-off: files the agent just created (their tab types its name in) and deleted files whose tab is
+// playing its select-all sweep before it closes.
+
+/** How long after a 'created' change a newly mounted tab still counts as new (ms). */
+const createdWindow = 4000;
+
+/** Longest a deleted file's tab waits for its sweep before it closes anyway (editor not mounted, offscreen). */
+const deleteFallback = 1500;
+
+const createdAt = new Map<string, number>();
+
+export function createdRecently(path: string): boolean {
+  const at = createdAt.get(path);
+  return at !== undefined && performance.now() - at < createdWindow;
+}
+
+const [deletingTabs, setDeletingTabs] = createSignal<string[]>([]);
+export { deletingTabs };
+
+function markTabDeleting(path: string): void {
+  if (!deletingTabs().includes(path)) setDeletingTabs([...deletingTabs(), path]);
+  window.setTimeout(() => {
+    if (deletingTabs().includes(path)) closeTab(path);
+  }, deleteFallback);
+}
+
+function unmarkTabDeleting(path: string): void {
+  if (deletingTabs().includes(path)) setDeletingTabs(deletingTabs().filter(item => item !== path));
+}
+
 export function openFile(path: string): void {
   if (!tabs().includes(path)) setTabsSignal([...tabs(), path]);
   setActivePathSignal(path);
@@ -98,6 +129,7 @@ export function closeTab(path: string): void {
   const index = list.indexOf(path);
   if (index < 0) return;
   const next = list.filter(item => item !== path);
+  unmarkTabDeleting(path);
   setTabsSignal(next);
   if (activePath() === path) setActivePathSignal(next[Math.min(index, next.length - 1)]);
   setDocuments(produce(store => delete store[path]));
@@ -130,9 +162,13 @@ onFileChanged(change => {
   void loadDir(parentPath(change.path), true);
   const document = documents[change.path];
   if (change.kind === 'deleted') {
-    // organic: a deleted file's tab and row should sweep out (select-all sweep) before closing.
-    if (document && document.draft === undefined) closeTab(change.path);
+    // The tab sweeps its name out (FilesEditor's Tab), then closes; the tree row sweeps through OrganicList.
+    if (document && document.draft === undefined) markTabDeleting(change.path);
     return;
+  }
+  if (change.kind === 'created') {
+    createdAt.set(change.path, performance.now());
+    unmarkTabDeleting(change.path);
   }
   if (document && document.draft === undefined) void loadDocument(change.path, true);
 });

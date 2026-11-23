@@ -2,17 +2,18 @@
  * Providers › Usage (Figma "24c · Providers · Usage").
  *
  * Combined usage is DSH's own maths from store/usage.ts: each account's segment is weighted by its plan's
- * monthly price, so a $100 Max plan counts ten times a $10 Go plan. Everything animates on springs; the big
- * percent will become an organic RollingNumber when that primitive lands.
+ * monthly price, so a $100 Max plan counts ten times a $10 Go plan. Bars animate on springs; the percents are
+ * organic RollingNumbers (odometer roll, motion.organic.counters).
  */
 import { For, Index, Show, type JSX } from 'solid-js';
-import { Button, Icon, IconButton } from '../../components';
+import { Button, Icon, IconButton, ProviderGlyph } from '../../components';
 import { createSpring, pressable } from '../../motion';
+import { RollingNumber } from '../../motion/organic';
 import type { UsageEntry } from '../../store/usage';
 import { clampPercent, resetColor, resetIn, usageSummary } from '../../store/usage';
 import { viewState } from '../../store';
 import {
-  accountNameWithProvider,
+  accountName,
   accountsWithoutUsage,
   allAccounts,
   openProviderUsage,
@@ -21,7 +22,6 @@ import {
   signedInWith,
   usageUpdatedAgo,
 } from './adapter';
-import { ProviderGlyph } from './glyphs';
 import { select, setAddProviderOpen } from './selection';
 
 function latestUpdate(): number | undefined {
@@ -53,22 +53,30 @@ function StackedBar(): JSX.Element {
   );
 }
 
-/** "Mistral · API key" — enough to recognise which account still has no numbers. */
-function missingDescription(): string {
-  const accounts = accountsWithoutUsage();
-  const first = accounts[0];
-  if (!first) return '';
-  return `${providerTitle(first.provider)} · ${signedInWith(first)}`;
+/** The first account still without numbers: "Mistral" then a muted "API key". */
+function MissingAccount(): JSX.Element {
+  const first = () => accountsWithoutUsage()[0];
+  return (
+    <Show when={first()}>
+      {account => (
+        <>
+          <span class="pv-usage-missing-provider">{providerTitle(account().provider)}</span>
+          <span class="pv-usage-missing-account">{signedInWith(account())}</span>
+        </>
+      )}
+    </Show>
+  );
 }
 
 function UsageRow(props: { entry: UsageEntry }): JSX.Element {
   const entry = () => props.entry;
   const width = createSpring(() => clampPercent(entry().used), 'panel', { precision: 10 });
   const reset = () => entry().binding.resetsAt;
-  const planLabel = () => {
+  const name = () => accountName(entry().account);
+  const planPrice = () => {
     const plan = entry().plan;
-    if (!plan) return '—';
-    return `${plan.name} · ${plan.monthlyUsd ? `$${plan.monthlyUsd}/mo` : 'Free'}`;
+    if (!plan) return '';
+    return plan.monthlyUsd ? `$${plan.monthlyUsd}/mo` : 'Free';
   };
   return (
     <div class="pv-usage-row">
@@ -79,15 +87,31 @@ function UsageRow(props: { entry: UsageEntry }): JSX.Element {
         onClick={() => select({ kind: 'account', id: entry().account.id })}
       >
         <ProviderGlyph provider={entry().account.provider} size={16} class="pv-usage-glyph" />
-        <span class="pv-usage-name">{accountNameWithProvider(entry().account)}</span>
+        <span class="pv-usage-name" title={`${name().provider} ${name().label}`}>
+          {name().provider}
+          <span class="pv-usage-muted">{name().label}</span>
+        </span>
       </button>
-      <span class="pv-usage-plan" title={planLabel()}>{planLabel()}</span>
-      <span class="pv-usage-share type-mono">{Math.round(entry().share)}%</span>
+      <span class="pv-usage-plan" title={entry().plan ? `${entry().plan!.name} ${planPrice()}` : undefined}>
+        <Show when={entry().plan} fallback="—">
+          {plan => (
+            <>
+              {plan().name}
+              <span class="pv-usage-muted">{planPrice()}</span>
+            </>
+          )}
+        </Show>
+      </span>
+      <span class="pv-usage-share type-mono">
+        <RollingNumber value={`${Math.round(entry().share)}%`} data-motion="usage-share" />
+      </span>
       <span class="pv-usage-limit">{entry().binding.label}</span>
       <span class="pv-usage-bar" aria-hidden="true">
         <span class="pv-usage-fill" style={{ width: `${clampPercent(width())}%`, background: entry().color }} />
       </span>
-      <span class="pv-usage-used type-mono">{Math.round(entry().used)}%</span>
+      <span class="pv-usage-used type-mono">
+        <RollingNumber value={`${Math.round(entry().used)}%`} data-motion="usage-used" />
+      </span>
       <span class="pv-usage-reset" style={{ color: reset() ? resetColor(reset()!) : undefined }}>
         {reset() ? resetIn(reset()) || 'now' : '—'}
       </span>
@@ -111,7 +135,6 @@ function UsageEmpty(): JSX.Element {
 export function UsagePage(): JSX.Element {
   const summary = usageSummary;
   const accounts = allAccounts;
-  const combined = createSpring(() => summary().combined, 'panel', { precision: 100 });
   const updated = () => {
     const at = latestUpdate();
     return at ? usageUpdatedAgo(at) : '';
@@ -131,7 +154,7 @@ export function UsagePage(): JSX.Element {
           <h1 class="pv-title">Usage</h1>
           <p class="pv-page-status">
             Weighted by plan price
-            <Show when={updated()}>{text => <span> · updated {text()}</span>}</Show>
+            <Show when={updated()}>{text => <span>, updated {text()}</span>}</Show>
           </p>
         </div>
         <IconButton icon="refresh" label="Refresh usage" class="pv-icon-28" onClick={() => refreshUsage()} />
@@ -139,10 +162,12 @@ export function UsagePage(): JSX.Element {
 
       <Show when={accounts().length} fallback={<UsageEmpty />}>
         <div class="pv-combined">
-          {/* organic: RollingNumber — the combined percent should roll like an odometer. */}
-          <span class="pv-combined-value">{Math.round(combined())}%</span>
+          <span class="pv-combined-value">
+            <RollingNumber value={`${Math.round(summary().combined)}%`} data-motion="usage-combined" />
+          </span>
           <span class="pv-combined-caption">
-            combined usage across {summary().entries.length} account{summary().entries.length === 1 ? '' : 's'}
+            combined usage across <RollingNumber value={summary().entries.length} /> account
+            {summary().entries.length === 1 ? '' : 's'}
           </span>
         </div>
         <StackedBar />
@@ -162,14 +187,18 @@ export function UsagePage(): JSX.Element {
                 <span />
                 <span>Resets</span>
               </div>
-              <For each={summary().entries}>{entry => <UsageRow entry={entry} />}</For>
+              {/* Keyed by account: every usage update builds new entries, and a remounted row cannot roll its numbers. */}
+              <For each={summary().entries.map(entry => entry.account.id)}>
+                {id => <Show when={summary().entries.find(entry => entry.account.id === id)}>{entry => <UsageRow entry={entry()} />}</Show>}
+              </For>
             </div>
           </Show>
           <Show when={accountsWithoutUsage().length}>
             <footer class="pv-usage-footer">
               <span class="pv-usage-missing type-caption">
                 {accountsWithoutUsage().length} account{accountsWithoutUsage().length === 1 ? '' : 's'} without usage
-                data · {missingDescription()}
+                data
+                <MissingAccount />
               </span>
               <button
                 type="button"

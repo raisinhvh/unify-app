@@ -149,6 +149,30 @@ test('update changes agent state, unregister removes it and drops its inbox', ()
   assert.deepEqual(agentBus.listVisible('main-b'), []);
 });
 
+test('unregister returns undelivered messages to their sender as a notice', () => {
+  addAgent('main-a', { name: 'Main' });
+  addAgent('main-b', { name: 'Other', chatId: 'chat-b' });
+  const sent = agentBus.send('main-b', 'main-a', 'please check this');
+  agentBus.unregister('main-a');
+  const inbox = agentBus.takeInbox('main-b');
+  assert.equal(inbox.length, 1);
+  assert.equal(inbox[0].fromId, 'main-a');
+  assert.equal(inbox[0].toId, 'main-b');
+  assert.equal(inbox[0].replyToId, sent.id);
+  assert.match(inbox[0].text, /not delivered/);
+  assert.match(inbox[0].text, /please check this/);
+});
+
+test('an inbox keeps only the newest 100 messages', () => {
+  addAgent('main-a', { name: 'Main' });
+  addAgent('main-b', { name: 'Other', chatId: 'chat-b' });
+  for (let index = 0; index <= 100; index += 1) agentBus.send('main-b', 'main-a', `message ${index}`);
+  const inbox = agentBus.takeInbox('main-a');
+  assert.equal(inbox.length, 100);
+  assert.equal(inbox[0].text, 'message 1');
+  assert.equal(inbox.at(-1).text, 'message 100');
+});
+
 test('unsubscribing stops roster and message events', () => {
   const events = [];
   const unsubscribe = agentBus.onEvent(event => events.push(event));

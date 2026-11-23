@@ -6,11 +6,10 @@
  */
 import { createEffect, createSignal, For, onCleanup, Show, type JSX } from 'solid-js';
 import { Portal } from 'solid-js/web';
-import { Button, Icon, IconButton } from '../../components';
+import { Button, Icon, IconButton, ProviderGlyph } from '../../components';
 import { Presence } from '../../motion';
 import type { AddProviderOption } from './adapter';
 import { addProviderOptions, connectOAuth, connectSelfHosted, connectWithKey } from './adapter';
-import { ProviderGlyph } from './glyphs';
 import { addProviderOpen, setAddProviderOpen } from './selection';
 
 function AddForm(props: { option: AddProviderOption }): JSX.Element {

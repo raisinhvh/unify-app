@@ -10,7 +10,7 @@
   text-align: left;
   white-space: nowrap;
   background-color: rgb(from var(--hover) r g b / 0);
-  transition: background-color 120ms ease, color 120ms ease;
+  transition: background-color 140ms ease-out, color 140ms ease-out;
 }
 
 .tree-row:hover {
@@ -96,4 +96,10 @@
 
 .tree-item .tree-leading {
   margin-right: 2px;
+}
+
+/* Press: the fill darkens the instant the pointer goes down, then eases back (the row also sinks, motion/press). */
+.tree-row:active {
+  transition-duration: 0ms;
+  background-color: color-mix(in srgb, var(--hover), var(--text) 7%);
 }

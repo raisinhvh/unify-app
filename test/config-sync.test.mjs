@@ -12,9 +12,9 @@ import { readFileSync } from 'node:fs';
 const exists = path => access(path).then(() => true, () => false);
 
 async function roots(t) {
-  const base = await mkdtemp(join(tmpdir(), 'dsh-sync-'));
+  const base = await mkdtemp(join(tmpdir(), 'unify-sync-'));
   t.after(() => rm(base, { recursive: true, force: true }));
-  return { dshHome: join(base, 'dsh'), agentsHome: join(base, 'agents'), toolpacks: join(base, 'toolpacks') };
+  return { unifyHome: join(base, 'unify'), agentsHome: join(base, 'agents'), toolpacks: join(base, 'toolpacks') };
 }
 
 async function put(file, text) {
@@ -22,73 +22,73 @@ async function put(file, text) {
   await writeFile(file, text);
 }
 
-const bundle = (files = {}, settings = {}, toolpacks = {}) => ({ format: 'dsh-config', version: 1, settings, files, toolpacks });
+const bundle = (files = {}, settings = {}, toolpacks = {}) => ({ format: 'unify-config', version: 1, settings, files, toolpacks });
 
 test('collects global rules and skills, skipping hidden and bundled folders', async t => {
   const r = await roots(t);
-  await put(join(r.dshHome, 'AGENTS.md'), '# Rules');
-  await put(join(r.dshHome, 'skills', 'alpha', 'SKILL.md'), 'alpha');
-  await put(join(r.dshHome, 'skills', 'alpha', 'refs', 'notes.md'), 'notes');
-  await put(join(r.dshHome, 'skills', '.system', 'builtin', 'SKILL.md'), 'builtin');
-  await put(join(r.dshHome, 'skills', 'loose.md'), 'not in a skill folder');
+  await put(join(r.unifyHome, 'AGENTS.md'), '# Rules');
+  await put(join(r.unifyHome, 'skills', 'alpha', 'SKILL.md'), 'alpha');
+  await put(join(r.unifyHome, 'skills', 'alpha', 'refs', 'notes.md'), 'notes');
+  await put(join(r.unifyHome, 'skills', '.system', 'builtin', 'SKILL.md'), 'builtin');
+  await put(join(r.unifyHome, 'skills', 'loose.md'), 'not in a skill folder');
   await put(join(r.agentsHome, 'skills', 'beta', 'SKILL.md'), 'beta');
   await put(join(r.agentsHome, 'skills', 'beta', 'icon.bin'), Buffer.from([0xff, 0x00, 0xfe]));
-  await put(join(r.dshHome, 'sessions', 'log.json'), '{}');
+  await put(join(r.unifyHome, 'sessions', 'log.json'), '{}');
   const files = await collectFiles(r);
-  assert.deepEqual(Object.keys(files).sort(), ['agents/skills/beta/SKILL.md', 'agents/skills/beta/icon.bin', 'dsh/AGENTS.md', 'dsh/skills/alpha/SKILL.md', 'dsh/skills/alpha/refs/notes.md']);
-  assert.deepEqual(files['dsh/AGENTS.md'], { data: '# Rules' });
+  assert.deepEqual(Object.keys(files).sort(), ['agents/skills/beta/SKILL.md', 'agents/skills/beta/icon.bin', 'unify/AGENTS.md', 'unify/skills/alpha/SKILL.md', 'unify/skills/alpha/refs/notes.md']);
+  assert.deepEqual(files['unify/AGENTS.md'], { data: '# Rules' });
   assert.deepEqual(files['agents/skills/beta/icon.bin'], { data: Buffer.from([0xff, 0x00, 0xfe]).toString('base64'), encoding: 'base64' });
 });
 
 test('applying files writes, updates and deletes only synced paths', async t => {
   const source = await roots(t);
-  await put(join(source.dshHome, 'AGENTS.md'), 'remote rules');
+  await put(join(source.unifyHome, 'AGENTS.md'), 'remote rules');
   await put(join(source.agentsHome, 'skills', 'keep', 'SKILL.md'), 'remote keep');
   await put(join(source.agentsHome, 'skills', 'new', 'SKILL.md'), 'new skill');
   const remote = await collectFiles(source);
 
   const target = await roots(t);
-  await put(join(target.dshHome, 'AGENTS.md'), 'local rules');
+  await put(join(target.unifyHome, 'AGENTS.md'), 'local rules');
   await put(join(target.agentsHome, 'skills', 'keep', 'SKILL.md'), 'local keep');
   await put(join(target.agentsHome, 'skills', 'gone', 'SKILL.md'), 'deleted elsewhere');
-  await put(join(target.dshHome, 'skills', '.system', 'builtin', 'SKILL.md'), 'builtin');
-  await put(join(target.dshHome, 'config.json'), '{}');
+  await put(join(target.unifyHome, 'skills', '.system', 'builtin', 'SKILL.md'), 'builtin');
+  await put(join(target.unifyHome, 'config.json'), '{}');
   await applyFiles(target, remote);
 
-  assert.equal(await readFile(join(target.dshHome, 'AGENTS.md'), 'utf8'), 'remote rules');
+  assert.equal(await readFile(join(target.unifyHome, 'AGENTS.md'), 'utf8'), 'remote rules');
   assert.equal(await readFile(join(target.agentsHome, 'skills', 'keep', 'SKILL.md'), 'utf8'), 'remote keep');
   assert.equal(await readFile(join(target.agentsHome, 'skills', 'new', 'SKILL.md'), 'utf8'), 'new skill');
   assert.equal(await exists(join(target.agentsHome, 'skills', 'gone')), false, 'emptied skill folder is pruned');
   assert.equal(await exists(join(target.agentsHome, 'skills')), true, 'skills root is kept');
-  assert.equal(await exists(join(target.dshHome, 'skills', '.system', 'builtin', 'SKILL.md')), true);
-  assert.equal(await exists(join(target.dshHome, 'config.json')), true);
+  assert.equal(await exists(join(target.unifyHome, 'skills', '.system', 'builtin', 'SKILL.md')), true);
+  assert.equal(await exists(join(target.unifyHome, 'config.json')), true);
   assert.equal(hashBundle(bundle(await collectFiles(target))), hashBundle(bundle(remote)));
 });
 
-test('every dsh setting either syncs or is listed as staying on this PC', () => {
+test('every unify setting either syncs or is listed as staying on this PC', () => {
   const declared = Object.keys(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).contributes.configuration.properties)
-    .map(key => key.replace(/^dsh\./, ''));
+    .map(key => key.replace(/^unify\./, ''));
   assert.deepEqual([...SYNCED_SETTINGS, ...LOCAL_SETTINGS].sort(), declared.sort());
 });
 
 test('edits made on both PCs merge item by item', () => {
-  const base = bundle({ 'dsh/AGENTS.md': { data: 'rules' }, 'agents/skills/a/SKILL.md': { data: 'a' } }, { models: [1] }, { p: { enabled: true, source: 's' } });
-  const local = bundle({ 'dsh/AGENTS.md': { data: 'rules' }, 'agents/skills/a/SKILL.md': { data: 'a' }, 'agents/skills/b/SKILL.md': { data: 'b' } }, { models: [1], subagents: [2] }, {});
-  const remote = bundle({ 'dsh/AGENTS.md': { data: 'new rules' } }, { models: [1, 3] }, { p: { enabled: true, source: 's' } });
+  const base = bundle({ 'unify/AGENTS.md': { data: 'rules' }, 'agents/skills/a/SKILL.md': { data: 'a' } }, { models: [1] }, { p: { enabled: true, source: 's' } });
+  const local = bundle({ 'unify/AGENTS.md': { data: 'rules' }, 'agents/skills/a/SKILL.md': { data: 'a' }, 'agents/skills/b/SKILL.md': { data: 'b' } }, { models: [1], subagents: [2] }, {});
+  const remote = bundle({ 'unify/AGENTS.md': { data: 'new rules' } }, { models: [1, 3] }, { p: { enabled: true, source: 's' } });
   const { bundle: merged, conflicts } = mergeBundles(base, local, remote);
   assert.deepEqual(conflicts, []);
   // Remote deleted skill a and edited the rules; this PC added skill b, a subagent and removed toolpack p.
-  assert.deepEqual(merged.files, { 'dsh/AGENTS.md': { data: 'new rules' }, 'agents/skills/b/SKILL.md': { data: 'b' } });
+  assert.deepEqual(merged.files, { 'unify/AGENTS.md': { data: 'new rules' }, 'agents/skills/b/SKILL.md': { data: 'b' } });
   assert.deepEqual(merged.settings, { models: [1, 3], subagents: [2] });
   assert.deepEqual(merged.toolpacks, {});
 });
 
 test('an item changed differently on both PCs is a conflict settled by the chosen side', () => {
-  const base = bundle({ 'dsh/AGENTS.md': { data: 'old' } }, { models: [1] });
-  const local = bundle({ 'dsh/AGENTS.md': { data: 'mine' } }, { models: [1], nameModel: 'x' });
-  const remote = bundle({ 'dsh/AGENTS.md': { data: 'theirs' } }, { models: [2] });
+  const base = bundle({ 'unify/AGENTS.md': { data: 'old' } }, { models: [1] });
+  const local = bundle({ 'unify/AGENTS.md': { data: 'mine' } }, { models: [1], nameModel: 'x' });
+  const remote = bundle({ 'unify/AGENTS.md': { data: 'theirs' } }, { models: [2] });
   const remoteWins = mergeBundles(base, local, remote);
-  assert.deepEqual(remoteWins.conflicts, ['~/.dsh/AGENTS.md']);
+  assert.deepEqual(remoteWins.conflicts, ['~/.unify/AGENTS.md']);
   assert.deepEqual(remoteWins.bundle.files, remote.files);
   assert.deepEqual(remoteWins.bundle.settings, { models: [2], nameModel: 'x' });
   assert.deepEqual(mergeBundles(base, local, remote, 'local').bundle.files, local.files);
@@ -97,20 +97,20 @@ test('an item changed differently on both PCs is a conflict settled by the chose
 });
 
 test('rejects paths outside the synced folders', () => {
-  const r = { dshHome: join(tmpdir(), 'd'), agentsHome: join(tmpdir(), 'a'), toolpacks: join(tmpdir(), 't') };
-  for (const path of ['dsh/config.json', 'dsh/skills/../x/SKILL.md', 'agents/AGENTS.md', 'other/skills/a/SKILL.md', 'dsh/skills/.system/a/SKILL.md', 'dsh/skills/a/C:x', 'dsh/skills/x.md', 'dsh/skills//SKILL.md']) {
+  const r = { unifyHome: join(tmpdir(), 'd'), agentsHome: join(tmpdir(), 'a'), toolpacks: join(tmpdir(), 't') };
+  for (const path of ['unify/config.json', 'unify/skills/../x/SKILL.md', 'agents/AGENTS.md', 'other/skills/a/SKILL.md', 'unify/skills/.system/a/SKILL.md', 'unify/skills/a/C:x', 'unify/skills/x.md', 'unify/skills//SKILL.md']) {
     assert.throws(() => syncPath(r, path), /unexpected path/, path);
   }
   assert.equal(syncPath(r, 'agents/skills/a/SKILL.md'), join(r.agentsHome, 'skills', 'a', 'SKILL.md'));
-  assert.throws(() => parseBundle(JSON.stringify(bundle({ 'dsh/../../evil': { data: '' } }))), /unexpected path/);
+  assert.throws(() => parseBundle(JSON.stringify(bundle({ 'unify/../../evil': { data: '' } }))), /unexpected path/);
 });
 
 test('bundles parse back and hash independently of key order', () => {
-  const a = bundle({ 'dsh/AGENTS.md': { data: 'x' } }, { 'features.autoName': false, models: [{ name: 'M', provider: 'p', backend: 'b' }] });
-  const b = { toolpacks: {}, files: a.files, settings: { models: [{ backend: 'b', provider: 'p', name: 'M' }], 'features.autoName': false }, version: 1, format: 'dsh-config' };
+  const a = bundle({ 'unify/AGENTS.md': { data: 'x' } }, { 'features.autoName': false, models: [{ name: 'M', provider: 'p', backend: 'b' }] });
+  const b = { toolpacks: {}, files: a.files, settings: { models: [{ backend: 'b', provider: 'p', name: 'M' }], 'features.autoName': false }, version: 1, format: 'unify-config' };
   assert.equal(hashBundle(a), hashBundle(b));
   assert.deepEqual(parseBundle(serializeBundle(a)), JSON.parse(serializeBundle(b)));
-  assert.throws(() => parseBundle('{"format":"dsh-config","version":2,"settings":{},"files":{},"toolpacks":{}}'), /version 2/);
+  assert.throws(() => parseBundle('{"format":"unify-config","version":2,"settings":{},"files":{},"toolpacks":{}}'), /version 2/);
   assert.throws(() => parseBundle('nope'), /not valid JSON/);
 });
 
@@ -231,12 +231,12 @@ function fakeGitHub() {
 test('creates, finds, reads and updates the config gist', async () => {
   const github = fakeGitHub();
   assert.equal(await findConfigGist('tok', github.fetchImpl), undefined);
-  const first = bundle({ 'dsh/AGENTS.md': { data: 'one' } });
+  const first = bundle({ 'unify/AGENTS.md': { data: 'one' } });
   const created = await writeConfigGist('tok', undefined, first, github.fetchImpl);
   assert.equal(created.url, `https://gist.github.com/me/${created.id}`);
   assert.equal((await findConfigGist('tok', github.fetchImpl)).id, created.id);
   assert.equal(hashBundle((await readConfigGist('tok', created.id, github.fetchImpl)).bundle), hashBundle(first));
-  const second = bundle({ 'dsh/AGENTS.md': { data: 'two' } });
+  const second = bundle({ 'unify/AGENTS.md': { data: 'two' } });
   assert.equal((await writeConfigGist('tok', created.id, second, github.fetchImpl)).id, created.id);
   assert.equal(hashBundle((await readConfigGist('tok', created.id, github.fetchImpl)).bundle), hashBundle(second));
   assert.ok(github.gists.get(created.id).files[GIST_FILE]);

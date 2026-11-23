@@ -1,0 +1,69 @@
+/*
+ * Shutdown countdown: a whole-window scrim (below the title bar so the window controls stay usable) with one
+ * card in the middle. Opacity and scale are written by ShutdownOverlay.tsx on springs.
+ */
+.shutdown-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 35;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.shutdown-card {
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  padding: 20px 20px 16px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-menu);
+  box-shadow: var(--shadow-pop);
+  transform-origin: center;
+}
+
+.shutdown-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text2);
+}
+
+.shutdown-glyph {
+  display: grid;
+  place-items: center;
+  color: var(--warn);
+}
+
+.shutdown-count {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.shutdown-seconds {
+  font-family: var(--font-ui);
+  font-weight: var(--weight-display);
+  font-size: 56px;
+  line-height: 56px;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+
+.shutdown-unit {
+  color: var(--text3);
+}
+
+.shutdown-body {
+  margin: 12px 0 0;
+  color: var(--text2);
+}
+
+.shutdown-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+}

@@ -4,12 +4,13 @@ import { normalizeToolpackResult } from '../toolpacks/result';
 import { LOAD_TOOLPACK } from '../toolpacks/access';
 import { CHAT_HISTORY_TOOL } from '../runtime/handoff';
 import { BATCH_TOOL_SCHEMA } from '../runtime/batch';
+import { getUnifyFeature } from '../unify/settings';
 import { agentMessagingTools, isAgentMessagingTool, READ_MESSAGES_TOOL } from '../delegate/messagingProtocol';
 
-const url = process.env.DSH_DELEGATE_URL || '';
-const token = process.env.DSH_DELEGATE_TOKEN || '';
-const owner = process.env.DSH_DELEGATE_OWNER || '';
-const toolpacksOnly = process.env.DSH_DELEGATE_SCOPE === TOOLPACK_SCOPE;
+const url = process.env.UNIFY_DELEGATE_URL || '';
+const token = process.env.UNIFY_DELEGATE_TOKEN || '';
+const owner = process.env.UNIFY_DELEGATE_OWNER || '';
+const toolpacksOnly = process.env.UNIFY_DELEGATE_SCOPE === TOOLPACK_SCOPE;
 
 /** A bridge that never answers must not hang an agent turn forever. */
 const FIRST_BYTE_TIMEOUT_MS = 30_000;
@@ -32,15 +33,15 @@ async function post(path: string, body: Json): Promise<Json> {
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => { timedOut = message; controller.abort(); }, delayMs);
     };
-    armWatchdog(FIRST_BYTE_TIMEOUT_MS, `The DSH bridge did not answer ${path} within ${FIRST_BYTE_TIMEOUT_MS / 1000}s.`);
+    armWatchdog(FIRST_BYTE_TIMEOUT_MS, `The Unify bridge did not answer ${path} within ${FIRST_BYTE_TIMEOUT_MS / 1000}s.`);
     try {
-        const response = await fetch(url + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dsh-token': token }, body: JSON.stringify({ owner, ...body }), signal: controller.signal });
+        const response = await fetch(url + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-unify-token': token }, body: JSON.stringify({ owner, ...body }), signal: controller.signal });
         let text = '';
         if (response.body) {
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             for (;;) {
-                armWatchdog(IDLE_TIMEOUT_MS, `The DSH bridge stopped responding on ${path} for ${IDLE_TIMEOUT_MS / 1000}s.`);
+                armWatchdog(IDLE_TIMEOUT_MS, `The Unify bridge stopped responding on ${path} for ${IDLE_TIMEOUT_MS / 1000}s.`);
                 const chunk = await reader.read();
                 if (chunk.done) break;
                 text += decoder.decode(chunk.value, { stream: true });
@@ -88,6 +89,25 @@ function noteMessagingTools(messaging: boolean): void {
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' }) + '\n');
 }
 
+/** Range edit: the guarded counterpart of read_file ranges. Routing happens in the engine (extension edit path). */
+const EDIT_RANGE_TOOL = {
+    name: 'edit_range',
+    description: 'Replace exactly lines startLine-endLine of one file. Pass expected (the hash from a read_file ranges result, or the exact current text of those lines) so a stale edit fails instead of landing in the wrong place; if the lines moved, it re-anchors once on the expected text. Use read_file ranges first. An empty replacement removes the lines.',
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    _meta: { 'anthropic/alwaysLoad': true },
+    inputSchema: {
+        type: 'object',
+        properties: {
+            path: { type: 'string', description: 'File to edit, relative to the working copy.' },
+            startLine: { type: 'integer', minimum: 1 },
+            endLine: { type: 'integer', minimum: 1 },
+            expected: { type: 'string', description: 'The 12-hex hash from the read, or the exact current text of those lines.' },
+            replacement: { type: 'string', description: 'Text for those lines; may include newlines; empty removes them.' },
+        },
+        required: ['path', 'startLine', 'endLine', 'replacement'],
+    },
+};
+
 async function tools(): Promise<Json[]> {
     let agents = '';
     let custom: Json[] = [];
@@ -104,10 +124,12 @@ async function tools(): Promise<Json[]> {
     } catch { /* the host may be unavailable; fall back to a generic description */ }
     const customTools = custom.map(tool => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema, ...(tool._meta ? { _meta: tool._meta } : {}) }));
     const messagingTools = messaging ? agentMessagingTools() as Json[] : [];
-    if (toolpacksOnly) return [...messagingTools, ...customTools];
+    const rangeEdits = getUnifyFeature('tools.rangeEdits');
+    if (toolpacksOnly) return [...(rangeEdits ? [EDIT_RANGE_TOOL as unknown as Json] : []), ...messagingTools, ...customTools];
     const readOnly = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
     return [
         ...(batching ? [BATCH_TOOL_SCHEMA as unknown as Json] : []),
+        ...(rangeEdits ? [EDIT_RANGE_TOOL as unknown as Json] : []),
         {
             name: 'list_subagents',
             description: 'List subagent profiles (exact name, mode, model) for delegate_task.',
@@ -184,7 +206,7 @@ async function tools(): Promise<Json[]> {
         ...customTools,
         {
             name: 'checkpoint',
-            description: `Call as the last step of a turn, after the user's request is finished, when most earlier context is no longer needed. It does not hand work on: nothing continues after the turn unless DSH itself asked for the checkpoint, so never call it in place of doing the request. The summary is for you: goal, decisions, files changed, open items. The user's next message starts a fresh session from it; older messages stay in ${CHAT_HISTORY_TOOL}.`,
+            description: `Call as the last step of a turn, after the user's request is finished, when most earlier context is no longer needed. It does not hand work on: nothing continues after the turn unless Unify itself asked for the checkpoint, so never call it in place of doing the request. The summary is for you: goal, decisions, files changed, open items. The user's next message starts a fresh session from it; older messages stay in ${CHAT_HISTORY_TOOL}.`,
             inputSchema: { type: 'object', properties: { summary: { type: 'string' }, keep_files: { type: 'array', items: { type: 'string' } }, reason: { type: 'string' } }, required: ['summary', 'reason'] },
         },
         {
@@ -211,14 +233,15 @@ async function handle(message: Json): Promise<void> {
     try {
         if (method === 'initialize') {
             const params = (message.params || {}) as Json;
-            reply(id, { protocolVersion: typeof params.protocolVersion === 'string' ? params.protocolVersion : '2024-11-05', capabilities: { tools: { listChanged: true } }, serverInfo: { name: 'dsh-delegate', version: '1.0.0' }, instructions: toolpacksOnly
+            reply(id, { protocolVersion: typeof params.protocolVersion === 'string' ? params.protocolVersion : '2024-11-05', capabilities: { tools: { listChanged: true } }, serverInfo: { name: 'unify', version: '1.0.0' }, instructions: toolpacksOnly
                 ? 'Tools from toolpacks the user installed, for external apps (for example Blender or Roblox Studio) you cannot see through files.'
-                : 'DSH IDE tools. Subagents run only through delegate_task. Other tools come from toolpacks the user installed.' });
+                : 'Unify tools. Subagents run only through delegate_task. Other tools come from toolpacks the user installed.' });
         } else if (method === 'ping') reply(id, {});
         else if (method === 'tools/list') reply(id, { tools: await tools() });
         else if (method === 'tools/call') {
             const params = (message.params || {}) as Json;
-            const result = await post('/call', { tool: params.name, args: params.arguments || {} });
+            const args = (params.arguments && typeof params.arguments === 'object' ? params.arguments : {}) as Json;
+            const result = await post('/call', { tool: params.name, args });
             const content: unknown[] = result.content === undefined
                 ? [{ type: 'text', text: String(result.text ?? result.error ?? '') }]
                 : normalizeToolpackResult(result).content ?? [];

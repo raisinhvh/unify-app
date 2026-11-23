@@ -5,7 +5,7 @@ import { join } from 'node:path';
 export const KEEP_IMAGES = 5;
 
 /** Text that takes an old image's place. Claude Code stores the image's file path in a text block next to it, so that path stays. */
-export const TRIMMED_IMAGE_NOTE = '[Image removed by DSH to save context. Open its file again if you still need it.]';
+export const TRIMMED_IMAGE_NOTE = '[Image removed by Unify to save context. Open its file again if you still need it.]';
 
 type Block = Record<string, unknown>;
 
@@ -71,7 +71,7 @@ export async function trimSessionImages(configDir: string, sessionId: string, ke
   const trailing = text.endsWith('\n');
   const result = trimImageLines((trailing ? text.slice(0, -1) : text).split('\n'), keep);
   if (!result.removed) return 0;
-  const temporary = `${file}.dsh-trim`;
+  const temporary = `${file}.unify-trim`;
   await writeFile(temporary, result.lines.join('\n') + (trailing ? '\n' : ''), 'utf8');
   await rename(temporary, file);
   return result.removed;

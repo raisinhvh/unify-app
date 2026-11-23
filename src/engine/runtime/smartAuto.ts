@@ -12,7 +12,7 @@ export const MAX_NOTE = 500;
 /** `note` is the user's own guidance on when to use this entry. */
 export interface SmartAutoRank { model: string; effort?: string; note?: string }
 
-/** Drops malformed entries from the dsh.smartAutoRanks setting. */
+/** Drops malformed entries from the unify.smartAutoRanks setting. */
 export function normalizeRanks(value: unknown): SmartAutoRank[] {
   if (!Array.isArray(value)) return [];
   const text = (item: unknown): string | undefined => typeof item === 'string' && item.trim() ? item.trim() : undefined;

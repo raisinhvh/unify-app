@@ -407,9 +407,73 @@
   text-align: center;
 }
 
-.account-swatch {
-  display: block;
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
+/* Caption parts (no dot separators: spacing and tone do the separating) */
+.setting-caption-parts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  column-gap: 12px;
+  row-gap: 2px;
+}
+
+.setting-caption-muted {
+  color: var(--text3);
+  opacity: 0.8;
+}
+
+.settings-strong {
+  color: var(--text);
+}
+
+/* GitHub token field */
+.github-token-row {
+  align-items: flex-start;
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.github-token-row .setting-row-control {
+  padding-top: 2px;
+}
+
+.settings-field {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  transition: border-color 140ms ease;
+}
+
+.settings-field:focus-within {
+  border-color: var(--text3);
+}
+
+.settings-field input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.settings-field input::placeholder {
+  color: var(--text3);
+}
+
+.github-token-row .setting-row-description {
+  margin-top: 8px;
+}
+
+/* An error that informs rather than alarms */
+.settings-calm-error {
+  margin: 12px 0 0;
+  color: var(--text2);
 }

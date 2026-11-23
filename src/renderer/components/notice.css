@@ -1,0 +1,86 @@
+/*
+ * Notice row under the title bar. The slot's height follows --notice-progress (0..1, set by Notice.tsx on the
+ * Panel spring) so the content below moves with it; the bar itself keeps its full height and fades/slides in.
+ */
+.notice-slot {
+  position: absolute;
+  top: var(--titlebar-height);
+  left: 8px;
+  right: 8px;
+  height: calc(32px * var(--notice-progress, 0));
+  overflow: visible;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 4px 0 10px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text);
+  pointer-events: auto;
+  will-change: transform, opacity;
+}
+
+.notice-lines {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.notice-line {
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  will-change: transform, opacity;
+}
+
+.notice-line.leaving {
+  pointer-events: none;
+}
+
+.notice-glyph {
+  flex: none;
+}
+
+.notice-glyph-error {
+  color: var(--del);
+}
+
+.notice-glyph-warning {
+  color: var(--warn);
+}
+
+.notice-glyph-info {
+  color: var(--text3);
+}
+
+.notice-message {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.notice-action {
+  flex: none;
+  height: 24px;
+}
+
+.notice-dismiss {
+  flex: none;
+}

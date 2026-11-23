@@ -5,11 +5,13 @@
  *   hold a pane header and move → the pane lifts to 50% and follows the pointer, other panes dim, and the layout
  *   picker drops in at the top centre. Over a picker cell, the zone it would take is outlined in the real layout;
  *   over another pane, the two would swap. Release springs the pane into its zone (or back home).
+ *   With feature `chats.layoutPicker` off the picker stays away; dropping on another pane still swaps.
  *
  * The area is transparent where there are no panes, so Home shows through.
  */
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from 'solid-js';
 import { Presence, prefersReducedMotion, Spring } from '../motion';
+import { feature } from '../store/features';
 import {
   cellRects,
   closeChat,
@@ -83,6 +85,8 @@ export function PaneGrid(props: PaneGridProps): JSX.Element {
   const [size, setSize] = createSignal({ width: 0, height: 0 });
   const [drag, setDrag] = createSignal<DragState>();
   const [resizing, setResizing] = createSignal(false);
+  // Feature chats.layoutPicker: off keeps drag-to-swap, but the picker never drops in. Read live.
+  const pickerEnabled = () => feature('chats.layoutPicker');
 
   onMount(() => {
     const observer = new ResizeObserver(() => setSize({ width: area.clientWidth, height: area.clientHeight }));
@@ -103,15 +107,21 @@ export function PaneGrid(props: PaneGridProps): JSX.Element {
     const cells = layout().cells;
     const pixelRects = rects();
     setRendered(previous => {
-      const next: RenderedPane[] = cells.map((chatId, index) => ({
-        key: chatId ?? `empty:${index}`,
-        chatId,
-        leaving: false,
-        lastRect: pixelRects[index],
-      }));
+      // Reuse the item of a pane that stays: <For> keys by identity, so a fresh object would remount the pane
+      // (and its chat) on every resize, e.g. each frame while the notice row opens above the grid.
+      const staying = new Map(previous.filter(item => !item.leaving).map(item => [item.key, item]));
+      const next: RenderedPane[] = cells.map((chatId, index) => {
+        const key = chatId ?? `empty:${index}`;
+        const existing = staying.get(key);
+        if (existing) {
+          existing.lastRect = pixelRects[index];
+          return existing;
+        }
+        return { key, chatId, leaving: false, lastRect: pixelRects[index] };
+      });
       const keys = new Set(next.map(item => item.key));
       for (const item of previous) {
-        if (!keys.has(item.key) && item.chatId) next.push({ ...item, leaving: true });
+        if (!keys.has(item.key) && item.chatId) next.push(item.leaving ? item : { ...item, leaving: true });
       }
       return next;
     });
@@ -122,7 +132,9 @@ export function PaneGrid(props: PaneGridProps): JSX.Element {
   const cellOf = (key: string) => layout().cells.findIndex((chatId, index) => (chatId ?? `empty:${index}`) === key);
 
   const hitTestTarget = (clientX: number, clientY: number, chatId: string): DropTarget | undefined => {
-    for (const element of document.querySelectorAll<HTMLElement>('.layout-picker [data-preset][data-cell]')) {
+    // With the picker turned off (or fading out after being turned off mid-drag), only swaps are targets.
+    const pickerCells = pickerEnabled() ? document.querySelectorAll<HTMLElement>('.layout-picker [data-preset][data-cell]') : [];
+    for (const element of pickerCells) {
       const box = element.getBoundingClientRect();
       const slop = 2;
       if (clientX >= box.left - slop && clientX <= box.right + slop && clientY >= box.top - slop && clientY <= box.bottom + slop) {
@@ -244,7 +256,7 @@ export function PaneGrid(props: PaneGridProps): JSX.Element {
       </For>
       <Gutters rects={rects} size={size} onResizing={setResizing} hidden={!!drag()} />
       <DropZone rect={zoneRect()} />
-      <LayoutPicker open={!!drag()} hovered={pickerHover()} />
+      <LayoutPicker open={!!drag() && pickerEnabled()} hovered={pickerHover()} />
     </div>
   );
 }

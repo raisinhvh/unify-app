@@ -225,7 +225,7 @@ test('a message that ends a turn early is logged and the same step reruns with i
   assert.equal(job.phase, 'done');
   assert.deepEqual(job.decisions, [{ question: 'Message from you during the job', answer: 'Use subagents' }]);
   const turns = fake.calls.filter(call => call.kind === 'turn');
-  assert.equal(turns[0].label, '/job · drafting checklist');
+  assert.equal(turns[0].label, 'Drafting the job checklist');
   assert.match(turns[0].prompt, /#1 Q: Message from you during the job A: Use subagents/);
   assert.match(turns[0].prompt, /numbered from #2/);
 });
@@ -241,7 +241,7 @@ test('a message ending a review early reruns the review, and a repair rerun uses
   await runJob(repaired, other.host);
   assert.equal(repaired.phase, 'done');
   const retry = other.calls.filter(call => call.kind === 'turn')[1];
-  assert.equal(retry.label, '/job · fixing checklist format');
+  assert.equal(retry.label, 'Fixing the job checklist format');
   assert.match(retry.prompt, /drafting a job checklist[\s\S]*A: Smaller scope/);
 });
 
@@ -256,7 +256,7 @@ test('queued messages join the next step, and a message instead of an approval r
   await runJob(revised, other.host);
   assert.equal(revised.phase, 'done');
   assert.deepEqual(revised.decisions, [{ question: 'Checklist feedback', answer: 'Drop the export step' }]);
-  assert.equal(other.calls.filter(call => call.kind === 'turn')[1].label, '/job · revising checklist');
+  assert.equal(other.calls.filter(call => call.kind === 'turn')[1].label, 'Revising the job checklist');
 });
 
 test('a message ending unbacked questions early is logged and the questions are asked again', async () => {

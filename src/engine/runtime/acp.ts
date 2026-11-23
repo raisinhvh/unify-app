@@ -1,8 +1,8 @@
-import { dshBinFrom } from '../update/dshUpdate';
+import { agentRuntimeBinFrom } from '../update/unifyUpdate';
+import { getUnifyFeature, unifyHome } from '../unify/settings';
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
 import * as vscode from 'vscode';
 import { AgentModel, agentModels } from './models';
 import { cancellationDeadline, terminateProcessTree } from './cancellation';
@@ -10,25 +10,28 @@ import { SELF_HOSTED } from './selfHosted';
 import { isPiAiProvider, piAiCatalog, piAiPatch } from './piAi';
 import { applyAgentPriority } from './priority';
 import { agentEnv } from './agentShell';
+import { startStuckCommandWatchdog, StuckCommand } from './stuckCommands';
 
 type Json = Record<string, unknown>;
 type Pending = { resolve(value: Json): void; reject(error: Error): void; timer?: NodeJS.Timeout; method: string; sessionId?: string; clearCancellation?: () => void };
 
-export interface DshRuntimeRoute {
-  kind: 'dsh';
+export interface UnifyRuntimeRoute {
+  kind: 'unify';
   provider: string;
   model: string;
   apiKey: string;
   webSearchKey?: string;
   home: string;
   nodePath?: string;
-  /** Folder holding a downloaded DSH update; the bundled DSH is used when absent. */
-  dshRoot?: string;
+  /** Folder holding a downloaded agent-runtime update; the bundled runtime is used when absent. */
+  agentRuntimeRoot?: string;
   envName: string;
-  /** The model's effort choices; they become the reasoning levels of an OpenRouter or OpenCode Go model DSH's catalog lacks. */
+  /** The model's effort choices; they become the reasoning levels of an OpenRouter or OpenCode Go model the runtime's catalog lacks. */
   efforts?: string[];
-  /** The account's OpenAI-compatible base URL; required for the self-hosted provider. */
+  /** Account's OpenAI-compatible base URL; required for the self-hosted provider. */
   baseURL?: string;
+  /** Folder holding this agent's audience-filtered instructions (AGENTS.audience.md). */
+  instructionsHome?: string;
 }
 
 export interface CursorRuntimeRoute {
@@ -38,7 +41,7 @@ export interface CursorRuntimeRoute {
   cwd: string;
 }
 
-export type RuntimeRoute = DshRuntimeRoute | CursorRuntimeRoute;
+export type RuntimeRoute = UnifyRuntimeRoute | CursorRuntimeRoute;
 
 /** Longest a runtime may take to answer its startup requests (initialize, then Cursor's authenticate) in total. */
 const STARTUP_TIMEOUT_MS = 30_000;
@@ -51,9 +54,42 @@ export interface RuntimeEvent {
 export type PermissionHandler = (params: Json) => Promise<string | undefined>;
 export type CursorRequestHandler = (method: string, params: Json) => Promise<Json>;
 
-/** Owns a single local DSH ACP stdio process. The wire is JSON-RPC 2.0, one frame per line. */
+export interface AcpPatchOptions {
+  provider: string;
+  model: string;
+  instructionsHome: string;
+  dataHome: string;
+  piAi?: string;
+}
+
+/** Builds the Cordis YAML patch passed to the local agent runtime in ACP mode. */
+export function buildAcpPatch(options: AcpPatchOptions): string {
+  return [
+    '- id: acp',
+    '  config:',
+    `    provider: ${JSON.stringify(options.provider)}`,
+    `    model: ${JSON.stringify(options.model)}`,
+    '- id: agent-instructions',
+    '  config:',
+    '    maxBytes: 65536',
+    `    dshHome: ${JSON.stringify(options.instructionsHome)}`,
+    '    instructionFileCandidates: ["AGENTS.audience.md"]',
+    '    localInstructionFileCandidates: []',
+    '- id: skill-filesystem',
+    '  config:',
+    `    dshHome: ${JSON.stringify(options.dataHome)}`,
+    '- id: tool-jobs',
+    '  config:',
+    '    waitTimeoutMs: 30000',
+    '    maxWaitTimeoutMs: 120000',
+    '',
+  ].join('\n') + (options.piAi ?? '');
+}
+
+/** Owns a single local agent-runtime ACP stdio process. The wire is JSON-RPC 2.0, one frame per line. */
 export class AcpRuntime implements vscode.Disposable {
   private child?: ChildProcessWithoutNullStreams;
+  private watchdog?: { stop(): void; tick(): Promise<void> };
   private buffer = '';
   private stderrBuffer = '';
   private nextId = 1;
@@ -61,14 +97,16 @@ export class AcpRuntime implements vscode.Disposable {
   private secrets: string[] = [];
   private startPromise?: Promise<void>;
   private closed = false;
-  private kind: 'dsh' | 'cursor' = 'dsh';
+  private kind: 'unify' | 'cursor' = 'unify';
   private readonly modelOptions = new Map<string, AgentModel[]>();
   private readonly configOptions = new Map<string, Json[]>();
   private activeSessionId?: string;
   private readonly updates = new vscode.EventEmitter<RuntimeEvent>();
   private readonly state = new vscode.EventEmitter<'starting' | 'ready' | 'stopped'>();
+  private readonly stuckCommands = new vscode.EventEmitter<StuckCommand>();
   public readonly onUpdate = this.updates.event;
   public readonly onState = this.state.event;
+  public readonly onStuckCommand = this.stuckCommands.event;
 
   public constructor(
     private readonly output: vscode.OutputChannel,
@@ -94,37 +132,52 @@ export class AcpRuntime implements vscode.Disposable {
     let args: string[];
     let cwd: string;
     let env: NodeJS.ProcessEnv = { ...process.env };
-    if (route.kind === 'dsh') {
+    if (route.kind !== 'cursor') {
       await mkdir(route.home, { recursive: true });
       const patch = join(route.home, 'ide-acp.patch.yml');
-      // Keep runtime persistence isolated while using DSH's own global rules
-      // and skill discovery. Compaction remains owned by dsh-base's defaults.
-      const instructionsHome = process.env.DSH_HOME || join(homedir(), '.dsh');
-      const dshBin = dshBinFrom(route.dshRoot);
+      // Keep runtime persistence isolated while using Unify's own global rules
+      // and skill discovery. Compaction remains owned by the agent runtime's default plugins.
+      const dataHome = unifyHome();
+      const instructionsHome = route.instructionsHome ?? dataHome;
+      const runtimeBin = agentRuntimeBinFrom(route.agentRuntimeRoot);
       const piAi = isPiAiProvider(route.provider)
-        ? piAiPatch(route.provider, route.envName, route.model, route.provider === SELF_HOSTED ? undefined : await piAiCatalog(route.provider, dshBin), route.efforts, route.baseURL) : '';
-      await writeFile(patch, `- id: acp\n  config:\n    provider: ${JSON.stringify(route.provider)}\n    model: ${JSON.stringify(route.model)}\n- id: agent-instructions\n  config:\n    maxBytes: 65536\n    dshHome: ${JSON.stringify(instructionsHome)}\n- id: skill-filesystem\n  config:\n    dshHome: ${JSON.stringify(instructionsHome)}\n${piAi}`, 'utf8');
+        ? piAiPatch(route.provider, route.envName, route.model, route.provider === SELF_HOSTED ? undefined : await piAiCatalog(route.provider, runtimeBin), route.efforts, route.baseURL) : '';
+      await writeFile(patch, buildAcpPatch({ provider: route.provider, model: route.model, instructionsHome, dataHome, piAi }), 'utf8');
       this.secrets = [route.apiKey, route.webSearchKey].filter((value): value is string => !!value);
-      env = { ...env, DSH_HOME: route.home, [route.envName]: route.apiKey, ...(route.webSearchKey ? { DEEPSEEK_API_KEY: route.webSearchKey } : {}) };
+      // The runtime package reads `DSH_HOME`; Unify points it inside its own data home.
+      env = { ...env, DSH_HOME: join(unifyHome(), 'agent-runtime'), [route.envName]: route.apiKey, ...(route.webSearchKey ? { DEEPSEEK_API_KEY: route.webSearchKey } : {}) };
       command = route.nodePath || 'node';
-      args = [dshBin, '--profile', 'acp', '--patch', patch];
-      cwd = dirname(dshBin);
+      args = [runtimeBin, '--profile', 'acp', '--patch', patch];
+      cwd = dirname(runtimeBin);
     } else {
       this.secrets = [];
       command = route.command;
       args = route.args;
       cwd = route.cwd;
     }
+    this.stopWatchdog();
     this.child = spawn(command, args, { cwd, env: agentEnv(env), windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
     const child = this.child;
     applyAgentPriority(child.pid);
+    // Cursor runtimes do not use the local command runner, so only Unify runtimes run the stuck-command watchdog.
+    if (route.kind !== 'cursor') {
+      this.watchdog = startStuckCommandWatchdog({
+        rootPid: () => this.child?.pid,
+        idleMinutes: () => getUnifyFeature('agents.stuckCommandMinutes'),
+        onStuck: stuck => {
+          const minutes = Math.max(1, Math.round(stuck.idleMs / 60_000));
+          this.output.appendLine(`Stopped stuck command (pid ${stuck.runnerPid}, idle ${minutes} min): ${stuck.command || '(unknown)'}`);
+          this.stuckCommands.fire(stuck);
+        },
+      });
+    }
     child.stdin.on('error', error => { if (this.child === child) this.fail(error); });
     this.child.stdout.setEncoding('utf8');
     this.child.stderr.setEncoding('utf8');
     this.child.stdout.on('data', (chunk: string) => { if (this.child === child) this.read(chunk); });
     this.child.stderr.on('data', (chunk: string) => { if (this.child === child) this.readStderr(chunk); });
     this.child.on('error', error => { if (this.child === child) this.fail(error); });
-    this.child.on('exit', (code, signal) => { if (this.child === child) this.fail(new Error(`${this.kind === 'cursor' ? 'Cursor Agent' : 'DSH'} runtime exited (${code ?? signal ?? 'unknown'}). Open Runtime Logs for details.`)); });
+    this.child.on('exit', (code, signal) => { if (this.child === child) this.fail(new Error(`${this.kind === 'cursor' ? 'Cursor Agent' : 'Unify'} runtime exited (${code ?? signal ?? 'unknown'}). Open Runtime Logs for details.`)); });
     // Each startup request resolves on its reply, and an exiting process fails it at once; the deadline only bounds a runtime that never answers.
     const startupDeadline = Date.now() + STARTUP_TIMEOUT_MS;
     const timeLeft = (): number => Math.max(1, startupDeadline - Date.now());
@@ -132,7 +185,7 @@ export class AcpRuntime implements vscode.Disposable {
       protocolVersion: 1,
       // Cursor's ACP server starts its own subagents only for a client that advertises `subagents` here; this client never does.
       clientCapabilities: {},
-      clientInfo: { name: 'dsh-ide', version: '0.4.3' },
+      clientInfo: { name: 'unify', version: '0.4.3' },
     }, timeLeft());
     if (route.kind === 'cursor') {
       try { await this.request('authenticate', { methodId: 'cursor_login' }, timeLeft()); }
@@ -229,13 +282,14 @@ export class AcpRuntime implements vscode.Disposable {
 
   public async stop(): Promise<void> {
     this.closed = true;
+    this.stopWatchdog();
     const child = this.child;
     this.child = undefined;
     this.startPromise = undefined;
     for (const pending of this.pending.values()) {
       if (pending.timer) clearTimeout(pending.timer);
       pending.clearCancellation?.();
-      pending.reject(new Error('DSH runtime stopped.'));
+      pending.reject(new Error('Unify runtime stopped.'));
     }
     this.pending.clear();
     this.modelOptions.clear();
@@ -248,14 +302,21 @@ export class AcpRuntime implements vscode.Disposable {
   }
 
   public dispose(): void {
+    this.stopWatchdog();
     void this.stop();
     this.updates.dispose();
     this.state.dispose();
+    this.stuckCommands.dispose();
+  }
+
+  private stopWatchdog(): void {
+    this.watchdog?.stop();
+    this.watchdog = undefined;
   }
 
   private request(method: string, params: Json, timeoutMs?: number): Promise<Json> {
     const child = this.child;
-    if (!child) return Promise.reject(new Error('DSH runtime is not running.'));
+    if (!child) return Promise.reject(new Error('Unify runtime is not running.'));
     return this.requestOnChild(child, method, params, timeoutMs);
   }
 
@@ -265,7 +326,7 @@ export class AcpRuntime implements vscode.Disposable {
       const pending: Pending = { resolve, reject, method, sessionId: typeof params.sessionId === 'string' ? params.sessionId : undefined };
       if (timeoutMs) pending.timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`DSH ${method} timed out.`));
+        reject(new Error(`Unify ${method} timed out.`));
       }, timeoutMs);
       this.pending.set(id, pending);
       try { child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n'); }
@@ -280,7 +341,7 @@ export class AcpRuntime implements vscode.Disposable {
 
   private read(chunk: string): void {
     this.buffer += chunk;
-    if (this.buffer.length > 10_000_000) { this.fail(new Error('DSH protocol frame exceeded 10 MB.')); return; }
+    if (this.buffer.length > 10_000_000) { this.fail(new Error('Unify protocol frame exceeded 10 MB.')); return; }
     let end: number;
     while ((end = this.buffer.indexOf('\n')) >= 0) {
       const line = this.buffer.slice(0, end).trim();
@@ -288,7 +349,7 @@ export class AcpRuntime implements vscode.Disposable {
       if (!line) continue;
       let frame: Json;
       try { frame = JSON.parse(line) as Json; }
-      catch { this.output.appendLine('DSH sent a non-JSON protocol line.'); continue; }
+      catch { this.output.appendLine('Unify sent a non-JSON protocol line.'); continue; }
       void this.dispatch(frame);
     }
   }
@@ -318,7 +379,7 @@ export class AcpRuntime implements vscode.Disposable {
       pending.clearCancellation?.();
       if (frame.error) {
         const error = frame.error as Json;
-        pending.reject(new Error(this.redact(String(error.message || 'DSH request failed.'))));
+        pending.reject(new Error(this.redact(String(error.message || 'Unify request failed.'))));
       } else pending.resolve((frame.result || {}) as Json);
       return;
     }
@@ -335,6 +396,7 @@ export class AcpRuntime implements vscode.Disposable {
   }
 
   private fail(error: Error): void {
+    this.stopWatchdog();
     const child = this.child;
     if (this.stderrBuffer) {
       this.output.appendLine(this.redact(this.stderrBuffer));
@@ -361,7 +423,7 @@ export class AcpRuntime implements vscode.Disposable {
   private readStderr(chunk: string): void {
     this.stderrBuffer += chunk;
     if (this.stderrBuffer.length > 1_000_000) {
-      this.output.appendLine('DSH emitted an overlong log line; it was omitted.');
+      this.output.appendLine('Unify emitted an overlong log line; it was omitted.');
       this.stderrBuffer = '';
       return;
     }

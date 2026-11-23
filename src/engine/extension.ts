@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
-import { appendFile, copyFile, mkdir, readdir, writeFile, readFile, rm, stat } from 'node:fs/promises';
-import { basename, dirname, extname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path';
+import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { appendFile, lstat, mkdir, readdir, realpath, writeFile, readFile, rm, stat } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'node:path';
 import { homedir } from 'node:os';
 import * as vscode from 'vscode';
 import { AccountRegistry, ModelEntry, ModelRegistry, ResolvedModel } from './accounts';
@@ -12,30 +12,34 @@ import { freshCodexTokens } from './accounts/codexAuth';
 import { WindowsDependencies } from './runtime/dependencies';
 import { ReviewController, ReviewProposal } from './review/controller';
 import { DelegateAgentInfo, DelegateHost, DelegateResult, DelegateToolInfo } from './delegate/host';
+import { bindChatAgentOwner, registerSubagentAgent, setSubagentState, unbindChatAgentOwner, unregisterSubagentAgent } from './delegate/messaging';
 import { InstructionItem, InstructionRoots, listInstructions, locateInstruction, readInstruction, removeInstruction, saveInstruction } from './instructions/store';
 import { shareInstructions } from './instructions/share';
+import { writeAudienceInstructions } from './instructions/audiences';
+import type { AudienceTarget } from './unify/knowledgeAudience';
 import { chatTitlePrompt, firstMessageTitle, parseChatName, uniqueChatIcon } from './runtime/naming';
 import { isUsageLimit } from './runtime/limits';
 import { SELF_HOSTED, SELF_HOSTED_ENV, normalizeBaseURL, parseModelIds } from './runtime/selfHosted';
-import { MAX_MEDIA_BYTES, MAX_MEDIA_FILES, MEDIA_INSTRUCTIONS, mediaType, SEND_MEDIA, SEND_MEDIA_TOOL } from './runtime/media';
+import { MAX_MEDIA_BYTES, MAX_MEDIA_FILES, MEDIA_INSTRUCTIONS, SEND_MEDIA, SEND_MEDIA_TOOL, SHOW_YOUR_WORK_INSTRUCTIONS } from './runtime/media';
 import { GENERATE_IMAGE, GENERATE_IMAGE_TOOL, generateImage, IMAGE_INSTRUCTIONS, imageFileName, inputImageProblem, MAX_INPUT_BYTES, parseImageRequest, pngSize } from './runtime/imageGen';
+import { DiskMediaStore, MediaRecord, createShownMediaTracker } from './unify/media';
 import { ToolpackRegistry } from './toolpacks/registry';
 import { ConfigSync } from './sync/controller';
 import { SYNCED_SETTINGS, accountForModel } from './sync/configSync';
-import { currentVersion, installVersion, latestVersion, updatedRoot } from './update/dshUpdate';
-import { installExtensionRelease, latestExtensionRelease } from './update/extensionUpdate';
-import { planUpdates, UpdateOffer, UpdatePlan } from './update/plan';
+import { currentVersion, installVersion, latestVersion, updatedRoot } from './update/unifyUpdate';
+import type { AgentRuntimeOffer } from './update/plan';
 import { compareVersions } from './update/version';
 import { JobHost, JobState } from './goal/types';
 import { addDecision, createJob, runJob } from './goal/runner';
 import { parseSlash } from './slash/registry';
 import { terminateProcessTree } from './runtime/cancellation';
 import { answersByQuestion, formatAnswers, parseQuestions } from './sidebar/questions';
-import { withExplorer } from './runtime/explorer';
+import { withExplorer, explorerPromptNote, formatExplorerRanges, parseExplorerRanges } from './runtime/explorer';
 import { promptPrefix, skipToolListChanged } from './runtime/promptPrefix';
 import { AfterTurn, CANCEL_SUBAGENT, delegationInstructions, isDelegationTool, isNativeSubagentTool, TOOLPACK_SCOPE, WAIT_SUBAGENTS } from './runtime/delegation';
 import { editorContextDiff } from './runtime/editorContext';
 import { AcpRuntime, RuntimeEvent } from './runtime/acp';
+import type { StuckCommand } from './runtime/stuckCommands';
 import { CliTurn, OAuthCliRuntime, TurnUsage } from './runtime/oauthCli';
 import { codexBackend } from './runtime/models';
 import { MirrorChange, mirrorPathExcluded, WorkspaceMirror } from './runtime/shadow';
@@ -45,7 +49,9 @@ import { BACKGROUND_CLEANUP, setPowershellSpeedups, shellInstructions } from './
 import { activateRustTools, deactivateRustTools, ensureRustTools } from './runtime/rustTools';
 import { shouldKeepAlive } from './runtime/keepAlive';
 import { Checkpoint, checkpointHandoff, parseCheckpoint } from './runtime/checkpoint';
-import { displayTool } from './runtime/toolDisplay';
+import { displayTool, internalToolOf } from './runtime/toolDisplay';
+import type { InternalToolPlaces } from './unify/internalRows';
+import { applyRangeEdit } from './runtime/rangeEdit';
 import { chatCompactRequest, compactStep, CompactWatch, CONTINUE_AFTER_CHECKPOINT, MAX_SUBAGENT_SEGMENTS, sendCompactRequest, subagentCheckpoint, subagentCompactRequest, subagentResumeTask, takeFollowUp, TurnChannel } from './runtime/midTurnCompact';
 import { trimSessionImages } from './runtime/imageTrim';
 import { buildHandoff, CHAT_HISTORY_TOOL, chatHistoryReply, ChatMessage, handoffSummaryPrompt, KEEP_WITH_TOOL, MAX_TURN_TOOLS, toolLine } from './runtime/handoff';
@@ -54,14 +60,20 @@ import { findGit, GIT_DOWNLOAD_PAGE, installGit } from './runtime/git';
 import { globalMemoryFolder, isMemoryPath, memoryInstructions, memorySyncNeeded, syncGlobalMemory } from './runtime/memory';
 import { BATCH_INSTRUCTIONS, BatchCall, BatchOutcome, callLabel, executeBatch, formatBatchResult, isBatchFileTool, isBatchTool, outsideWorkingCopy, parseBatchCalls, runBatchFileTool, uniqueBatchCalls } from './runtime/batch';
 import { describePackTools, LOAD_TOOLPACK, loadToolpackTool, packCommands, RUN_TOOLPACK_TOOL, runToolpackTool } from './toolpacks/access';
-import { DshSidebarProvider, SidebarHostMessage, SidebarWebviewMessage } from './sidebar/provider';
+import { UnifySidebarProvider, SidebarHostMessage, SidebarWebviewMessage } from './sidebar/provider';
 import { Dictation, normalizeVoiceCommands, VoiceCommand } from './voice/dictation';
 import { installedWhisper, installWhisper, WHISPER_DOWNLOAD_BYTES, WhisperEngine } from './voice/whisperInstall';
-import { ApprovalMode, CursorAccountState, SidebarAccessibility, SidebarFeatureKey, SidebarFeatures, SidebarImage, SidebarJob, SidebarNameModel, SidebarProject, SidebarQuestion, SidebarSmartAutoRank, SidebarTimelineItem, SidebarSubagent, SidebarSubagentTool, defaultFeatures, normalizeAccessibility, normalizeCompactTokens, normalizeProcessPriority } from './sidebar/view';
-import { allUnifyFeatures, getUnifyFeature, onUnifyFeatureChange, setUnifyFeature } from './unify/settings';
+import { ApprovalMode, CursorAccountState, SidebarAccessibility, SidebarExplorerRange, SidebarFeatureKey, SidebarFeatures, SidebarImage, SidebarJob, SidebarMedia, SidebarNameModel, SidebarProject, SidebarQuestion, SidebarSmartAutoRank, SidebarTimelineItem, SidebarSubagent, SidebarSubagentTool, defaultFeatures, normalizeAccessibility, normalizeCompactTokens, normalizeProcessPriority } from './sidebar/view';
+import { allUnifyFeatures, getUnifyFeature, onUnifyFeatureChange, setUnifyFeature, unifyHome } from './unify/settings';
 import { agentBus } from './unify/agentBusImpl';
 import type { AgentBusEvent, AgentInfo, AgentMessage } from './unify/agentBus';
 import { handleUnifyRequest } from './unify/requests';
+import { recordKnowledgeVersion } from './unify/requests/knowledge';
+import { requestPaths } from './unify/requests/state';
+import { getGithubAuth, clearGithubToken, onGithubAuthChange, refreshGithubAuth, setGithubToken } from './unify/github';
+import type { GithubAuth } from './unify/github';
+import { createShutdownController, ShutdownActivity, ShutdownController } from './unify/power';
+import { nativeAgentsBlocked } from './runtime/nativeAgents';
 import { addAllowRule, commandPrefix, isAlwaysAllowed } from './sidebar/allowRules';
 import { deciderPrompt, MAX_NOTE, MAX_RANKS, normalizeRanks, parseDecision, rankLabel, SMART_AUTO, SmartAutoRank } from './runtime/smartAuto';
 
@@ -86,7 +98,7 @@ interface SessionRecord {
   contextTokens?: number;
   /** Context of a fresh session before any conversation: system prompt, tools and the first message. Auto compaction counts from here. */
   baseTokens?: number;
-  /** With auto compaction: earlier messages archived as parts under .dsh/transcripts, in order. */
+  /** With auto compaction: earlier messages archived as parts under .unify/transcripts, in order. */
   parts?: TranscriptPart[];
   explorerTokens?: number;
   sessionInstructions?: string;
@@ -102,7 +114,7 @@ interface SessionRecord {
   nudgedAt?: number;
   runtimeId?: string;
   pendingMirror?: boolean;
-  /** The agent edits the real workspace instead of a private copy (dsh.runtime.mirror off when the chat was created). */
+  /** The agent edits the real workspace instead of a private copy (unify.runtime.mirror off when the chat was created). */
   direct?: boolean;
   effort?: string;
   /** Smart Auto picks this chat's model for each message the user sends. */
@@ -112,15 +124,15 @@ interface SessionRecord {
   updatedAt: number;
 }
 
-const SESSIONS_KEY = 'dsh.ide.sessions.v1';
-const SELECTED_MODEL_KEY = 'dsh.ide.selectedModel.v1';
-const ACTIVE_SESSION_KEY = 'dsh.ide.activeSession.v1';
-const CURSOR_MODELS_KEY = 'dsh.ide.cursorModels.v1';
-const MODEL_CHOICES_KEY = 'dsh.ide.modelChoices.v1';
-const APPROVAL_KEY = 'dsh.ide.approvalMode.v1';
-const TRANSCRIPTS_KEY = 'dsh.ide.transcripts.v1';
-const TIMELINES_KEY = 'dsh.ide.timelines.v1';
-const SYNC_OFFER_KEY = 'dsh.ide.syncOffer.v1';
+const SESSIONS_KEY = 'unify.ide.sessions.v1';
+const SELECTED_MODEL_KEY = 'unify.ide.selectedModel.v1';
+const ACTIVE_SESSION_KEY = 'unify.ide.activeSession.v1';
+const CURSOR_MODELS_KEY = 'unify.ide.cursorModels.v1';
+const MODEL_CHOICES_KEY = 'unify.ide.modelChoices.v1';
+const APPROVAL_KEY = 'unify.ide.approvalMode.v1';
+const TRANSCRIPTS_KEY = 'unify.ide.transcripts.v1';
+const TIMELINES_KEY = 'unify.ide.timelines.v1';
+const SYNC_OFFER_KEY = 'unify.ide.syncOffer.v1';
 type SavedTimeline = { timeline: SidebarTimelineItem[]; subagents: Record<string, SidebarSubagent> };
 /** Feed notes for the turn that starts a chat's new agent session. */
 const RESUME_NOTES = {
@@ -143,7 +155,7 @@ const IMAGE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 
 const MAX_IMAGES = 8;
 const MAX_IMAGE_BASE64 = 14_000_000;
 type ModelChoice = { speed?: string; effort?: string };
-/** Customize page switches and the `dsh` settings that store them. */
+/** Customize page switches and the `unify` settings that store them. */
 const FEATURE_SETTINGS: Record<SidebarFeatureKey, string> = {
   activityRail: 'features.activityRail', autoName: 'features.autoName', shareRules: 'features.shareRules', editorContext: 'features.editorContext',
   reduceMotion: 'features.reduceMotion', updateChecks: 'updates.check', mirror: 'runtime.mirror', reviewAgent: 'features.reviewAgent',
@@ -156,21 +168,33 @@ type ResolvedRoute = ResolvedModel | { model: ModelEntry } | { model: ModelEntry
 
 /** Providers whose accounts are subscription sign-ins kept in OAuthCliAccounts: ChatGPT (Codex) and Claude. */
 function isOAuthProvider(value: string): value is OAuthCliProvider { return value === 'codex-cli' || value === 'claude-cli'; }
-/** Providers that run on a CLI harness instead of the DSH runtime. Only Claude: ChatGPT (Codex) runs natively in DSH. */
+/** Providers that run on a CLI harness instead of the agent runtime. Only Claude: ChatGPT (Codex) runs natively in Unify. */
 function isCliProvider(value: string): value is 'claude-cli' { return value === 'claude-cli'; }
-function runtimeLabel(provider: string): string { return provider === 'cursor-acp' ? 'Cursor' : provider === 'codex-cli' ? 'ChatGPT' : provider === 'claude-cli' ? 'Claude' : 'DSH'; }
+function runtimeLabel(provider: string): string { return provider === 'cursor-acp' ? 'Cursor' : provider === 'codex-cli' ? 'ChatGPT' : provider === 'claude-cli' ? 'Claude' : 'Unify'; }
 
 interface SubagentProfile { name: string; description?: string; model: string; effort?: string; speed?: string; mode: 'read-only' | 'edit'; tools?: boolean; enabled?: boolean }
 interface Actor { owner: string; label: string; readOnly: boolean }
 interface ToolInfo { tool: string; input: Record<string, unknown>; autoAllowEdits?: boolean }
+/** The contract's SidebarMedia, plus the hash and size the renderer reads (view.ts predates them). */
+type MediaItem = SidebarMedia & { hash: string; width?: number; height?: number };
+/** An image block as ACP reports it on a finished tool call. */
+interface IncomingImage { data: string; mimeType: string }
 interface ChildRun {
   parent: Chat;
   owner: string;
   label: string;
+  /** The id the UI knows this subagent by, for its own feed and sentToParent updates. */
+  agentId: string;
   readOnly: boolean;
   changed: Set<string>;
   outOfScope: Set<string>;
   files: string[];
+  /** Images sent to the parent while it runs, in order; the parent's own chat id is the store ref. */
+  sentToParent: MediaItem[];
+  /** Images already delivered inline to the parent, so the sentToParent strip can omit them. */
+  inlineInParent: Set<string>;
+  /** Images to hand the parent as content blocks when this run's result is returned. */
+  queuedForParent: { item: MediaItem; shownBy: string }[];
   /** Started with background: true, so it outlives an interrupted parent turn. */
   background?: boolean;
   runtimeKey?: string;
@@ -182,7 +206,7 @@ interface ChildRun {
 interface BackgroundTask { id: string; label: string; afterTurn: AfterTurn; done: boolean; result?: DelegateResult; finished: Promise<void>; run?: ChildRun }
 const PARENT: Actor = { owner: 'parent', label: '', readOnly: false };
 const EDIT_TOOLS = /^(Edit|Write|MultiEdit|NotebookEdit)$/;
-const DELEGATE_SERVER = 'dsh-delegate';
+const DELEGATE_SERVER = 'unify';
 /** How long an account that reported a usage limit is tried after the others. */
 const LIMIT_COOLDOWN_MS = 30 * 60 * 1000;
 /** A chat approval or question left unanswered this long resolves as rejected/skipped, so a lost reply cannot hang a turn. */
@@ -195,13 +219,13 @@ const CODEX_AUTH_ERROR = /\b401\b|unauthori[sz]ed|invalid[^.\n]*token|token[^.\n
 interface TurnOptions {
   shown?: string;
   job?: boolean;
-  /** Sent by DSH, not typed by the user (job steps, background subagent results): no user message is shown for it. */
+  /** Sent by Unify, not typed by the user (job steps, background subagent results): no user message is shown for it. */
   internal?: boolean;
   /** Chat this prompt belongs to in a multi-pane UI; omitted means the active chat. */
   chatId?: string;
   onFinish?(reply: string, cancelled: boolean): void;
 }
-/** A transcript entry; `internal` marks prompts DSH sent on its own, which are never shown as the user's messages. */
+/** A transcript entry; `internal` marks prompts Unify sent on its own, which are never shown as the user's messages. */
 type TranscriptItem = ChatMessage & { internal?: boolean };
 
 function toSidebarJob(job: JobState): SidebarJob {
@@ -254,10 +278,8 @@ interface Chat {
 class ExtensionHost implements vscode.Disposable {
   private readonly dependencies: WindowsDependencies;
   private nodeReady?: Promise<string>;
-  private updateCheck?: Promise<UpdateOffer & { failures: string[] }>;
+  private updateCheck?: Promise<{ agentRuntime?: AgentRuntimeOffer; failures: string[] }>;
   private updateInstall?: Promise<unknown>;
-  private updateRequired?: string;
-  private reloadPending = false;
   private readonly providerInstalls = new Set<string>();
   private readonly providerErrors = new Map<string, string>();
   private readonly output = vscode.window.createOutputChannel('DeepSeek Harness');
@@ -265,8 +287,9 @@ class ExtensionHost implements vscode.Disposable {
   private readonly oauthAccounts: OAuthCliAccounts;
   private readonly usage = new AccountUsageService(usage => this.sidebar.postMessage({ type: 'usageState', usage }));
   private readonly models: ModelRegistry;
-  private readonly sidebar: DshSidebarProvider;
-  private readonly status: vscode.StatusBarItem;
+  private readonly sidebar: UnifySidebarProvider;
+  /** Unify power: runs the countdown and shuts the PC down when every task has finished. */
+  private readonly shutdown: ShutdownController;
   private readonly runtimes = new Map<string, AcpRuntime>();
   private dictation?: Dictation;
   private whisperInstall?: Promise<WhisperEngine>;
@@ -277,6 +300,8 @@ class ExtensionHost implements vscode.Disposable {
   private readonly promptStarts = new Map<string, Promise<void>>();
   private readonly deletedSessions = new Set<string>();
   private readonly childRuns = new Set<ChildRun>();
+  /** Root sets for friendly internal rows, built once per chat instead of per runtime event. */
+  private readonly placesByChat = new Map<string, InternalToolPlaces>();
   /** Text listeners for tool-less ACP runs such as chat naming, keyed by `${runtimeKey}\n${sessionId}`. */
   private readonly oneShots = new Map<string, (update: Record<string, unknown>) => void>();
   private readonly delegateHost = new DelegateHost();
@@ -298,12 +323,18 @@ class ExtensionHost implements vscode.Disposable {
   private readonly agentRoster = new Map<string, AgentInfo>();
   /** Whether the VS Code window has focus; desktop notifications are shown only while it does not. */
   private windowFocused = true;
+  /** Unify's media store: files under ~/.unify/media, deduplicated by sha256 (docs/contracts/media.md). */
+  private readonly media = new DiskMediaStore(join(unifyHome(), 'media'));
+  /** Images already shown per chat, whatever chats.showYourWork says (TODO 2e). */
+  private readonly shownMedia = createShownMediaTracker();
+  /** Images a background subagent sent its parent; they ride the parent's next tool result. */
+  private readonly pendingParentMedia = new Map<string, { item: MediaItem; shownBy: string; run?: ChildRun }[]>();
   private readonly disposables: vscode.Disposable[] = [];
 
   public constructor(private readonly context: vscode.ExtensionContext) {
     this.dependencies = new WindowsDependencies(context.globalStorageUri.fsPath,
-      () => vscode.workspace.getConfiguration('dsh').get<string>('runtime.nodePath'),
-      provider => vscode.workspace.getConfiguration('dsh').get<string>(provider === 'claude-cli' ? 'runtime.claudePath' : 'runtime.cursorAgentPath'));
+      () => vscode.workspace.getConfiguration('unify').get<string>('runtime.nodePath'),
+      provider => vscode.workspace.getConfiguration('unify').get<string>(provider === 'claude-cli' ? 'runtime.claudePath' : 'runtime.cursorAgentPath'));
     this.accounts = new AccountRegistry(context);
     this.oauthAccounts = new OAuthCliAccounts(context);
     this.models = new ModelRegistry(context, this.accounts);
@@ -318,10 +349,10 @@ class ExtensionHost implements vscode.Disposable {
     this.toolpacks = new ToolpackRegistry({
       dir: join(context.globalStorageUri.fsPath, 'toolpacks'),
       workerPath: join(context.extensionPath, 'dist', 'toolpack-worker.js'),
-      nodePath: () => vscode.workspace.getConfiguration('dsh').get<string>('runtime.nodePath') || undefined,
+      nodePath: () => vscode.workspace.getConfiguration('unify').get<string>('runtime.nodePath') || undefined,
       compile: async source => (await (await import('esbuild')).transform(source, { loader: 'ts', format: 'cjs', target: 'node20' })).code,
     });
-    this.sidebar = new DshSidebarProvider(context.extensionUri, message => this.onSidebarMessage(message), (id, timeline, subagents) => {
+    this.sidebar = new UnifySidebarProvider(context.extensionUri, message => this.onSidebarMessage(message), (id, timeline, subagents) => {
       if (this.deletedSessions.has(id)) return;
       this.timelines[id] = { timeline, subagents };
       if (!this.timelineTimer) this.timelineTimer = setTimeout(() => {
@@ -338,29 +369,38 @@ class ExtensionHost implements vscode.Disposable {
       post: sync => this.sidebar.postMessage({ type: 'syncState', sync }),
       applied: async () => { this.refreshModels(); this.refreshSubagents(); this.refreshCustomize(); await this.refreshInstructions(); },
     });
-    this.status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
-    this.status.command = 'dsh.continue';
-    this.status.text = '$(hubot) DSH';
-    this.status.tooltip = 'DeepSeek Harness: click to continue chat';
-    this.status.show();
+    this.shutdown = createShutdownController({
+      getActivity: () => this.shutdownActivity(),
+      onActivityChange: listener => {
+        const timer = setInterval(listener, 1000);
+        return () => clearInterval(timer);
+      },
+      saveState: () => this.saveAllState(),
+      notify: (title, body) => this.notifyDesktop(title, body),
+      post: message => { this.sidebar.postMessage(message as SidebarHostMessage); this.sidebar.setShutdown(this.shutdown.getStatus()); },
+    });
+    this.disposables.push({ dispose: () => this.shutdown.dispose() });
+    this.sidebar.setShutdown(this.shutdown.getStatus());
+    this.disposables.push({ dispose: onGithubAuthChange(auth => this.setGithub(auth)) });
+    void this.refreshGithub();
     const keepAliveTimer = setInterval(() => { void this.keepAliveChats(); }, 60_000);
-    setAgentPriority(vscode.workspace.getConfiguration('dsh').get('runtime.processPriority'));
+    setAgentPriority(vscode.workspace.getConfiguration('unify').get('runtime.processPriority'));
     this.applyShellSettings();
     this.disposables.push(
-      this.output, this.status, this.sidebar, this.sync,
+      this.output, this.sidebar, this.sync,
       { dispose: () => clearInterval(keepAliveTimer) },
       { dispose: () => { for (const runtime of this.runtimes.values()) runtime.dispose(); this.runtimes.clear(); this.delegateHost.dispose(); void this.toolpacks.dispose(); this.fileSummaries?.dispose(); this.dictation?.stop(); } },
       this.toolpacks.onChange(() => { this.postToolpacks(); this.sync.schedule(); }),
-      vscode.window.registerWebviewViewProvider(DshSidebarProvider.viewType, this.sidebar, { webviewOptions: { retainContextWhenHidden: true } }),
+      vscode.window.registerWebviewViewProvider(UnifySidebarProvider.viewType, this.sidebar, { webviewOptions: { retainContextWhenHidden: true } }),
       vscode.workspace.onDidChangeConfiguration(event => {
-        if (event.affectsConfiguration('dsh.models')) this.refreshModels();
-        if (event.affectsConfiguration('dsh.subagents')) this.refreshSubagents();
-        if (event.affectsConfiguration('dsh.memory')) this.refreshMemory();
-        if (event.affectsConfiguration('dsh.runtime.processPriority')) setAgentPriority(vscode.workspace.getConfiguration('dsh').get('runtime.processPriority'));
-        if (event.affectsConfiguration('dsh.runtime.powershellSpeedups') || event.affectsConfiguration('dsh.runtime.rustTools')) this.applyShellSettings();
-        if (['dsh.features', 'dsh.experimental', 'dsh.runtime','dsh.nameModel', 'dsh.reviewModel', 'dsh.summaryModel', 'dsh.deciderModel', 'dsh.explorerModel', 'dsh.smartAutoRanks', 'dsh.updates.check', 'dsh.accessibility'].some(key => event.affectsConfiguration(key))) this.refreshCustomize();
-        if (['dsh.models', 'dsh.features.smartAuto', 'dsh.deciderModel', 'dsh.smartAutoRanks'].some(key => event.affectsConfiguration(key))) void this.guarded(() => this.dropSmartAuto());
-        if (SYNCED_SETTINGS.some(key => event.affectsConfiguration(`dsh.${key}`))) this.sync.schedule();
+        if (event.affectsConfiguration('unify.models')) this.refreshModels();
+        if (event.affectsConfiguration('unify.subagents')) this.refreshSubagents();
+        if (event.affectsConfiguration('unify.memory')) this.refreshMemory();
+        if (event.affectsConfiguration('unify.runtime.processPriority')) setAgentPriority(vscode.workspace.getConfiguration('unify').get('runtime.processPriority'));
+        if (event.affectsConfiguration('unify.runtime.powershellSpeedups') || event.affectsConfiguration('unify.runtime.rustTools')) this.applyShellSettings();
+        if (['unify.features', 'unify.experimental', 'unify.runtime', 'unify.nameModel', 'unify.reviewModel', 'unify.summaryModel', 'unify.deciderModel', 'unify.explorerModel', 'unify.smartAutoRanks', 'unify.updates.check', 'unify.accessibility'].some(key => event.affectsConfiguration(key))) this.refreshCustomize();
+        if (['unify.models', 'unify.features.smartAuto', 'unify.deciderModel', 'unify.smartAutoRanks'].some(key => event.affectsConfiguration(key))) void this.guarded(() => this.dropSmartAuto());
+        if (SYNCED_SETTINGS.some(key => event.affectsConfiguration(`unify.${key}`))) this.sync.schedule();
       }),
       vscode.window.onDidChangeWindowState(state => { this.windowFocused = state.focused; if (state.focused) this.sync.check(true); }),
       { dispose: agentBus.onEvent(event => this.onAgentBusEvent(event)) },
@@ -384,7 +424,7 @@ class ExtensionHost implements vscode.Disposable {
     void this.models.migrate().catch(error => this.output.appendLine(`Could not move saved models to settings: ${String(error)}`));
     this.ensureNode().then(async () => { await this.refreshDependencies(); await this.toolpacks.start(); this.sync.start(); void this.offerSync(); }).catch(error => {
       this.output.appendLine(`Dependency setup failed: ${String(error)}`);
-      void vscode.window.showErrorMessage(`DSH setup failed: ${error instanceof Error ? error.message : String(error)}`);
+      void vscode.window.showErrorMessage(`Unify setup failed: ${error instanceof Error ? error.message : String(error)}`);
     });
     this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode });
     this.refreshCustomize();
@@ -394,6 +434,10 @@ class ExtensionHost implements vscode.Disposable {
     this.resumeLastChat();
     void this.refreshAccount();
     void this.refreshAccounts();
+    // Startup sweep: files whose chats were deleted while the app was closed leave the index for good.
+    void this.media.sweep().then(count => {
+      if (count) this.output.appendLine(`Media sweep removed ${count} unreferenced file${count === 1 ? '' : 's'}.`);
+    }).catch(error => this.output.appendLine(`Media sweep failed: ${String(error)}`));
   }
 
   private get chat(): Chat | undefined { return this.active ? this.chats.get(this.active.id) : undefined; }
@@ -420,7 +464,7 @@ class ExtensionHost implements vscode.Disposable {
 
   private ensureNode(): Promise<string> {
     if (!this.nodeReady) {
-      this.nodeReady = Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'DSH: checking Node.js and npm…' }, () => this.dependencies.ensureNode())).catch(error => { this.nodeReady = undefined; throw error; });
+      this.nodeReady = Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Unify: checking Node.js and npm…' }, () => this.dependencies.ensureNode())).catch(error => { this.nodeReady = undefined; throw error; });
     }
     return this.nodeReady;
   }
@@ -446,7 +490,7 @@ class ExtensionHost implements vscode.Disposable {
     await this.refreshDependencies();
     try {
       await this.ensureNode();
-      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `DSH: installing ${runtimeLabel(provider)}…` }, () => this.dependencies.installProvider(provider));
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Unify: installing ${runtimeLabel(provider)}…` }, () => this.dependencies.installProvider(provider));
     } catch (error) {
       this.providerErrors.set(provider, error instanceof Error ? error.message : String(error));
       throw error;
@@ -466,11 +510,34 @@ class ExtensionHost implements vscode.Disposable {
     const runtime = new AcpRuntime(this.output, params => this.requestPermission(params, key), (method, params) => this.handleCursorRequest(method, params));
     this.runtimes.set(key, runtime);
     runtime.onUpdate(event => this.onRuntimeUpdate(event, key));
+    runtime.onStuckCommand(command => this.onStuckCommand(key, command));
     runtime.onState(state => {
       if (state === 'stopped' && this.runtimes.get(key) === runtime) this.runtimes.delete(key);
-      this.updateStatus();
     });
     return runtime;
+  }
+
+  /** Reports a stuck shell command stopped by the runtime watchdog to every chat using that runtime. */
+  private onStuckCommand(key: string, command: StuckCommand): void {
+    const minutes = Math.max(1, Math.round(command.idleMs / 60_000));
+    const suffix = command.command ? `: ${command.command}` : '';
+    const text = `Stopped a stuck command after ${minutes} min with no activity${suffix}`;
+    const chatIds = new Set<string>();
+    for (const chat of this.chats.values()) {
+      if (chat.runtimeKey === key) chatIds.add(chat.record.id);
+    }
+    for (const run of this.childRuns) {
+      if (run.runtimeKey === key) chatIds.add(run.parent.record.id);
+    }
+    for (const sessionId of chatIds) {
+      this.sidebar.postMessage({
+        type: 'noteMessage',
+        sessionId,
+        entryId: `stuck:${command.runnerPid}:${Date.now()}`,
+        icon: 'timer_off',
+        text,
+      });
+    }
   }
 
   private async releaseRuntime(key: string | undefined): Promise<void> {
@@ -487,11 +554,13 @@ class ExtensionHost implements vscode.Disposable {
     const chat = this.chats.get(id);
     if (!chat) return;
     this.chats.delete(id);
+    this.placesByChat.delete(id);
     if (chat.ping) { chat.cli.cancel(); await chat.ping; }
     if (this.active?.id === id) this.active = undefined;
     if (chat.runtime) await chat.runtime.closeSession(this.rid(chat.record)).catch(() => undefined);
     chat.review.dispose(); chat.mirror.dispose();
     agentBus.unregister(id);
+    unbindChatAgentOwner(chat.ownerId);
     await this.releaseRuntime(chat.runtimeKey);
   }
 
@@ -507,13 +576,6 @@ class ExtensionHost implements vscode.Disposable {
     this.sidebar.postMessage({ type: 'diffState', diffs: chat ? this.diffItems(chat.review.list()) : [] });
   }
 
-  private updateStatus(): void {
-    const running = [...this.chats.values()].filter(chat => chat.running).length;
-    const label = runtimeLabel(this.active?.provider || '');
-    const pending = this.review?.pending().length || 0;
-    this.status.text = running ? `$(sync~spin) ${running > 1 ? `${running} chats` : label} running` : pending ? `$(diff) ${label} ${pending} pending` : `$(hubot) ${label} ready`;
-  }
-
   private postRun(chatId: string, state: 'idle' | 'thinking' | 'tool' | 'cancelling', label: string): void {
     this.sidebar.postMessage({ type: 'runState', sessionId: chatId, state, label });
     // Keep the agent roster's state in step with the chat's turn.
@@ -523,14 +585,75 @@ class ExtensionHost implements vscode.Disposable {
   /** Desktop notification for a request or a finished turn, shown only while the window is unfocused. */
   private notifyDesktop(title: string, body: string): void {
     if (this.windowFocused || !getUnifyFeature('notifications.desktop')) return;
-    // The engine runs in Electron's main process; tests and other hosts load it without Electron, hence String + catch.
-    const moduleName = 'electron';
-    void import(moduleName).then((electron: unknown) => {
-      const api = electron as { Notification?: { new (options: { title: string; body: string }): { show(): void }; isSupported?(): boolean } };
-      const Notification = api.Notification;
-      if (!Notification || Notification.isSupported?.() === false) return;
-      new Notification({ title, body }).show();
-    }).catch(error => this.output.appendLine(`Desktop notification failed: ${error instanceof Error ? error.message : String(error)}`));
+    vscode.env?.notify?.(title, body);
+  }
+
+  /** Where this chat's agent may touch app data: its shadow working copy, the real project, and every open folder. */
+  private internalPlaces(chat: Chat): InternalToolPlaces {
+    const cached = this.placesByChat.get(chat.record.id);
+    if (cached) return cached;
+    const roots = new Set<string>();
+    const add = (value: string | undefined): void => {
+      if (!value) return;
+      try { roots.add(realpathSync(value)); } catch { roots.add(value); }
+    };
+    add(chat.mirror.cwd);
+    add(chat.record.project?.path);
+    for (const folder of vscode.workspace.workspaceFolders || []) if (folder.uri.scheme === 'file') add(folder.uri.fsPath);
+    const vault = this.memorySettings().global;
+    let dataHome = unifyHome();
+    try { dataHome = realpathSync(dataHome); } catch { /* the data folder may not exist yet */ }
+    let globalVault = vault;
+    if (vault) { try { globalVault = realpathSync(vault); } catch { /* keep the configured path */ } }
+    const places: InternalToolPlaces = { dataHome, projectRoots: [...roots], ...(globalVault ? { globalVault } : {}) };
+    this.placesByChat.set(chat.record.id, places);
+    return places;
+  }
+
+  /** Everything the shutdown controller treats as work in progress, across every chat and pane. */
+  private shutdownActivity(): ShutdownActivity {
+    let runningProcesses = 0;
+    for (const id of this.chats.keys()) {
+      for (const item of this.sidebar.timeline(id)) {
+        if (item.kind === 'tool' && item.event.state === 'running') runningProcesses += 1;
+      }
+    }
+    return {
+      // Queued messages and background subagents are work still to finish too, even between turns.
+      runningChats: [...this.chats.values()].filter(chat => chat.running || chat.jobActive || chat.queue.length > 0 || chat.background.size > 0).length,
+      runningSubagents: this.childRuns.size,
+      pendingApprovals: this.pendingApprovals.size,
+      pendingQuestions: this.pendingQuestions.size,
+      runningProcesses,
+    };
+  }
+
+  /** Flushes chats, transcripts and timelines before the PC shuts down; a rejection cancels the shutdown. */
+  private async saveAllState(): Promise<void> {
+    for (const chat of this.chats.values()) await this.saveSession(chat.record, this.active?.id === chat.record.id);
+    await this.saveTranscripts();
+    await this.context.workspaceState.update(TIMELINES_KEY, this.timelines);
+  }
+
+  /** Unify GitHub sign-in as the UI reads it (`viewState.github`). */
+  private setGithub(auth: GithubAuth | undefined, error?: string): void {
+    const github = {
+      signedIn: !!auth,
+      ...(auth ? { login: auth.login, source: auth.source } : {}),
+      ...(error ? { error } : {}),
+    };
+    // Keep viewState (a pane resolved later) and any open pane in step.
+    this.sidebar.setGithub(github);
+    this.sidebar.postMessage({ type: 'githubState', github });
+  }
+
+  /** Re-checks the GitHub CLI and the pasted token without using the ten-minute cache. */
+  private async refreshGithub(): Promise<void> {
+    try {
+      this.setGithub(await refreshGithubAuth());
+    } catch (error) {
+      this.setGithub(undefined, error instanceof Error ? error.message : String(error));
+    }
   }
 
   /** Forwards agent messaging events to the UI and keeps the roster used to find a message's chat. */
@@ -556,7 +679,7 @@ class ExtensionHost implements vscode.Disposable {
   public dispose(): Thenable<void> {
     if (this.timelineTimer) clearTimeout(this.timelineTimer);
     const saved = this.context.workspaceState.update(TIMELINES_KEY, this.timelines);
-    for (const chat of this.chats.values()) { if (chat.ping) chat.cli.cancel(); chat.review.dispose(); chat.mirror.dispose(); agentBus.unregister(chat.record.id); }
+    for (const chat of this.chats.values()) { if (chat.ping) chat.cli.cancel(); chat.review.dispose(); chat.mirror.dispose(); agentBus.unregister(chat.record.id); unbindChatAgentOwner(chat.ownerId); }
     for (const disposable of this.disposables) disposable.dispose();
     return saved;
   }
@@ -565,22 +688,22 @@ class ExtensionHost implements vscode.Disposable {
     const command = (name: string, action: () => Promise<void> | void): void => {
       this.disposables.push(vscode.commands.registerCommand(name, () => this.guarded(action)));
     };
-    command('dsh.newChat', () => this.newChat());
-    command('dsh.continue', () => this.continueChat());
-    command('dsh.cancel', () => this.cancel());
-    command('dsh.pickModel', () => this.pickModel());
-    command('dsh.manageModels', () => this.manageModels());
-    command('dsh.manageAccounts', () => this.manageAccounts());
-    command('dsh.applyAll', () => this.review?.applyAll());
-    command('dsh.rejectAll', () => this.review?.rejectAll());
-    command('dsh.openRuntimeLogs', () => { this.output.show(); });
-    command('dsh.restartRuntime', () => this.restartRuntime());
-    command('dsh.checkForUpdates', () => this.checkUpdates(true));
-    command('dsh.reviewNext', () => this.reviewNext());
-    command('dsh.reviewAll', () => this.review?.openAll());
-    command('dsh.openWorkingCopyTerminal', () => this.openWorkingCopyTerminal());
-    command('dsh.applyHunk', () => this.review?.chooseHunk('apply'));
-    command('dsh.rejectHunk', () => this.review?.chooseHunk('reject'));
+    command('unify.newChat', () => this.newChat());
+    command('unify.continue', () => this.continueChat());
+    command('unify.cancel', () => this.cancel());
+    command('unify.pickModel', () => this.pickModel());
+    command('unify.manageModels', () => this.manageModels());
+    command('unify.manageAccounts', () => this.manageAccounts());
+    command('unify.applyAll', () => this.review?.applyAll());
+    command('unify.rejectAll', () => this.review?.rejectAll());
+    command('unify.openRuntimeLogs', () => { this.output.show(); });
+    command('unify.restartRuntime', () => this.restartRuntime());
+    command('unify.checkForUpdates', () => this.checkUpdates(true));
+    command('unify.reviewNext', () => this.reviewNext());
+    command('unify.reviewAll', () => this.review?.openAll());
+    command('unify.openWorkingCopyTerminal', () => this.openWorkingCopyTerminal());
+    command('unify.applyHunk', () => this.review?.chooseHunk('apply'));
+    command('unify.rejectHunk', () => this.review?.chooseHunk('reject'));
   }
 
   private async guarded(action: () => Promise<void> | void): Promise<void> {
@@ -594,8 +717,8 @@ class ExtensionHost implements vscode.Disposable {
 
   private root(): vscode.WorkspaceFolder {
     const folder = vscode.workspace.workspaceFolders?.[0];
-    if (!folder || folder.uri.scheme !== 'file') throw new Error('Open a local workspace folder to use DSH.');
-    if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace to run DSH tools.');
+    if (!folder || folder.uri.scheme !== 'file') throw new Error('Open a local workspace folder to use Unify.');
+    if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace to run Unify tools.');
     return folder;
   }
 
@@ -611,29 +734,15 @@ class ExtensionHost implements vscode.Disposable {
   private checkUpdates(manual = false): Promise<void> {
     return this.runUpdates(manual).catch(error => {
       const message = error instanceof Error ? error.message : String(error);
-      this.output.appendLine(`DSH update failed: ${message}`);
-      if (manual) void vscode.window.showErrorMessage(`DSH update failed: ${message}`);
+      this.output.appendLine(`Unify update failed: ${message}`);
+      if (manual) void vscode.window.showErrorMessage(`Unify update failed: ${message}`);
     });
   }
 
-  private requireCurrent(): void {
-    if (!this.updateRequired) return;
-    if (this.reloadPending) void this.promptReload();
-    else void this.checkUpdates(true);
-    throw new Error(this.updateRequired);
-  }
-
-  private async promptReload(): Promise<void> {
-    const reload = await vscode.window.showInformationMessage('DSH-IDE was updated. Reload the window to use it.', { modal: true }, 'Reload Window');
-    if (reload) await vscode.commands.executeCommand('workbench.action.reloadWindow');
-  }
-
   /** Overlapping checks share one lookup, but each caller applies its own manual flag. */
-  private findUpdates(): Promise<UpdateOffer & { failures: string[] }> {
+  private findUpdates(): Promise<{ agentRuntime?: AgentRuntimeOffer; failures: string[] }> {
     return this.updateCheck ??= (async () => {
-      const repository = vscode.workspace.getConfiguration('dsh').get<string>('updates.repository', '').trim();
       const storage = this.context.globalStorageUri.fsPath;
-      const current = this.context.extension.packageJSON.version as string;
       const failures: string[] = [];
       const settled = async <T>(label: string, task: Promise<T>): Promise<T | undefined> => {
         try { return await task; }
@@ -644,13 +753,12 @@ class ExtensionHost implements vscode.Disposable {
           return undefined;
         }
       };
-      const [extension, installed, latest] = await Promise.all([
-        repository ? settled('DSH-IDE', latestExtensionRelease(repository, current)) : undefined,
-        settled('DSH', currentVersion(storage)),
-        settled('DSH', latestVersion()),
+      const [installed, latest] = await Promise.all([
+        settled('agent runtime', currentVersion(storage)),
+        settled('agent runtime', latestVersion()),
       ]);
-      const dsh = installed && latest && compareVersions(latest, installed) > 0 ? { current: installed, latest } : undefined;
-      return { extension, dsh, failures };
+      const agentRuntime = installed && latest && compareVersions(latest, installed) > 0 ? { current: installed, latest } : undefined;
+      return { agentRuntime, failures };
     })().finally(() => { this.updateCheck = undefined; });
   }
 
@@ -658,89 +766,42 @@ class ExtensionHost implements vscode.Disposable {
   // notification would otherwise block every later check until the window reloads.
   private async runUpdates(manual: boolean): Promise<void> {
     if (this.updateInstall) {
-      if (manual) void vscode.window.showInformationMessage('A DSH update is already installing.');
+      if (manual) void vscode.window.showInformationMessage('An agent runtime update is already installing.');
       return;
     }
-    const config = vscode.workspace.getConfiguration('dsh');
-    const current = this.context.extension.packageJSON.version as string;
-    const { extension, dsh, failures } = await this.findUpdates();
-    const plan = planUpdates({ extension, dsh }, {
-      promptOptional: manual || config.get<boolean>('updates.check', true),
-      skippedDsh: this.context.globalState.get<string>('dsh.ide.skippedDshVersion'),
-    });
-    if (!plan) {
+    const config = vscode.workspace.getConfiguration('unify');
+    const { agentRuntime, failures } = await this.findUpdates();
+    const enabled = manual || config.get<boolean>('updates.check', true);
+    const skipped = this.context.globalState.get<string>('unify.ide.skippedAgentRuntimeVersion');
+    if (!enabled || !agentRuntime || agentRuntime.latest === skipped) {
       if (manual && failures.length) void vscode.window.showWarningMessage(`Could not finish checking for updates. ${failures.join(' ')}`);
-      else if (manual) void vscode.window.showInformationMessage('DSH-IDE and DSH are up to date.');
+      else if (manual) void vscode.window.showInformationMessage('Unify is up to date.');
       return;
     }
-    const parts = [plan.extension && `DSH-IDE ${plan.extension.version}`, plan.dsh && `DSH ${plan.dsh.latest}`].filter(Boolean).join(' and ');
-    if (plan.required) {
-      this.updateRequired = `DSH ${plan.dsh!.latest} is available, so DSH-IDE ${plan.extension!.version} must be installed before you can keep using it. Run "DSH: Check for Updates" to continue.`;
-      const choice = await vscode.window.showWarningMessage(`${parts} must be installed to keep using DSH-IDE.`,
-        { modal: true, detail: `You have DSH-IDE ${current} and DSH ${plan.dsh!.current}. Chats are disabled until the update is installed.` }, 'Update now');
-      if (!choice) return;
-    } else {
-      const buttons = plan.dsh && !plan.extension ? ['Update', 'Later', 'Skip this version'] : ['Update', 'Later'];
-      const choice = await vscode.window.showInformationMessage(`${parts} ${plan.extension && plan.dsh ? 'are' : 'is'} available.`, ...buttons);
-      if (choice === 'Skip this version') { await this.context.globalState.update('dsh.ide.skippedDshVersion', plan.dsh!.latest); return; }
-      if (choice !== 'Update') return;
-    }
+    const choice = await vscode.window.showInformationMessage(`Agent runtime ${agentRuntime.latest} is available.`, 'Update', 'Later', 'Skip this version');
+    if (choice === 'Skip this version') { await this.context.globalState.update('unify.ide.skippedAgentRuntimeVersion', agentRuntime.latest); return; }
+    if (choice !== 'Update') return;
     // Another prompt may have started the same install while this one was open.
     if (this.updateInstall) return;
-    const install = this.installUpdates(plan, parts);
+    const install = this.installUpdates(agentRuntime.latest);
     this.updateInstall = install.finally(() => { this.updateInstall = undefined; }).catch(() => undefined);
-    let dshError: unknown;
-    try { ({ dshError } = await install); }
+    try { await install; }
     catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.output.appendLine(`DSH update failed: ${message}`);
-      void vscode.window.showErrorMessage(`DSH update failed: ${message}`);
+      this.output.appendLine(`Unify update failed: ${message}`);
+      void vscode.window.showErrorMessage(`Unify update failed: ${message}`);
       return;
     }
-    if (dshError) {
-      const message = dshError instanceof Error ? dshError.message : String(dshError);
-      this.output.appendLine(`DSH update failed: ${message}`);
-      void vscode.window.showErrorMessage(`DSH-IDE ${plan.extension!.version} installed, but DSH ${plan.dsh!.latest} failed: ${message} Reload, then run "DSH: Check for Updates" to retry.`);
-    }
-    if (plan.extension) {
-      if (plan.required) await this.promptReload();
-      else {
-        this.updateRequired = undefined;
-        const installed = dshError ? `DSH-IDE ${plan.extension.version}` : parts;
-        const reload = await vscode.window.showInformationMessage(`${installed} installed. Reload the window to use the update.`, 'Reload Window', 'Later');
-        if (reload) await vscode.commands.executeCommand('workbench.action.reloadWindow');
-      }
-    } else {
-      this.updateRequired = undefined;
-      const restart = await vscode.window.showInformationMessage(`DSH ${plan.dsh!.latest} is installed. Restart the runtime to use it.`, 'Restart runtime');
-      if (restart) await this.guarded(() => this.restartRuntime());
-    }
+    const restart = await vscode.window.showInformationMessage(`Agent runtime ${agentRuntime.latest} is installed. Restart it to use it.`, 'Restart runtime');
+    if (restart) await this.guarded(() => this.restartRuntime());
   }
 
-  /** The VSIX is small and is what unblocks a required update, so it installs before the much larger npm download. */
-  private async installUpdates(plan: UpdatePlan, parts: string): Promise<{ dshError?: unknown }> {
+  private async installUpdates(latest: string): Promise<void> {
     const storage = this.context.globalStorageUri.fsPath;
-    return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Updating ${parts}…` }, async progress => {
-      if (plan.extension) {
-        progress.report({ message: `Downloading DSH-IDE ${plan.extension.version}` });
-        await installExtensionRelease(plan.extension, path => vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(path)));
-        if (plan.required) {
-          this.reloadPending = true;
-          this.updateRequired = 'DSH-IDE was updated. Reload the window to continue.';
-        }
-      }
-      if (!plan.dsh) return {};
-      const latest = plan.dsh.latest;
-      try {
-        progress.report({ message: `Downloading DSH ${latest}` });
-        const node = await this.ensureNode();
-        await installVersion(storage, latest, node, downloads => progress.report({ message: `Downloading DSH ${latest} (${downloads} files)` }));
-        return {};
-      } catch (error) {
-        // Keep a finished extension install usable; the caller reports the DSH failure.
-        if (plan.extension) return { dshError: error };
-        throw error;
-      }
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Updating agent runtime ${latest}…` }, async progress => {
+      progress.report({ message: `Downloading agent runtime ${latest}` });
+      const node = await this.ensureNode();
+      await installVersion(storage, latest, node, downloads => progress.report({ message: `Downloading agent runtime ${latest} (${downloads} files)` }));
     });
   }
 
@@ -761,12 +822,17 @@ class ExtensionHost implements vscode.Disposable {
     this.sidebar.postMessage({ type: 'sessionDeleted', sessionId: id });
     this.refreshSessions();
     if (wasActive && remaining.length) await this.continueChat(remaining[0].id);
-    else if (wasActive) { this.syncActiveView(); this.updateStatus(); }
+    else if (wasActive) { this.syncActiveView(); }
     await Promise.all([saved, selected, unloaded]);
     await this.saveTranscripts();
     // An in-flight creation must finish disposing its watcher before its files
     // are removed; otherwise copying and recursive deletion can race.
     await this.chatLoads.get(id)?.catch(() => undefined);
+    // Deduplicated media is released by ref, so files shared with other chats stay; the shown set
+    // and any images still owed to this chat's parent go with it.
+    await this.media?.release(id).catch(error => this.output.appendLine(`Releasing chat media failed: ${String(error)}`));
+    this.shownMedia?.forget(id);
+    this.pendingParentMedia?.delete(id);
     await rm(join(this.context.globalStorageUri.fsPath, 'media', id), { recursive: true, force: true }).catch(() => undefined);
     const folder = vscode.workspace.workspaceFolders?.[0];
     // Direct chats save transcript parts in the real workspace; a mirror's go with the mirror.
@@ -787,9 +853,14 @@ class ExtensionHost implements vscode.Disposable {
     const choice = this.choiceFor(current);
     this.sidebar.postMessage({
       type: 'modelState',
-      models: this.availableModels().map(model => ({ id: model.name, name: model.name, provider: model.provider,
-        backend: model.backend, account: model.account, enabled: model.enabled,
-        speedOptions: model.speedOptions, effortOptions: model.effortOptions })),
+      models: this.availableModels().map(model => {
+        // Config Sync can carry a context size for a model even though the core entry does not require one.
+        const contextWindow = (model as ModelEntry & { contextWindow?: unknown }).contextWindow;
+        return { id: model.name, name: model.name, provider: model.provider,
+          backend: model.backend, account: model.account, enabled: model.enabled,
+          speedOptions: model.speedOptions, effortOptions: model.effortOptions,
+          ...(typeof contextWindow === 'number' && Number.isFinite(contextWindow) && contextWindow > 0 ? { contextWindow } : {}) };
+      }),
       cursorBackends: this.cursorModels.map(model => ({ value: model.backend, name: model.name.replace(/^Cursor /, '') })),
       selectedModelId: this.selectedModel, selectedSpeed: choice.speed, selectedEffort: choice.effort,
     });
@@ -871,18 +942,15 @@ class ExtensionHost implements vscode.Disposable {
     if (!model) return;
     if (model.provider === 'cursor-acp') {
       this.sidebar.postMessage({ type: 'accountState', provider: 'Cursor', label: this.cursorAccount.connected ? this.cursorAccount.label : 'Connect Cursor account', connected: this.cursorAccount.connected });
-      this.status.tooltip = `${model.name} · ${this.cursorAccount.label}`;
       return;
     }
     if (isOAuthProvider(model.provider)) {
       const account = accountForModel(this.oauthAccounts, model);
       this.sidebar.postMessage({ type: 'accountState', provider: model.provider, label: account?.label || 'Connect an account', connected: !!account });
-      this.status.tooltip = `${model.name} · ${account?.label || 'no account'}`;
       return;
     }
     const account = accountForModel(this.accounts, model);
     this.sidebar.postMessage({ type: 'accountState', provider: model.provider, label: account?.label || 'Add an account', connected: !!account });
-    this.status.tooltip = `${model.name} · ${model.provider} · ${account?.label || 'no account'}`;
   }
 
   private async resolveRoute(override?: ModelEntry): Promise<ResolvedRoute> {
@@ -946,12 +1014,12 @@ class ExtensionHost implements vscode.Disposable {
       [SELF_HOSTED]: SELF_HOSTED_ENV,
     };
     const name = configured[provider];
-    if (!name) throw new Error(`Provider '${provider}' needs an explicit DSH adapter and credential mapping before it can run.`);
+    if (!name) throw new Error(`Provider '${provider}' needs an explicit Unify adapter and credential mapping before it can run.`);
     return name;
   }
 
   private cursorAgentLaunch(): { command: string; args: string[] } {
-    const configured = vscode.workspace.getConfiguration('dsh').get<string>('runtime.cursorAgentPath')?.trim() || 'agent';
+    const configured = vscode.workspace.getConfiguration('unify').get<string>('runtime.cursorAgentPath')?.trim() || 'agent';
     if (process.platform === 'win32') {
       const root = configured === 'agent' ? join(process.env.LOCALAPPDATA || '', 'cursor-agent')
         : configured.toLowerCase().endsWith('.cmd') || configured.toLowerCase().endsWith('.ps1') ? dirname(configured) : configured;
@@ -994,7 +1062,7 @@ class ExtensionHost implements vscode.Disposable {
       };
       child.stdout.on('data', read);
       child.stderr.on('data', read);
-      child.on('error', () => finish(new Error('Cursor Agent CLI could not start. Check dsh.runtime.cursorAgentPath.')));
+      child.on('error', () => finish(new Error('Cursor Agent CLI could not start. Check unify.runtime.cursorAgentPath.')));
       child.on('close', code => finish(code === 0 ? undefined : new Error(`Cursor ${subcommand} failed. Open Accounts and try again.`)));
     });
   }
@@ -1050,7 +1118,7 @@ class ExtensionHost implements vscode.Disposable {
     await this.refreshAccount();
   }
 
-  private async ensureRuntime(route: ResolvedRoute, cwd: string, ownerId: string): Promise<{ runtime: AcpRuntime; key: string } | undefined> {
+  private async ensureRuntime(route: ResolvedRoute, cwd: string, ownerId: string, target: AudienceTarget = { kind: 'main' }): Promise<{ runtime: AcpRuntime; key: string } | undefined> {
     await this.ensureNode();
     if ('oauthAccount' in route && isCliProvider(route.model.provider)) {
       await this.refreshDependencies();
@@ -1063,20 +1131,20 @@ class ExtensionHost implements vscode.Disposable {
       try { await runtime.start({ kind: 'cursor', command, args, cwd }); }
       catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Could not start Cursor Agent CLI. Install it from https://cursor.com/docs/cli/installation, run "agent login", or set dsh.runtime.cursorAgentPath. ${message}`);
+        throw new Error(`Could not start Cursor Agent CLI. Install it from https://cursor.com/docs/cli/installation, run "agent login", or set unify.runtime.cursorAgentPath. ${message}`);
       }
       await this.refreshAccount();
       return { runtime, key };
     }
     const deepSeekAccount = this.accounts.getDefault('deepseek-official');
-    let start: { accountId: string; dshProvider: string; model: string; secret: string; envName: string; keyExtra: string; baseURL?: string };
+    let start: { accountId: string; agentRuntimeProvider: string; model: string; secret: string; envName: string; keyExtra: string; baseURL?: string };
     if ('oauthAccount' in route) {
       // The token is fixed when the runtime launches, so one close to expiry is refreshed first. Its expiry is part of
-      // the key: a refreshed token launches a new runtime, which resumes the chat's DSH session from the same home.
+      // the key: a refreshed token launches a new runtime, which resumes the chat's agent runtime session from the same home.
       const tokens = await freshCodexTokens(route.oauthAccount.directory, { minValidityMs: CODEX_TOKEN_MARGIN_MS });
       start = {
         accountId: route.oauthAccount.id,
-        dshProvider: 'openai-codex',
+        agentRuntimeProvider: 'openai-codex',
         model: codexBackend(route.model.backend),
         secret: tokens.access,
         envName: 'OPENAI_CODEX_ACCESS_TOKEN',
@@ -1085,7 +1153,7 @@ class ExtensionHost implements vscode.Disposable {
     } else if ('account' in route) {
       start = {
         accountId: route.account.id,
-        dshProvider: route.model.provider,
+        agentRuntimeProvider: route.model.provider,
         model: route.model.backend,
         secret: route.secret,
         envName: this.envName(route.model.provider),
@@ -1101,16 +1169,19 @@ class ExtensionHost implements vscode.Disposable {
     const accountHash = createHash('sha256').update(start.accountId).digest('hex').slice(0, 16);
     const providerHash = createHash('sha256').update(route.model.provider).digest('hex').slice(0, 16);
     const home = join(this.context.globalStorageUri.fsPath, 'runtime', providerHash, accountHash);
+    // Rules are filtered for this agent before the runtime starts; the runtime then reads only this file.
+    const instructionsHome = join(home, 'instructions', createHash('sha256').update(ownerId).digest('hex').slice(0, 16));
+    await writeAudienceInstructions({ unifyHome: unifyHome(), workspace: cwd }, target, instructionsHome, { fileName: 'AGENTS.audience.md' });
     const nodePath = await this.ensureNode();
     const webSearchKey = deepSeekAccount ? await this.accounts.getSecret(deepSeekAccount.id) : undefined;
-    await runtime.start({ kind: 'dsh', provider: start.dshProvider, model: start.model, apiKey: start.secret,
-      webSearchKey, envName: start.envName, efforts: route.model.effortOptions, baseURL: start.baseURL, home, nodePath, dshRoot: await updatedRoot(this.context.globalStorageUri.fsPath) });
+    await runtime.start({ kind: 'unify', provider: start.agentRuntimeProvider, model: start.model, apiKey: start.secret,
+      webSearchKey, envName: start.envName, efforts: route.model.effortOptions, baseURL: start.baseURL, home, instructionsHome, nodePath, agentRuntimeRoot: await updatedRoot(this.context.globalStorageUri.fsPath) });
     return { runtime, key };
   }
 
   /**
    * Moves a ChatGPT (Codex) chat onto a runtime with a valid access token when its token was refreshed (or `force`
-   * refreshes it after an auth error), resuming the chat's DSH session there. Resolves false when the session could not
+   * refreshes it after an auth error), resuming the chat's agent runtime session there. Resolves false when the session could not
    * be resumed: the chat is then on a new session and its next prompt needs a handoff.
    */
   private async refreshCodexRuntime(chat: Chat, force = false): Promise<boolean> {
@@ -1152,7 +1223,7 @@ class ExtensionHost implements vscode.Disposable {
     // A remembered "Always allow" answers before the user is asked.
     if (prefix && project && isAlwaysAllowed(project, prefix)) return Promise.resolve(true);
     const id = randomUUID();
-    void vscode.commands.executeCommand('workbench.view.extension.dsh');
+    void vscode.commands.executeCommand('workbench.view.extension.unify');
     return new Promise<boolean>(resolve => {
       const timer = setTimeout(() => {
         this.output.appendLine(`Approval request "${title}" went unanswered for 10 minutes; rejecting it so the turn can finish.`);
@@ -1201,7 +1272,7 @@ class ExtensionHost implements vscode.Disposable {
   private showQuestions(chat: Chat, questions: SidebarQuestion[]): Promise<string[] | null> {
     const id = randomUUID();
     const sessionId = chat.record.id;
-    void vscode.commands.executeCommand('workbench.view.extension.dsh');
+    void vscode.commands.executeCommand('workbench.view.extension.unify');
     return new Promise(resolve => {
       const timer = setTimeout(() => {
         this.output.appendLine('A question went unanswered for 10 minutes; skipping it so the turn can finish.');
@@ -1209,7 +1280,7 @@ class ExtensionHost implements vscode.Disposable {
       }, APPROVAL_TIMEOUT_MS);
       this.pendingQuestions.set(id, { sessionId, resolve, timer });
       this.sidebar.postMessage({ type: 'questionRequest', sessionId, id, questions });
-      this.notifyDesktop(questions[0]?.question || 'Question from the agent', questions.length > 1 ? `${questions.length} questions are waiting in DSH.` : 'It is waiting in DSH.');
+      this.notifyDesktop(questions[0]?.question || 'Question from the agent', questions.length > 1 ? `${questions.length} questions are waiting in Unify.` : 'It is waiting in Unify.');
     });
   }
 
@@ -1409,7 +1480,7 @@ class ExtensionHost implements vscode.Disposable {
       id: randomUUID(), mirrorId: randomUUID(), pendingMirror: true, name: 'New chat',
       project: project || this.currentProject(),
       // Fixed per chat: the provider session is tied to its working directory.
-      direct: vscode.workspace.getConfiguration('dsh').get<boolean>('runtime.mirror', true) ? undefined : true,
+      direct: vscode.workspace.getConfiguration('unify').get<boolean>('runtime.mirror', true) ? undefined : true,
       modelName: model.name, provider: model.provider, backend: model.backend,
       effort: auto ? first?.effort : this.choiceFor(selected).effort, accountId: account?.id || 'cursor-login', updatedAt: Date.now(),
       ...(auto ? { smartAuto: true } : {}),
@@ -1418,7 +1489,7 @@ class ExtensionHost implements vscode.Disposable {
     this.postJob(record);
     const saved = this.saveSession(record);
     this.refreshSessions(); this.syncActiveView();
-    this.postRun(record.id, 'idle', 'Ready'); this.updateStatus();
+    this.postRun(record.id, 'idle', 'Ready');
     this.trimChats();
     await saved;
   }
@@ -1431,6 +1502,7 @@ class ExtensionHost implements vscode.Disposable {
     };
     this.chats.set(record.id, chat);
     agentBus.register({ id: record.id, name: 'Main', task: record.name, chatId: record.id, state: 'idle' });
+    bindChatAgentOwner(ownerId, record.id);
     return chat;
   }
 
@@ -1444,7 +1516,7 @@ class ExtensionHost implements vscode.Disposable {
   }
 
   private createReview(root: vscode.Uri, mirror: WorkspaceMirror, chatId: string): ReviewController {
-    const review = new ReviewController(root, (path, text) => mirror.acknowledge(path, text), 'dsh-review', (path, text) => mirror.restore(path, text), mirror.direct);
+    const review = new ReviewController(root, (path, text) => mirror.acknowledge(path, text), 'unify-review', (path, text) => mirror.restore(path, text), mirror.direct);
     this.disposables.push(review.onProposalsChanged(items => this.onProposalsChanged(chatId, items)));
     return review;
   }
@@ -1465,7 +1537,7 @@ class ExtensionHost implements vscode.Disposable {
     if (!record.pendingMirror && !this.chats.has(record.id)) {
       try { await this.loadChat(record); }
       catch (error) { if (this.deletedSessions.has(record.id)) return; throw error; }
-      if (this.active?.id === record.id) { this.syncActiveView(); this.updateStatus(); }
+      if (this.active?.id === record.id) { this.syncActiveView(); }
     }
   }
 
@@ -1520,7 +1592,7 @@ class ExtensionHost implements vscode.Disposable {
         try {
           await slot.runtime.resumeSession(runtimeId, mirror.cwd, this.mcpServers(ownerId));
         } catch (error) {
-          // A ChatGPT (Codex) chat from the old Codex CLI route has no DSH session yet; it continues in a new one from a handoff.
+          // A ChatGPT (Codex) chat from the old Codex CLI route has no Unify session yet; it continues in a new one from a handoff.
           if (record.provider !== 'codex-cli') throw error;
           runtimeId = await slot.runtime.newSession(mirror.cwd, this.mcpServers(ownerId));
           record.runtimeId = runtimeId;
@@ -1634,15 +1706,15 @@ class ExtensionHost implements vscode.Disposable {
     const folder = vscode.workspace.workspaceFolders?.[0];
     return {
       workspace: folder?.uri.scheme === 'file' ? folder.uri.fsPath : undefined,
-      dshHome: process.env.DSH_HOME || join(homedir(), '.dsh'),
-      agentsHome: process.env.DSH_AGENTS_HOME || join(homedir(), '.agents'),
+      unifyHome: unifyHome(),
+      agentsHome: process.env.UNIFY_AGENTS_HOME || join(homedir(), '.agents'),
     };
   }
 
   /** Global rules and skills edited outside the sidebar still trigger a sync upload. */
   private watchGlobalInstructions(): vscode.Disposable[] {
-    const { dshHome, agentsHome } = this.instructionRoots();
-    return ([[dshHome, '{AGENTS.md,skills/**}'], [agentsHome, 'skills/**']] as const).flatMap(([base, pattern]) => {
+    const { unifyHome, agentsHome } = this.instructionRoots();
+    return ([[unifyHome, '{AGENTS.md,skills/**}'], [agentsHome, 'skills/**']] as const).flatMap(([base, pattern]) => {
       const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(base), pattern));
       const schedule = (): void => this.sync.schedule();
       return [watcher, watcher.onDidCreate(schedule), watcher.onDidChange(schedule), watcher.onDidDelete(schedule)];
@@ -1706,20 +1778,126 @@ class ExtensionHost implements vscode.Disposable {
     this.refreshSessions(); this.refreshModels();
     this.syncActiveView();
     if (idle) this.postRun(record.id, 'idle', 'Ready');
-    this.updateStatus();
     void this.guarded(() => this.refreshAccount());
     await saved;
   }
 
-  private async saveImages(images: SidebarImage[] | undefined): Promise<{ name: string; mimeType: string; data: string; path: string }[]> {
+  /** A SidebarMedia item for a stored record; `file` is the protocol URL, so `<img src>` just works. */
+  private mediaItem(record: MediaRecord, name: string): MediaItem {
+    return {
+      name,
+      mimeType: record.mimeType,
+      file: `unify-media://${record.hash}`,
+      hash: record.hash,
+      ...(record.width !== undefined ? { width: record.width } : {}),
+      ...(record.height !== undefined ? { height: record.height } : {}),
+    };
+  }
+
+  /** Image blocks on a finished tool call, whatever shape the runtime reported them in. */
+  private incomingImages(content: unknown): IncomingImage[] {
+    if (!Array.isArray(content)) return [];
+    const images: IncomingImage[] = [];
+    for (const raw of content as unknown[]) {
+      if (!raw || typeof raw !== 'object') continue;
+      const block = raw as Record<string, unknown>;
+      const nested = block.type === 'content' && block.content && typeof block.content === 'object'
+        ? block.content as Record<string, unknown>
+        : block;
+      if (nested.type !== 'image') continue;
+      const source = nested.source && typeof nested.source === 'object' ? nested.source as Record<string, unknown> : undefined;
+      const data = typeof nested.data === 'string' ? nested.data : typeof source?.data === 'string' ? source.data : '';
+      const mimeType = typeof nested.mimeType === 'string' ? nested.mimeType
+        : typeof nested.media_type === 'string' ? nested.media_type
+        : typeof source?.media_type === 'string' ? source.media_type : '';
+      if (!data || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data) || !mimeType.startsWith('image/')) continue;
+      images.push({ data, mimeType });
+    }
+    return images;
+  }
+
+  /** Stores tool-result images in the media store and marks them shown in the chat. */
+  private async storeIncomingImages(chatId: string, images: IncomingImage[], shownBy: string): Promise<MediaItem[]> {
+    const items: MediaItem[] = [];
+    for (const image of images) {
+      try {
+        const bytes = Buffer.from(image.data, 'base64');
+        const extension = image.mimeType.split('/')[1]?.replace(/[^a-z0-9]/gi, '').slice(0, 5) || 'png';
+        const record = await this.media.put(bytes, image.mimeType, chatId);
+        this.shownMedia.add(chatId, record.hash, shownBy);
+        items.push(this.mediaItem(record, `image.${extension}`));
+      } catch (error) {
+        this.output.appendLine(`Storing a tool image failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return items;
+  }
+
+  /** Image content blocks for the model, downscaled when over 1568 px on the long side, plus the hashes delivered. */
+  private async agentImageBlocks(chatId: string, entries: { item: MediaItem; shownBy: string }[]): Promise<{ blocks: { type: 'image'; data: string; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' }[]; hashes: string[] }> {
+    const blocks: { type: 'image'; data: string; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' }[] = [];
+    const hashes: string[] = [];
+    for (const entry of entries) {
+      const hash = entry.item.hash;
+      const image = await this.media.agentImage(hash);
+      if (!image || !['image/png', 'image/jpeg', 'image/webp'].includes(image.mimeType)) continue;
+      this.shownMedia.add(chatId, hash, entry.shownBy);
+      hashes.push(hash);
+      blocks.push({ type: 'image', data: image.data, mimeType: image.mimeType as 'image/png' | 'image/jpeg' | 'image/webp' });
+    }
+    return { blocks, hashes };
+  }
+
+  /**
+   * Adds images a background subagent sent to its parent to that chat's next tool result.
+   * Images that go inline are remembered on the run so its sentToParent strip can omit them.
+   */
+  private async withPendingParentMedia(chat: Chat, result: DelegateResult): Promise<DelegateResult> {
+    const chatId = chat.record.id;
+    const pending = this.pendingParentMedia?.get(chatId);
+    if (!pending?.length) return result;
+    this.pendingParentMedia?.delete(chatId);
+    const { blocks, hashes } = await this.agentImageBlocks(chatId, pending);
+    if (!blocks.length) return result;
+    // Images that went inline leave the run's sentToParent strip; the run object is kept here even
+    // after the subagent finished, so its card still updates.
+    const delivered = new Set<ChildRun>();
+    for (const entry of pending) {
+      if (!entry.run || !hashes.includes(entry.item.hash)) continue;
+      entry.run.inlineInParent.add(entry.item.hash);
+      delivered.add(entry.run);
+    }
+    for (const run of delivered) this.publishSentToParent(run);
+    return { ...result, content: [{ type: 'text', text: result.text }, ...blocks] };
+  }
+
+  /**
+   * Hands a finished subagent's queued images to its parent run: background runs park them for the
+   * parent's next tool result, foreground runs return them as blocks on this result. Returns the
+   * blocks to attach (empty for background runs).
+   */
+  private async deliverRunMediaToParent(run: ChildRun): Promise<{ type: 'image'; data: string; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' }[]> {
+    if (!run.queuedForParent.length) return [];
+    const chatId = run.parent.record.id;
+    const queued = run.queuedForParent.splice(0);
+    if (run.background) {
+      const pending = this.pendingParentMedia?.get(chatId) || [];
+      pending.push(...queued.map(entry => ({ item: entry.item, shownBy: entry.shownBy, run })));
+      this.pendingParentMedia?.set(chatId, pending);
+      return [];
+    }
+    const { blocks, hashes } = await this.agentImageBlocks(chatId, queued);
+    for (const hash of hashes) run.inlineInParent.add(hash);
+    this.publishSentToParent(run);
+    return blocks;
+  }
+
+  private async saveImages(images: SidebarImage[] | undefined, ref: string): Promise<{ name: string; mimeType: string; data: string; path: string }[]> {
     if (!images?.length) return [];
     if (!Array.isArray(images) || images.length > MAX_IMAGES) throw new Error(`Attach up to ${MAX_IMAGES} files.`);
-    const dir = join(this.context.globalStorageUri.fsPath, 'attachments');
-    await mkdir(dir, { recursive: true });
     const saved: { name: string; mimeType: string; data: string; path: string }[] = [];
     let totalBytes = 0;
     for (const image of images) {
-      const extension = IMAGE_TYPES[image?.mimeType] || String(image?.name || '').match(/\.([a-zA-Z0-9]{1,12})$/)?.[1] || 'bin';
       if (typeof image?.data !== 'string' || image.data.length > MAX_IMAGE_BASE64 || image.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(image.data)) {
         throw new Error('Invalid attachment data. Files must be under 10 MB.');
       }
@@ -1727,9 +1905,11 @@ class ExtensionHost implements vscode.Disposable {
       if (bytes.toString('base64') !== image.data) throw new Error('Invalid attachment data.');
       totalBytes += bytes.length;
       if (bytes.length > 10 * 1024 * 1024 || totalBytes > 20 * 1024 * 1024) throw new Error('Files must be under 10 MB each and 20 MB in total.');
-      const path = join(dir, `${randomUUID()}.${extension}`);
-      await writeFile(path, bytes);
-      saved.push({ name: String(image.name || 'file').slice(0, 200), mimeType: image.mimeType || 'application/octet-stream', data: image.data, path });
+      const mimeType = image.mimeType || 'application/octet-stream';
+      const record = await this.media.put(bytes, mimeType, ref);
+      const path = this.media.pathOf(record.hash);
+      if (!path) throw new Error('The attachment could not be stored.');
+      saved.push({ name: String(image.name || 'file').slice(0, 200), mimeType, data: image.data, path });
     }
     return saved;
   }
@@ -1755,12 +1935,11 @@ class ExtensionHost implements vscode.Disposable {
 
   private async startJob(spec: string, images?: SidebarImage[]): Promise<void> {
     if (!spec.trim()) { this.sidebar.postMessage({ type: 'error', message: 'Usage: /job <spec>' }); return; }
-    this.requireCurrent();
     if (!this.active) await this.newChat();
     const record = this.active!;
     const busy = (): boolean => !!this.promptStarts.has(record.id) || !!this.chats.get(record.id)?.running || !!this.chats.get(record.id)?.jobActive || !!record.job && ['draft', 'work', 'verify'].includes(record.job.phase);
     if (busy()) { this.sidebar.postMessage({ type: 'error', message: 'Finish or cancel the current task before starting a job.' }); return; }
-    let attachments = await this.saveImages(images);
+    let attachments = await this.saveImages(images, record.id);
     const chat = await this.loadChat(record);
     if (busy()) { this.sidebar.postMessage({ type: 'error', message: 'Finish or cancel the current task before starting a job.' }); return; }
     const job = createJob(spec);
@@ -1778,7 +1957,7 @@ class ExtensionHost implements vscode.Disposable {
       if (cancelled()) return undefined;
       let reply: string | undefined;
       const files = attachments; attachments = [];
-      // Only the first turn carries the user's own /job message; later steps are DSH's and show no user message.
+      // Only the first turn carries the user's own /job message; later steps are Unify's and show no user message.
       const shown = original; const internal = original === undefined; original = undefined;
       chat.jobInterrupted = false;
       try {
@@ -1875,7 +2054,6 @@ class ExtensionHost implements vscode.Disposable {
 
   private async sendPrompt(prompt: string, images?: SidebarImage[], queued?: { path: string; mimeType: string; data: string; name: string }[], queuedChatId?: string, mode: 'interrupt' | 'queue' = 'interrupt', options: TurnOptions = {}): Promise<void> {
     if (!prompt.trim() && !images?.length && !queued?.length) return;
-    this.requireCurrent();
     let created: Promise<void> | undefined;
     if (!queuedChatId && !this.active) {
       created = this.newChat();
@@ -1917,7 +2095,7 @@ class ExtensionHost implements vscode.Disposable {
     // Running-chat submissions remain in the queue until their turn begins.
     if (!this.chats.get(recordToLoad.id)?.running && (!this.chats.get(recordToLoad.id)?.jobActive || options.job)) display();
     if (created) await created;
-    const attachments = queued ?? await this.saveImages(images);
+    const attachments = queued ?? await this.saveImages(images, recordToLoad.id);
     let target: Chat;
     try { target = await this.loadChat(recordToLoad); }
     catch (error) { if (this.deletedSessions.has(recordToLoad.id)) return; throw error; }
@@ -1943,7 +2121,7 @@ class ExtensionHost implements vscode.Disposable {
     if (!displayed) display();
     const active = this.active;
     const picking = !fromQueue && (active?.id === target.record.id || options.chatId === target.record.id);
-    // Smart Auto picks the model for messages the user sent, not for job steps or DSH's own prompts.
+    // Smart Auto picks the model for messages the user sent, not for job steps or Unify's own prompts.
     const autoChat = picking ? this.selectedModel === SMART_AUTO : !!target.record.smartAuto;
     const auto = autoChat && !options.job && !options.internal;
     if (active && picking && !autoChat) {
@@ -1962,7 +2140,7 @@ class ExtensionHost implements vscode.Disposable {
     const imageAttachments = attachments.filter(file => !!IMAGE_TYPES[file.mimeType]);
     const fileContext: string[] = [];
     for (const file of attachments) {
-      const contextPath = join(chat.mirror.cwd, '.dsh', 'context', file.path.split(/[\\/]/).pop()!);
+      const contextPath = join(chat.mirror.cwd, '.unify', 'context', file.path.split(/[\\/]/).pop()!);
       await mkdir(dirname(contextPath), { recursive: true });
       await writeFile(contextPath, await readFile(file.path));
       fileContext.push(`${JSON.stringify(file.name)}: ${JSON.stringify(relative(chat.mirror.cwd, contextPath))} (${file.mimeType})`);
@@ -1981,6 +2159,7 @@ class ExtensionHost implements vscode.Disposable {
     const postText = (text: string): void => { if (!text) return; chat.turnReply += text; segmentHasText = true; this.sidebar.postMessage({ type: 'assistantDelta', sessionId: record.id, entryId: `assistant:${turnEntryId}:${segment}`, text }); };
     const breakMessage = (): void => { if (segmentHasText) { segment++; segmentHasText = false; } };
     const loggedTools = new Set<string>();
+    const places = this.internalPlaces(chat);
     const postTool = (id: string, title: string, detail: string | undefined, state: 'running' | 'complete' | 'error'): void => {
       const batch = isBatchTool(title) || (title === 'MCP tool' && isBatchTool(detail || ''));
       // Batch sub-calls are logged one by one by runBatch.
@@ -1991,19 +2170,22 @@ class ExtensionHost implements vscode.Disposable {
       const shown = displayTool(title, detail);
       this.sidebar.postMessage({ type: 'toolEvent', sessionId: record.id, entryId: `tool:${turnEntryId}:${id}`, event: {
         id, kind: shown.kind, title: shown.title, detail: shown.detail, full: shown.full, state,
+        internal: internalToolOf({ tool: title, input: detail }, places),
       } });
       if (state === 'running') { segment++; segmentHasText = false; }
     };
     const postSubagent = (event: { id: string; title?: string; model?: string; prompt?: string; state?: 'running' | 'complete' | 'error'; text?: string; messageId?: string; role?: 'assistant' | 'tool' }): void => {
-      // Harnesses report a subagent's tool call as "Title: detail" text.
-      const split = event.role === 'tool' && event.text ? event.text.match(/^([^:\n]+?)(?::\s*([\s\S]*))?$/) : null;
-      const tool = split ? displayTool(split[1], split[2]) : undefined;
+      // Harnesses report a subagent's tool call as "Title: detail" or "Title detail". A lazy title keeps a
+      // Windows drive colon ("C:\src\file.ts") inside the detail instead of splitting the path.
+      const split = event.role === 'tool' && event.text
+        ? event.text.match(/^(\S+?)(?::\s*|\s+)([\s\S]*)$/) ?? event.text.trim().match(/^(\S+)$/)
+        : null;
+      const tool = split ? { ...displayTool(split[1], split[2]), internal: internalToolOf({ tool: split[1], input: split[2] }, places) } : undefined;
       this.sidebar.postMessage({ type: 'subagentEvent', sessionId: record.id, agentId: `${turnEntryId}:${event.id}`, ...event, ...(tool ? { tool } : {}), model: event.model === 'default' ? record.modelName : event.model || record.modelName });
     };
     chat.running = true;
     started();
     this.postRun(record.id, 'thinking', 'Thinking…');
-    this.updateStatus();
     const firstTurn = record.name === 'New chat' && !record.renamed;
     if (firstTurn) record.name = firstMessageTitle(prompt);
     if (firstTurn) agentBus.update(record.id, { task: record.name });
@@ -2027,7 +2209,7 @@ class ExtensionHost implements vscode.Disposable {
         chat.handoffPending = true;
       }
       if (chat.cancelRequested) return;
-      const hint = vscode.workspace.getConfiguration('dsh').get<number>('checkpointHint', 80000);
+      const hint = vscode.workspace.getConfiguration('unify').get<number>('checkpointHint', 80000);
       const lastActivity = Math.max(record.lastTurnAt || 0, record.lastPingAt || 0);
       if (!options.internal && record.resumeNotice) {
         // The notice only covers the turn that started the new session.
@@ -2184,7 +2366,7 @@ class ExtensionHost implements vscode.Disposable {
         });
         await this.saveSession(record);
       } else {
-        if (!chat.runtime) throw new Error('This chat has no running agent. Use "DSH: Restart Runtime" and try again.');
+        if (!chat.runtime) throw new Error('This chat has no running agent. Use "Unify: Restart Runtime" and try again.');
         try {
           if (record.provider === 'codex-cli') {
             await this.promptCodex(chat, fullPrompt, imageAttachments, async limited => {
@@ -2216,7 +2398,7 @@ class ExtensionHost implements vscode.Disposable {
       for (const task of [...chat.background.values()]) if (!task.done && task.afterTurn === 'cancel') { chat.background.delete(task.id); task.run?.cancel(); }
       if (chat.turnReply.trim() || chat.turnTools.length) this.transcripts.get(record.id)?.push({ role: 'assistant', text: chat.turnReply.trim(), ...(chat.turnTools.length ? { tools: chat.turnTools } : {}) });
       chat.turnTools = [];
-      // A checkpoint DSH asked for mid-turn continues the task right away instead of waiting for the user's next message.
+      // A checkpoint Unify asked for mid-turn continues the task right away instead of waiting for the user's next message.
       const continueTask = completed && !!chat.pendingCheckpoint && chat.compactWatch?.askedAt !== undefined;
       chat.compactWatch = undefined;
       if (completed) {
@@ -2242,7 +2424,6 @@ class ExtensionHost implements vscode.Disposable {
       if (Date.now() - scanStarted > 5_000) this.output.appendLine(`End-of-turn change scan took ${((Date.now() - scanStarted) / 1000).toFixed(1)} s.`);
       chat.running = false;
       this.postRun(record.id, 'idle', 'Ready');
-      this.updateStatus();
       options.onFinish?.(reply, cancelled);
       if (!options.internal && !options.job) this.notifyDesktop(record.name, cancelled ? 'Turn cancelled.' : reply.trim() ? reply.trim().slice(0, 300) : 'Turn finished.');
       const next = chat.jobActive ? undefined : chat.queue.shift();
@@ -2258,7 +2439,7 @@ class ExtensionHost implements vscode.Disposable {
   private async keepAliveChats(): Promise<void> {
     for (const chat of this.chats.values()) {
       const record = chat.record;
-      const config = vscode.workspace.getConfiguration('dsh');
+      const config = vscode.workspace.getConfiguration('unify');
       // Usage credits are drawn only once a plan window is full; "Extra usage" alone just means credits are enabled.
       const metrics = this.usage.snapshot()[record.accountId]?.metrics || [];
       const extraEnabled = metrics.some(metric => metric.label === 'Extra usage');
@@ -2309,7 +2490,7 @@ class ExtensionHost implements vscode.Disposable {
   private readonly limitedAt = new Map<string, number>();
 
   /**
-   * Runs a ChatGPT (Codex) turn on the chat's DSH runtime. An auth error forces a token refresh, relaunches the runtime
+   * Runs a ChatGPT (Codex) turn on the chat's Unify runtime. An auth error forces a token refresh, relaunches the runtime
    * and retries once; a usage limit moves the chat to the next ChatGPT account (a new runtime and session) and retries
    * there. `reopen` rebuilds the prompt as a handoff for a new session, after `limited` changed accounts when given.
    */
@@ -2325,7 +2506,7 @@ class ExtensionHost implements vscode.Disposable {
     for (;;) {
       const account = this.oauthAccounts.get(record.accountId) || first;
       const runtime = chat.runtime;
-      if (!runtime) throw new Error('This chat has no running agent. Use "DSH: Restart Runtime" and try again.');
+      if (!runtime) throw new Error('This chat has no running agent. Use "Unify: Restart Runtime" and try again.');
       try {
         await runtime.prompt(this.rid(record), text, images);
         return;
@@ -2423,9 +2604,9 @@ class ExtensionHost implements vscode.Disposable {
   }
 
   /** Fixed instructions for a chat's agent: where it works, delegation, file summaries and batching. Kept short: they are sent with every request. */
-  /** Applies dsh.runtime.powershellSpeedups and dsh.runtime.rustTools to agents started from now on. */
+  /** Applies unify.runtime.powershellSpeedups and unify.runtime.rustTools to agents started from now on. */
   private applyShellSettings(): void {
-    const config = vscode.workspace.getConfiguration('dsh');
+    const config = vscode.workspace.getConfiguration('unify');
     setPowershellSpeedups(config.get('runtime.powershellSpeedups'));
     if (config.get<boolean>('runtime.rustTools') === false || process.platform !== 'win32') {
       deactivateRustTools();
@@ -2433,7 +2614,7 @@ class ExtensionHost implements vscode.Disposable {
     }
     void ensureRustTools(this.context.globalStorageUri.fsPath).then(bin => {
       // The setting may have been turned off while the download ran.
-      if (!bin || vscode.workspace.getConfiguration('dsh').get<boolean>('runtime.rustTools') === false) return;
+      if (!bin || vscode.workspace.getConfiguration('unify').get<boolean>('runtime.rustTools') === false) return;
       try {
         activateRustTools(bin);
       } catch (error) {
@@ -2447,7 +2628,7 @@ class ExtensionHost implements vscode.Disposable {
       ? 'You edit the user\'s files directly; they and other agents may change files between turns, so re-read before editing.'
       : 'Edits stay in this working copy until the user reviews them.';
     return [
-      `DSH IDE, workspace ${this.root().name}. ${scope}`,
+      `Unify IDE, workspace ${this.root().name}. ${scope}`,
       'End a turn only when everything the user asked for is done, or you are blocked on a question only they can answer. Answering the latest message, a checkpoint, a compaction or a resumed session is not a stopping point: carry on with any unfinished requests in the same turn.',
       BACKGROUND_CLEANUP,
       shellInstructions(),
@@ -2456,15 +2637,16 @@ class ExtensionHost implements vscode.Disposable {
       bridged && this.feature('batching') ? BATCH_INSTRUCTIONS : '',
       bridged && this.summariesOn() ? SUMMARY_INSTRUCTIONS : '',
       bridged ? MEDIA_INSTRUCTIONS : '',
+      bridged && getUnifyFeature('chats.showYourWork') ? SHOW_YOUR_WORK_INSTRUCTIONS : '',
       bridged && this.oauthAccounts.list('codex-cli').length ? IMAGE_INSTRUCTIONS : '',
     ].filter(Boolean).join('\n');
   }
 
-  /** A working git: dsh.runtime.gitPath, VS Code's git.path, PATH, the usual install folders, or the copy DSH installed. */
+  /** A working git: unify.runtime.gitPath, VS Code's git.path, PATH, the usual install folders, or the copy Unify installed. */
   private async gitPath(): Promise<string | undefined> {
     const configured = vscode.workspace.getConfiguration('git').get<unknown>('path');
     const vscodeGit = Array.isArray(configured) ? configured.filter((item): item is string => typeof item === 'string') : typeof configured === 'string' ? [configured] : [];
-    return findGit(this.context.globalStorageUri.fsPath, [vscode.workspace.getConfiguration('dsh').get<string>('runtime.gitPath'), ...vscodeGit]);
+    return findGit(this.context.globalStorageUri.fsPath, [vscode.workspace.getConfiguration('unify').get<string>('runtime.gitPath'), ...vscodeGit]);
   }
 
   /** Git for sync, offering to install it when it is missing. Undefined when the user declines or it cannot be installed. */
@@ -2479,11 +2661,11 @@ class ExtensionHost implements vscode.Disposable {
       return undefined;
     }
     const choice = await vscode.window.showWarningMessage('Git is needed to sync with GitHub, and it is not installed. Install it now?', {
-      modal: true, detail: 'DSH downloads MinGit, the portable build of Git for Windows, checks its SHA-256 against the official release, and keeps it in DSH\'s own storage. Nothing else on your PC changes.',
+      modal: true, detail: 'Unify downloads MinGit, the portable build of Git for Windows, checks its SHA-256 against the official release, and keeps it in Unify\'s own storage. Nothing else on your PC changes.',
     }, 'Install Git');
     if (choice !== 'Install Git') return undefined;
     try {
-      const git = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Installing Git for DSH sync…' },
+      const git = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Installing Git for Unify sync…' },
         () => installGit(this.context.globalStorageUri.fsPath));
       this.output.appendLine(`Installed Git for sync at ${git}.`);
       return git;
@@ -2516,8 +2698,8 @@ class ExtensionHost implements vscode.Disposable {
 
   /** Whether memory is on for this PC, and then the global memory folder. */
   private memorySettings(): { enabled: boolean; global?: string } {
-    const enabled = vscode.workspace.getConfiguration?.('dsh')?.get<boolean>('memory.enabled', true) !== false;
-    return { enabled, global: enabled ? globalMemoryFolder(this.instructionRoots().dshHome) : undefined };
+    const enabled = vscode.workspace.getConfiguration?.('unify')?.get<boolean>('memory.enabled', true) !== false;
+    return { enabled, global: enabled ? globalMemoryFolder(this.instructionRoots().unifyHome) : undefined };
   }
 
   /** Brings the global memory folder into the chat's working copy, or (after a turn) saves the agent's notes back to it. */
@@ -2541,15 +2723,16 @@ class ExtensionHost implements vscode.Disposable {
 
   private refreshMemory(): void {
     const { enabled } = this.memorySettings();
-    const folder = globalMemoryFolder(this.instructionRoots().dshHome);
+    this.placesByChat.clear();
+    const folder = globalMemoryFolder(this.instructionRoots().unifyHome);
     if (enabled) void mkdir(folder, { recursive: true }).catch(() => undefined);
     void countFiles(folder).then(notes => this.sidebar.postMessage({ type: 'memoryState', memory: { enabled, folder, notes, synced: this.sync.connected } }));
   }
 
   /** Turns memory on, or off after a warning: turning it off deletes the global notes on this PC (GitHub keeps its copy). */
   private async setMemory(enabled: boolean): Promise<void> {
-    const config = vscode.workspace.getConfiguration('dsh');
-    const folder = globalMemoryFolder(this.instructionRoots().dshHome);
+    const config = vscode.workspace.getConfiguration('unify');
+    const folder = globalMemoryFolder(this.instructionRoots().unifyHome);
     if (enabled) {
       await mkdir(folder, { recursive: true });
       await config.update('memory.enabled', true, vscode.ConfigurationTarget.Global);
@@ -2562,8 +2745,8 @@ class ExtensionHost implements vscode.Disposable {
       const choice = await vscode.window.showWarningMessage(`Turn off memory and delete ${notes === 1 ? 'the 1 global memory file' : `all ${notes} global memory files`} on this PC?`, {
         modal: true,
         detail: synced
-          ? 'Your GitHub sync repository keeps its copy, so turning memory back on brings them back. Project memory in .dsh/memory is project content and is not touched.'
-          : `This cannot be undone: ${folder} is deleted and Sync is not on, so there is no other copy. Project memory in .dsh/memory is project content and is not touched.`,
+          ? 'Your GitHub sync repository keeps its copy, so turning memory back on brings them back. Project memory in .unify/memory is project content and is not touched.'
+          : `This cannot be undone: ${folder} is deleted and Sync is not on, so there is no other copy. Project memory in .unify/memory is project content and is not touched.`,
       }, 'Turn off and delete');
       if (choice !== 'Turn off and delete') { this.refreshMemory(); return; }
     }
@@ -2578,7 +2761,7 @@ class ExtensionHost implements vscode.Disposable {
   /** Tokens of conversation (beyond the session's fixed overhead) at which a chat is compacted, or undefined when off. */
   private autoCompactAt(): number | undefined {
     if (!this.feature('autoCompact')) return undefined;
-    return normalizeCompactTokens(vscode.workspace.getConfiguration('dsh').get<unknown>('experimental.autoCompactTokens'));
+    return normalizeCompactTokens(vscode.workspace.getConfiguration('unify').get<unknown>('experimental.autoCompactTokens'));
   }
 
   /** Records a context size report; the first one from a fresh session sets that session's baseline. */
@@ -2607,7 +2790,7 @@ class ExtensionHost implements vscode.Disposable {
   /** One line per tool call of the running turn, kept with the turn's reply in the transcript. */
   private logTool(chat: Chat, title: string, detail?: string): void {
     if (!chat.running || chat.turnTools.length >= MAX_TURN_TOOLS) return;
-    chat.turnTools.push(toolLine(title.replace(/^mcp__dsh-delegate__/, ''), detail));
+    chat.turnTools.push(toolLine(title.replace(/^mcp__unify__/, ''), detail));
   }
 
   /** Moves the chat to a new backend session; the caller sets what the next prompt hands over. */
@@ -2641,9 +2824,10 @@ class ExtensionHost implements vscode.Disposable {
     let skipped: number;
     try { ({ calls, skipped } = uniqueBatchCalls(parseBatchCalls(args))); } catch (error) { return { text: error instanceof Error ? error.message : String(error), isError: true }; }
     const id = `batch-${randomUUID().slice(0, 8)}`;
+    const places = this.internalPlaces(chat);
     const children = calls.map(call => {
       const shown = displayTool(call.tool, callLabel(call).slice(call.tool.length).trim() || undefined);
-      return { title: shown.title, detail: shown.detail, full: shown.full, kind: shown.kind, state: 'running' as 'running' | 'complete' | 'error' };
+      return { title: shown.title, detail: shown.detail, full: shown.full, kind: shown.kind, state: 'running' as 'running' | 'complete' | 'error', internal: internalToolOf({ tool: call.tool, input: call.args }, places) };
     });
     const post = (): void => {
       const done = children.every(child => child.state !== 'running');
@@ -2655,7 +2839,7 @@ class ExtensionHost implements vscode.Disposable {
     for (const call of calls) this.logTool(chat, call.tool, callLabel(call).slice(call.tool.length).trim() || undefined);
     post();
     const cwd = chat.mirror.cwd;
-    // Outside the working copy the user decides per path, unless DSH has full access. Paths written out in the batch are asked about together, up front.
+    // Outside the working copy the user decides per path, unless Unify has full access. Paths written out in the batch are asked about together, up front.
     const outsideAnswers = new Map<string, Promise<boolean>>();
     const askOutside = (paths: string[]): Promise<boolean> => this.askInChat(chat.record.id, 'Read outside the project', `The batch wants to read:\n${paths.join('\n')}`);
     if (this.approvalMode !== 'full') {
@@ -2719,14 +2903,14 @@ class ExtensionHost implements vscode.Disposable {
   }
 
   private mcpServers(ownerId?: string, toolpacksOnly = false): unknown[] {
-    const value = vscode.workspace.getConfiguration('dsh').get<unknown>('mcpServers', []);
-    if (!Array.isArray(value)) throw new Error('dsh.mcpServers must be an array.');
+    const value = vscode.workspace.getConfiguration('unify').get<unknown>('mcpServers', []);
+    if (!Array.isArray(value)) throw new Error('unify.mcpServers must be an array.');
     const delegate = ownerId ? this.delegateConfig(ownerId, toolpacksOnly) : undefined;
     return delegate ? [...value, { name: DELEGATE_SERVER, command: delegate.command, args: delegate.args, env: Object.entries(delegate.env).map(([name, envValue]) => ({ name, value: envValue })) }] : value;
   }
 
   private subagentProfiles(): SubagentProfile[] {
-    const value = vscode.workspace.getConfiguration('dsh').get<unknown>('subagents', []);
+    const value = vscode.workspace.getConfiguration('unify').get<unknown>('subagents', []);
     if (!Array.isArray(value)) return [];
     return value.filter((item): item is SubagentProfile => !!item && typeof item === 'object' && typeof item.name === 'string' && !!item.name.trim()
       && typeof item.model === 'string' && item.enabled !== false)
@@ -2743,7 +2927,7 @@ class ExtensionHost implements vscode.Disposable {
   }
 
   private async writeSubagents(profiles: SubagentProfile[]): Promise<void> {
-    await vscode.workspace.getConfiguration('dsh').update('subagents', profiles, vscode.ConfigurationTarget.Global);
+    await vscode.workspace.getConfiguration('unify').update('subagents', profiles, vscode.ConfigurationTarget.Global);
     this.refreshSubagents();
   }
 
@@ -2761,11 +2945,11 @@ class ExtensionHost implements vscode.Disposable {
   }
 
   private feature(key: SidebarFeatureKey): boolean {
-    return vscode.workspace.getConfiguration('dsh').get<boolean>(FEATURE_SETTINGS[key], defaultFeatures()[key]) !== false;
+    return vscode.workspace.getConfiguration('unify').get<boolean>(FEATURE_SETTINGS[key], defaultFeatures()[key]) !== false;
   }
 
   private modelSetting(key: ModelSettingKey): SidebarNameModel {
-    const value = vscode.workspace.getConfiguration?.('dsh').get<unknown>(key);
+    const value = vscode.workspace.getConfiguration?.('unify').get<unknown>(key);
     if (!value || typeof value !== 'object') return {};
     const { model, effort, speed } = value as Record<string, unknown>;
     const text = (item: unknown): string | undefined => typeof item === 'string' && item.trim() ? item.trim() : undefined;
@@ -2776,10 +2960,10 @@ class ExtensionHost implements vscode.Disposable {
     const features = Object.fromEntries((Object.keys(FEATURE_SETTINGS) as SidebarFeatureKey[]).map(key => [key, this.feature(key)])) as SidebarFeatures;
     this.sidebar.postMessage({ type: 'customizeState', features, nameModel: this.modelSetting('nameModel'), reviewModel: this.modelSetting('reviewModel'), summaryModel: this.modelSetting('summaryModel'),
       deciderModel: this.modelSetting('deciderModel'), explorerModel: this.modelSetting('explorerModel'), smartAutoRanks: this.smartAutoRanks(),
-      accessibility: normalizeAccessibility(vscode.workspace.getConfiguration('dsh').get<unknown>('accessibility')),
-      autoCompactTokens: normalizeCompactTokens(vscode.workspace.getConfiguration('dsh').get<unknown>('experimental.autoCompactTokens')),
+      accessibility: normalizeAccessibility(vscode.workspace.getConfiguration('unify').get<unknown>('accessibility')),
+      autoCompactTokens: normalizeCompactTokens(vscode.workspace.getConfiguration('unify').get<unknown>('experimental.autoCompactTokens')),
       voiceCommands: this.voiceCommands(), voiceAvailable: process.platform === 'win32',
-      processPriority: normalizeProcessPriority(vscode.workspace.getConfiguration('dsh').get<unknown>('runtime.processPriority')),
+      processPriority: normalizeProcessPriority(vscode.workspace.getConfiguration('unify').get<unknown>('runtime.processPriority')),
       unifyFeatures: allUnifyFeatures() });
   }
 
@@ -2789,7 +2973,7 @@ class ExtensionHost implements vscode.Disposable {
   }
 
   private voiceCommands(): VoiceCommand[] {
-    return normalizeVoiceCommands(vscode.workspace.getConfiguration('dsh').get<unknown>('voice.commands'));
+    return normalizeVoiceCommands(vscode.workspace.getConfiguration('unify').get<unknown>('voice.commands'));
   }
 
   /** Downloads local Whisper once, with a progress notification; shared by overlapping starts. */
@@ -2853,7 +3037,7 @@ class ExtensionHost implements vscode.Disposable {
   }
 
   private smartAutoRanks(): SmartAutoRank[] {
-    return normalizeRanks(vscode.workspace.getConfiguration('dsh').get<unknown>('smartAutoRanks'));
+    return normalizeRanks(vscode.workspace.getConfiguration('unify').get<unknown>('smartAutoRanks'));
   }
 
   /** Ranked entries whose model is still configured and enabled, smartest first. */
@@ -2890,7 +3074,7 @@ class ExtensionHost implements vscode.Disposable {
       if (note && note.length > MAX_NOTE) throw new Error(`Smart Auto notes can be up to ${MAX_NOTE} characters.`);
       return { model: model.name, effort, note };
     });
-    await vscode.workspace.getConfiguration('dsh').update('smartAutoRanks', ranks.length ? ranks : undefined, vscode.ConfigurationTarget.Global);
+    await vscode.workspace.getConfiguration('unify').update('smartAutoRanks', ranks.length ? ranks : undefined, vscode.ConfigurationTarget.Global);
     this.refreshCustomize();
   }
 
@@ -2920,12 +3104,12 @@ class ExtensionHost implements vscode.Disposable {
     if (record.modelName !== pick.entry.name || record.backend !== pick.entry.backend || (record.effort || '') !== effort) await this.switchModel(chat, pick.entry, effort);
     record.smartAuto = true;
     this.sidebar.postMessage({ type: 'noteMessage', sessionId: record.id, entryId: `note:${turnEntryId}`, icon: 'auto_awesome',
-      text: `Smart Auto → ${rankLabel(pick)}${decision.reason ? ` · ${decision.reason}` : ''}` });
+      text: `Smart Auto picked ${rankLabel(pick)}${decision.reason ? ` because ${decision.reason}` : ''}` });
     this.postRun(record.id, 'thinking', 'Thinking…');
   }
 
   private async saveAccessibility(value: SidebarAccessibility): Promise<void> {
-    await vscode.workspace.getConfiguration('dsh').update('accessibility', normalizeAccessibility(value), vscode.ConfigurationTarget.Global);
+    await vscode.workspace.getConfiguration('unify').update('accessibility', normalizeAccessibility(value), vscode.ConfigurationTarget.Global);
     this.refreshCustomize();
   }
 
@@ -2939,7 +3123,7 @@ class ExtensionHost implements vscode.Disposable {
 
   private async setFeature(key: SidebarFeatureKey, enabled: boolean): Promise<void> {
     if (!Object.hasOwn(FEATURE_SETTINGS, key)) throw new Error('Unknown feature.');
-    await vscode.workspace.getConfiguration('dsh').update(FEATURE_SETTINGS[key], enabled === true, vscode.ConfigurationTarget.Global);
+    await vscode.workspace.getConfiguration('unify').update(FEATURE_SETTINGS[key], enabled === true, vscode.ConfigurationTarget.Global);
     this.refreshCustomize();
   }
 
@@ -2955,15 +3139,15 @@ class ExtensionHost implements vscode.Disposable {
       if (speed && !model.speedOptions?.some(item => item.label === speed)) throw new Error(`Speed "${speed}" is not offered by ${model.name}.`);
       next = { model: model.name, effort, speed };
     }
-    await vscode.workspace.getConfiguration('dsh').update(key, next, vscode.ConfigurationTarget.Global);
+    await vscode.workspace.getConfiguration('unify').update(key, next, vscode.ConfigurationTarget.Global);
     this.refreshCustomize();
   }
 
   /** Copies global rules and skills into a Claude account directory, or removes earlier copies when sharing is off. */
   private async shareGlobalInstructions(account: OAuthCliAccount): Promise<void> {
     try {
-      const { dshHome, agentsHome } = this.instructionRoots();
-      await shareInstructions(account.directory, { dshHome, agentsHome }, this.feature('shareRules'));
+      const { unifyHome, agentsHome } = this.instructionRoots();
+      await shareInstructions(account.directory, { unifyHome, agentsHome }, this.feature('shareRules'));
     }
     catch (error) { this.output.appendLine(`Could not share global rules with ${runtimeLabel(account.provider)}: ${error instanceof Error ? error.message : String(error)}`); }
   }
@@ -3061,11 +3245,11 @@ class ExtensionHost implements vscode.Disposable {
     const url = this.delegateHost.url;
     if (!url || !vscode.workspace.isTrusted) return undefined;
     if (toolpacksOnly && !this.bridgeTools().length) return undefined;
-    const nodePath = vscode.workspace.getConfiguration('dsh').get<string>('runtime.nodePath') || undefined;
+    const nodePath = vscode.workspace.getConfiguration('unify').get<string>('runtime.nodePath') || undefined;
     return {
       command: nodePath || process.execPath,
       args: [join(this.context.extensionPath, 'dist', 'delegate-server.js')],
-      env: { DSH_DELEGATE_URL: url, DSH_DELEGATE_TOKEN: this.delegateHost.token, DSH_DELEGATE_OWNER: ownerId, ...(toolpacksOnly ? { DSH_DELEGATE_SCOPE: TOOLPACK_SCOPE } : {}), ...(nodePath ? {} : { ELECTRON_RUN_AS_NODE: '1' }) },
+      env: { UNIFY_DELEGATE_URL: url, UNIFY_DELEGATE_TOKEN: this.delegateHost.token, UNIFY_DELEGATE_OWNER: ownerId, ...(toolpacksOnly ? { UNIFY_DELEGATE_SCOPE: TOOLPACK_SCOPE } : {}), ...(nodePath ? {} : { ELECTRON_RUN_AS_NODE: '1' }) },
     };
   }
 
@@ -3074,17 +3258,24 @@ class ExtensionHost implements vscode.Disposable {
     if (child) {
       if (child.parent.cancelRequested && !child.background) return { text: 'Cancelled.', isError: true };
       if (tool === SUMMARY_TOOL.name) return this.readSummaries(child.parent, args);
-      if (tool === SEND_MEDIA) return this.sendMedia(child.parent, args, child.label);
-      if (tool === GENERATE_IMAGE) return this.generateImage(child.parent, args, child.label);
+      if (tool === SEND_MEDIA) return this.sendMedia(child.parent, args, child);
+      if (tool === GENERATE_IMAGE) return this.generateImage(child.parent, args, child);
+      if (tool === 'edit_range') return this.editRange(child.parent, owner, args);
       return this.packCall(child.parent, tool, args) ?? { text: `Subagents may only use toolpack, file summary, media and image tools, not "${tool}".`, isError: true };
     }
     const chat = [...this.chats.values()].find(item => item.ownerId === owner);
     if (!chat) return { text: 'This chat is no longer active.', isError: true };
+    const result = await this.dispatchChatTool(chat, tool, args);
+    // Images a background subagent sent ride the parent's next tool result, like inbox mail.
+    return this.withPendingParentMedia(chat, result);
+  }
+
+  private async dispatchChatTool(chat: Chat, tool: string, args: Record<string, unknown>): Promise<DelegateResult> {
     if (chat.cancelRequested || chat.ping) return { text: 'Tools are unavailable during this turn.', isError: true };
     if (isBatchTool(tool)) return this.feature('batching') ? this.runBatch(chat, args) : { text: 'Batching is turned off.', isError: true };
     if (tool === 'list_subagents') {
       const infos = this.subagentInfos();
-      return { text: infos.length ? infos.map(info => `- ${info.name} (${info.mode}, model ${info.model})${info.description ? `: ${info.description}` : ''}`).join('\n') : 'No subagents are configured. Add them to the dsh.subagents setting.' };
+      return { text: infos.length ? infos.map(info => `- ${info.name} (${info.mode}, model ${info.model})${info.description ? `: ${info.description}` : ''}`).join('\n') : 'No subagents are configured. Add them to the unify.subagents setting.' };
     }
     if (tool === 'list_locked_files') {
       const locks = [...chat.locks];
@@ -3093,7 +3284,7 @@ class ExtensionHost implements vscode.Disposable {
     if (tool === 'checkpoint') {
       try {
         chat.pendingCheckpoint = parseCheckpoint(args);
-        if (chat.compactWatch?.askedAt !== undefined) return { text: 'Checkpoint saved. End your turn now with one short line; DSH continues the task in a fresh session automatically.' };
+        if (chat.compactWatch?.askedAt !== undefined) return { text: 'Checkpoint saved. End your turn now with one short line; Unify continues the task in a fresh session automatically.' };
         return { text: 'Checkpoint saved; it takes effect after this turn. Nothing continues automatically: finish the user\'s request in this turn before you end it.' };
       } catch (error) {
         return { text: error instanceof Error ? error.message : String(error), isError: true };
@@ -3107,11 +3298,74 @@ class ExtensionHost implements vscode.Disposable {
     if (tool === 'delegate_task') return this.runSubagent(chat, args);
     if (tool === WAIT_SUBAGENTS) return this.waitSubagents(chat, args);
     if (tool === CANCEL_SUBAGENT) return this.cancelSubagent(chat, args);
+    if (tool === 'edit_range') return this.editRange(chat, chat.ownerId, args);
     if (tool === 'ask_questions') return this.askQuestions(chat, args);
     if (tool === SUMMARY_TOOL.name) return this.readSummaries(chat, args);
     if (tool === SEND_MEDIA) return this.sendMedia(chat, args);
     if (tool === GENERATE_IMAGE) return this.generateImage(chat, args);
     return this.packCall(chat, tool, args, true) ?? { text: `Unknown tool "${tool}".`, isError: true };
+  }
+
+  /**
+   * edit_range runs in this engine rather than in the MCP child, so it obeys the same review, read-only,
+   * lock and realpath containment rules as a native edit tool. Subagents are confined to their files.
+   */
+  private async editRange(chat: Chat, owner: string, args: Record<string, unknown>): Promise<DelegateResult> {
+    const fail = (text: string): DelegateResult => ({ text, isError: true });
+    if (!getUnifyFeature('tools.rangeEdits')) return fail('Range edits are turned off in Settings (tools.rangeEdits).');
+    const run = [...this.childRuns].find(item => item.owner === owner);
+    if (run?.readOnly || this.jobReadOnly(chat)) return fail('This agent is read-only and may not edit files.');
+    if (chat.cancelRequested) return fail('Cancelled.');
+    const pathArg = typeof args.path === 'string' ? args.path.trim() : '';
+    if (!pathArg) return fail('path is required.');
+    if (isAbsolute(pathArg)) return fail(`${pathArg} must be relative to the working copy.`);
+    if (args.replacement !== undefined && typeof args.replacement !== 'string') return fail('replacement must be text.');
+    const target = resolvePath(chat.mirror.cwd, pathArg);
+    const rawRel = relative(chat.mirror.cwd, target);
+    if (!rawRel || rawRel === '..' || rawRel.startsWith(`..${sep}`) || isAbsolute(rawRel)) return fail(`${pathArg} is outside the working copy.`);
+    let realRoot: string;
+    let realTarget: string;
+    try {
+      realRoot = await realpath(chat.mirror.cwd);
+      const info = await lstat(target);
+      if (info.isSymbolicLink()) return fail(`${pathArg} is a symlink; edit the file it points at instead.`);
+      realTarget = await realpath(target);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      return fail(code === 'ENOENT' ? `${pathArg} does not exist.` : `Could not read ${pathArg}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    // A symlinked parent folder can still point outside the working copy.
+    const contained = relative(realRoot, realTarget);
+    if (!contained || contained === '..' || contained.startsWith(`..${sep}`) || isAbsolute(contained)) return fail(`${pathArg} is outside the working copy.`);
+    const rel = contained.split(sep).join('/');
+    if (run && !run.files.some(file => rel === file || (file.endsWith('/') && rel.startsWith(file)))) {
+      return fail(`"${rel}" is outside this subagent's files${run.files.length ? `: ${run.files.join(', ')}` : ''}.`);
+    }
+    const conflict = this.lockConflict(chat, rel, owner);
+    if (conflict) return fail(`"${rel}" is locked by subagent "${conflict.label}" until it finishes.`);
+    this.recordAgentKnowledgeVersion(chat, rel, run ? run.label : chat.record.name);
+    let text: string;
+    try {
+      text = await readFile(realTarget, 'utf8');
+    } catch (error) {
+      return fail(`Could not read ${pathArg}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const result = applyRangeEdit(text, {
+      startLine: Number(args.startLine),
+      endLine: Number(args.endLine),
+      ...(typeof args.expected === 'string' ? { expected: args.expected } : {}),
+      replacement: typeof args.replacement === 'string' ? args.replacement : '',
+    });
+    if (!result.ok) return fail(result.error);
+    try {
+      await writeFile(realTarget, result.text, 'utf8');
+    } catch (error) {
+      return fail(`Could not write ${pathArg}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    run?.changed.add(rel);
+    // The mirror scan feeds the review pane, exactly as an edit made by the agent's own tool does.
+    await chat.mirror.scan();
+    return { text: `Edited ${rel} lines ${result.startLine}-${result.endLine}.` };
   }
 
   private async runSubagent(chat: Chat, args: Record<string, unknown>): Promise<DelegateResult> {
@@ -3148,11 +3402,12 @@ class ExtensionHost implements vscode.Disposable {
     if (!tasks.length) return { text: unknown.length ? `No background subagent with id ${unknown.join(', ')} is waiting to be collected.` : 'No background subagents are running or waiting to be collected.', isError: !!unknown.length };
     const seconds = Number.isFinite(Number(args.timeout_seconds)) ? Math.max(0, Math.min(3000, Number(args.timeout_seconds))) : 1800;
     let timer: NodeJS.Timeout | undefined;
+    let poll: NodeJS.Timeout | undefined;
     const timeout = new Promise<void>(resolve => { timer = setTimeout(resolve, seconds * 1000); });
     // Cancelling the parent turn ends the wait; the subagents themselves keep running unless cancelled.
-    const stopped = new Promise<void>(resolve => { const poll = setInterval(() => { if (chat.cancelRequested || !chat.running) { clearInterval(poll); resolve(); } }, 200); void timeout.then(() => clearInterval(poll)); });
+    const stopped = new Promise<void>(resolve => { poll = setInterval(() => { if (chat.cancelRequested || !chat.running) { clearInterval(poll); resolve(); } }, 200); });
     const finished = args.any === true ? Promise.race(tasks.map(task => task.finished)) : Promise.all(tasks.map(task => task.finished));
-    try { await Promise.race([finished, timeout, stopped]); } finally { clearTimeout(timer); }
+    try { await Promise.race([finished, timeout, stopped]); } finally { clearTimeout(timer); if (poll) clearInterval(poll); }
     const report = this.takeBackgroundResults(chat, tasks.map(task => task.id));
     const running = tasks.filter(task => !task.done).map(task => `${task.id} (${task.label})`);
     return { text: [report, running.length ? `Still running: ${running.join(', ')}.` : '', unknown.length ? `Unknown ids: ${unknown.join(', ')}.` : ''].filter(Boolean).join('\n\n') || 'Nothing finished yet.' };
@@ -3187,16 +3442,20 @@ class ExtensionHost implements vscode.Disposable {
   }
 
   /**
-   * Copies files an agent sent into extension storage and shows them in the chat.
-   * into is the entry id of a generated image's box, already in the chat; the files fill it as an expandable thumbnail.
+   * Stores files an agent sent in the media store and shows them in the chat.
+   * A subagent's media appears in its own feed and, when agents.imagesToParent is on, reaches the
+   * parent as image content blocks instead of a `**label:**` message.
+   * into is the entry id of a generated image's box, already in the chat; the files fill it.
    */
-  private async sendMedia(chat: Chat, args: Record<string, unknown>, from?: string, into?: string): Promise<DelegateResult> {
+  private async sendMedia(chat: Chat, args: Record<string, unknown>, from?: ChildRun, into?: string): Promise<DelegateResult> {
     const paths = (Array.isArray(args.paths) ? args.paths : typeof args.path === 'string' ? [args.path] : []).filter((item): item is string => typeof item === 'string' && !!item.trim());
     if (!paths.length) return { text: '"paths" must list at least one file.', isError: true };
     if (paths.length > MAX_MEDIA_FILES) return { text: `Send at most ${MAX_MEDIA_FILES} files at a time.`, isError: true };
-    const dir = join(this.context.globalStorageUri.fsPath, 'media', chat.record.id);
-    await mkdir(dir, { recursive: true });
-    const items: { name: string; mimeType: string; file: string }[] = [];
+    const chatId = chat.record.id;
+    const by = from?.label || 'the main agent';
+    const items: MediaItem[] = [];
+    const candidates: { item: MediaItem; record: MediaRecord }[] = [];
+    const duplicates: string[] = [];
     const problems: string[] = [];
     for (const raw of paths) {
       const source = isAbsolute(raw) ? raw : resolvePath(chat.mirror.cwd, raw);
@@ -3204,27 +3463,58 @@ class ExtensionHost implements vscode.Disposable {
         const info = await stat(source);
         if (!info.isFile()) { problems.push(`${raw}: not a file`); continue; }
         if (info.size > MAX_MEDIA_BYTES) { problems.push(`${raw}: larger than ${MAX_MEDIA_BYTES / 1024 / 1024} MB`); continue; }
-        const name = `${randomUUID()}${extname(source).toLowerCase().slice(0, 12)}`;
-        await copyFile(source, join(dir, name));
-        items.push({ name: basename(source), mimeType: mediaType(source), file: `${chat.record.id}/${name}` });
+        const record = await this.media.putFile(source, chatId);
+        const item = this.mediaItem(record, basename(source));
+        // A generated image's own box is already a new visual: fill it even if the bytes are familiar.
+        const already = into ? undefined : this.shownMedia.shownBy(chatId, record.hash);
+        if (already) { duplicates.push(already); continue; }
+        items.push(item);
+        candidates.push({ item, record });
       } catch (error) { problems.push(`${raw}: ${error instanceof Error ? error.message : String(error)}`); }
     }
-    if (!items.length) return { text: `No files were sent. ${problems.join('; ')}`, isError: true };
+    const duplicateNote = duplicates.length
+      ? `Already shown in this chat by ${duplicates[0]}; refer to it instead of sending it again.`
+      : '';
+    if (!items.length) {
+      if (duplicateNote) return { text: duplicateNote };
+      return { text: `No files were sent. ${problems.join('; ')}`, isError: true };
+    }
+    for (const candidate of candidates) this.shownMedia.add(chatId, candidate.record.hash, by);
     const caption = typeof args.caption === 'string' && args.caption.trim() ? args.caption.trim().slice(0, 4000) : undefined;
-    // Media from the parent's own turn is placed between its text segments, like a tool call. A generated image's box already was.
-    if (!from && !into && chat.running) chat.segment++;
-    this.sidebar.postMessage({ type: 'mediaMessage', sessionId: chat.record.id, entryId: into || `media:${randomUUID()}`, caption: from ? `**${from}:** ${caption || ''}`.trim() : caption, items, ...(into ? { generated: true } : {}) });
-    return { text: `Shown to the user: ${items.map(item => item.name).join(', ')}.${problems.length ? ` Not sent: ${problems.join('; ')}` : ''}` };
+    if (from) {
+      // The subagent's own feed gets the media; its sentToParent strip is updated separately.
+      this.sidebar.postMessage({
+        type: 'subagentEvent', sessionId: chatId, agentId: from.agentId, messageId: `media:${randomUUID()}`,
+        role: 'assistant', ...(caption ? { text: caption } : {}), media: items,
+      });
+      from.sentToParent.push(...items);
+      this.publishSentToParent(from);
+      if (getUnifyFeature('agents.imagesToParent')) {
+        from.queuedForParent.push(...candidates.map(candidate => ({ item: candidate.item, shownBy: by })));
+      }
+    } else {
+      // Media from the parent's own turn is placed between its text segments, like a tool call.
+      if (!into && chat.running) chat.segment++;
+      this.sidebar.postMessage({ type: 'mediaMessage', sessionId: chatId, entryId: into || `media:${randomUUID()}`, caption, items, ...(into ? { generated: true } : {}) });
+    }
+    const sent = `Shown to the user: ${items.map(item => item.name).join(', ')}.`;
+    return { text: [sent, duplicateNote, problems.length ? `Not sent: ${problems.join('; ')}` : ''].filter(Boolean).join(' ') };
   }
 
-  /** Generates an image with the chat's ChatGPT (Codex) account, or the default one, saves it under .dsh/images in the real workspace and shows it in the chat. */
-  private async generateImage(chat: Chat, args: Record<string, unknown>, from?: string): Promise<DelegateResult> {
+  /** Sends the subagent's sentToParent strip, omitting images that are already inline in the parent. */
+  private publishSentToParent(run: ChildRun): void {
+    const strip = run.sentToParent.filter(item => !run.inlineInParent.has(item.hash));
+    this.sidebar.postMessage({ type: 'subagentEvent', sessionId: run.parent.record.id, agentId: run.agentId, sentToParent: strip });
+  }
+
+  /** Generates an image with the chat's ChatGPT (Codex) account, or the default one, saves it under .unify/images in the real workspace and shows it in the chat. */
+  private async generateImage(chat: Chat, args: Record<string, unknown>, from?: ChildRun): Promise<DelegateResult> {
     const request = parseImageRequest(args);
     if (typeof request === 'string') return { text: request, isError: true };
     const own = this.oauthAccounts.get(chat.record.accountId);
     const account = own?.provider === 'codex-cli' ? own : this.oauthAccounts.getDefault('codex-cli');
     if (!account) return { text: 'Image generation needs a ChatGPT (Codex) account. Connect one in Accounts.', isError: true };
-    // Relative input paths resolve in the agent's working copy first, then in the real workspace, where .dsh/images is in mirror mode.
+    // Relative input paths resolve in the agent's working copy first, then in the real workspace, where .unify/images is in mirror mode.
     const inputs: Buffer[] = [];
     const problems: string[] = [];
     for (const raw of request.images) {
@@ -3241,28 +3531,40 @@ class ExtensionHost implements vscode.Disposable {
     // The image's box shows in the chat right away with a loading circle, and is filled or marked failed when generation ends.
     const entryId = `media:${randomUUID()}`;
     const box = (status: 'pending' | 'failed'): void => {
-      this.sidebar.postMessage({ type: 'mediaMessage', sessionId: chat.record.id, entryId, caption: from ? `**${from}:**` : undefined, items: [], generated: true, status });
+      this.sidebar.postMessage({ type: 'mediaMessage', sessionId: chat.record.id, entryId, caption: from ? `**${from.label}:**` : undefined, items: [], generated: true, status });
     };
-    if (!from && chat.running) chat.segment++;
-    box('pending');
+    // A subagent's image belongs in its own feed, so it gets no box in the parent chat.
+    if (!from) {
+      if (chat.running) chat.segment++;
+      box('pending');
+    }
     try {
       const image = await generateImage({ home: account.directory }, request, inputs);
-      // The real workspace, not the chat's private copy: .dsh is outside the mirror's review scope.
-      const dir = join(this.root().uri.fsPath, '.dsh', 'images');
+      // The real workspace, not the chat's private copy: .unify is outside the mirror's review scope.
+      const dir = join(this.root().uri.fsPath, '.unify', 'images');
       await mkdir(dir, { recursive: true });
       const path = join(dir, imageFileName(args.name, request.prompt, image.extension));
       await writeFile(path, image.bytes, { flag: 'wx' });
       const size = pngSize(image.bytes);
-      const shown = await this.sendMedia(chat, { paths: [path] }, from, entryId);
-      if (shown.isError) box('failed');
+      const shown = await this.sendMedia(chat, { paths: [path] }, from, from ? undefined : entryId);
+      if (shown.isError && !from) box('failed');
       return { text: `Image saved to ${path}${size ? ` (${size})` : ''}. ${shown.isError ? `It could not be shown in the chat: ${shown.text}` : 'It is already shown to the user in the chat.'}` };
     } catch (error) {
-      box('failed');
+      if (!from) box('failed');
       return { text: error instanceof Error ? error.message : String(error), isError: true };
     }
   }
 
   private async openMedia(file: string): Promise<void> {
+    // New media carries the store hash in its protocol URL. Older saved chats still carry a path
+    // relative to the legacy media folder, which is kept for them.
+    if (file.startsWith('unify-media://')) {
+      const hash = new URL(file).hostname.toLowerCase();
+      const path = this.media.pathOf(hash);
+      if (!path) throw new Error('That media file is no longer in the media store.');
+      await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(path));
+      return;
+    }
     const root = join(this.context.globalStorageUri.fsPath, 'media');
     const path = resolvePath(root, file);
     const rel = relative(root, path);
@@ -3291,16 +3593,20 @@ class ExtensionHost implements vscode.Disposable {
     const model: ModelEntry = { ...entry, backend };
     const owner = `sub:${randomUUID()}`;
     const agentId = `${chat.turnEntryId}:delegate:${randomUUID()}`;
-    const post = (event: { title?: string; prompt?: string; model?: string; state?: 'running' | 'complete' | 'error' | 'cancelled'; delegated?: boolean; files?: string[]; text?: string; messageId?: string; role?: 'assistant' | 'tool'; tool?: SidebarSubagentTool }): void => {
+    const explorer = name === 'explorer' && readOnly;
+    const places = this.internalPlaces(chat);
+    const post = (event: { title?: string; prompt?: string; model?: string; effort?: string; speed?: string; profile?: string; ranges?: SidebarExplorerRange[]; tokens?: number; state?: 'running' | 'complete' | 'error' | 'cancelled'; delegated?: boolean; files?: string[]; text?: string; messageId?: string; role?: 'assistant' | 'tool'; tool?: SidebarSubagentTool; media?: SidebarMedia[] }): void => {
+      if (event.state) setSubagentState(agentId, event.state === 'running' ? 'running' : 'idle');
       this.sidebar.postMessage({ type: 'subagentEvent', sessionId: chat.record.id, agentId, ...event });
     };
-    const run: ChildRun = { parent: chat, owner, label: profile.name, readOnly, changed: new Set(), outOfScope: new Set(), files: readOnly ? [] : files, background: !!onBackground, cancel: () => undefined };
+    const run: ChildRun = { parent: chat, owner, label: profile.name, agentId, readOnly, changed: new Set(), outOfScope: new Set(), files: readOnly ? [] : files, sentToParent: [], inlineInParent: new Set(), queuedForParent: [], background: !!onBackground, cancel: () => undefined };
     this.childRuns.add(run); chat.children.add(run);
+    registerSubagentAgent({ id: agentId, owner, name, task, chatId: chat.record.id, parentId: chat.record.id });
     onBackground?.(run);
     if (!readOnly) for (const file of files) chat.locks.set(file, { owner, label: profile.name });
-    const modelLabel = `${entry.name}${profile.effort ? ` · ${profile.effort}` : ''}${speed ? ` · ${speed}` : ''}`;
-    post({ title: profile.name, prompt: task, model: modelLabel, state: 'running', delegated: true, files: readOnly ? [] : files });
+    post({ title: profile.name, prompt: task, model: entry.name, effort: profile.effort, speed, state: 'running', delegated: true, files: readOnly ? [] : files, ...(explorer ? { profile: 'explorer' } : {}) });
     let reply = '';
+    let explorerTokens = 0;
     let cancelled = false;
     run.cancel = () => { cancelled = true; };
     const instructions = readOnly
@@ -3308,8 +3614,7 @@ class ExtensionHost implements vscode.Disposable {
       : `You may edit ONLY these paths: ${files.join(', ')}. Do not touch anything else; other agents are working in parallel.`;
     const summaries = profile.tools !== false && this.summariesOn() ? `${SUMMARY_INSTRUCTIONS}\n\n` : '';
     const memory = memoryInstructions(chat.mirror.cwd, this.memorySettings().enabled);
-    const explorer = name === 'explorer' && readOnly;
-    const explorerNote = explorer ? 'Answer in at most about 300 words. Include file paths with line numbers for every claim.\n\n' : '';
+    const explorerNote = explorer ? explorerPromptNote() : '';
     const shell = [BACKGROUND_CLEANUP, shellInstructions()].filter(Boolean).join('\n');
     const intro = `You are a subagent working in a shared working copy on behalf of another agent. ${instructions}\n\n${shell}`;
     // Claude already gets the delegation note as system text.
@@ -3342,7 +3647,7 @@ class ExtensionHost implements vscode.Disposable {
       toolLog.push(`- ${title}${detail ? `: ${detail.replace(/\s+/g, ' ').slice(0, 150)}` : ''}`);
       if (toolLog.length > 30) toolLog.shift();
       if (segmentStarted) { replySegment += 1; segmentStarted = false; }
-      post({ text: `${title}${detail ? `: ${detail.slice(0, 300)}` : ''}`, messageId: `tool:${id}`, role: 'tool', tool: displayTool(title, detail) });
+      post({ text: `${title}${detail ? `: ${detail.slice(0, 300)}` : ''}`, messageId: `tool:${id}`, role: 'tool', tool: { ...displayTool(title, detail), internal: internalToolOf({ tool: title, input: detail }, places) } });
       this.noteRead(chat.mirror.cwd, readToolPath(title, detail));
     };
     try {
@@ -3380,6 +3685,7 @@ class ExtensionHost implements vscode.Disposable {
               this.logUsage(chat.record.id, explorer ? 'explorer' : 'subagent', entry.name, usage);
               if (explorer) {
                 const total = usage.total;
+                explorerTokens += total.input + total.cacheRead + total.cacheWrite + total.output;
                 chat.record.explorerTokens = (chat.record.explorerTokens || 0) + total.input + total.cacheRead + total.cacheWrite + total.output;
                 this.refreshSessions();
                 void this.saveSession(chat.record).catch(error => this.output.appendLine(`Saving explorer usage failed: ${String(error)}`));
@@ -3389,7 +3695,7 @@ class ExtensionHost implements vscode.Disposable {
           () => cancelled, (next, failed) => { post({ text: `Account switch: ${failed.label} hit its usage limit; continuing on ${next.label}`, messageId: `account:${next.id}`, role: 'tool' }); gap = true; return {}; });
         };
       } else {
-        const slot = await this.ensureRuntime(route, chat.mirror.cwd, owner);
+        const slot = await this.ensureRuntime(route, chat.mirror.cwd, owner, { kind: 'subagent', profile: name });
         if (!slot) throw new Error('No runtime is available for this subagent model.');
         run.runtimeKey = slot.key;
         const cursor = route.model.provider === 'cursor-acp';
@@ -3402,6 +3708,16 @@ class ExtensionHost implements vscode.Disposable {
           } else if (kind === 'tool_call' && typeof update.toolCallId === 'string' && !toolTexts.has(update.toolCallId)) {
             toolTexts.add(update.toolCallId);
             onTool(update.toolCallId, String(update.title || 'Tool'), undefined, 'running');
+          } else if (kind === 'tool_call_update' && typeof update.toolCallId === 'string') {
+            // Images a tool returned land on its row, so the subagent feed shows them too.
+            const images = this.incomingImages(update.content);
+            if (images.length) {
+              const id = update.toolCallId;
+              const title = String(update.title || 'Tool');
+              void this.storeIncomingImages(chat.record.id, images, profile.name).then(items => {
+                if (items.length) post({ messageId: `tool:${id}`, role: 'tool', tool: displayTool(title, undefined), media: items });
+              });
+            }
           } else if (kind === 'usage_update' && typeof update.used === 'number') onContext(update.used);
           if (kind.startsWith('tool_call') && String(update.kind || '').toLowerCase() === 'read' && Array.isArray(update.locations)) {
             this.noteRead(chat.mirror.cwd, (update.locations as Record<string, unknown>[]).find(item => typeof item.path === 'string')?.path);
@@ -3446,14 +3762,23 @@ class ExtensionHost implements vscode.Disposable {
         sessionTask = subagentResumeTask(task, checkpoint, segment);
       }
       if (cancelled) throw new Error('Cancelled.');
-      post({ state: 'complete' });
-      let result = reply.slice(reportStart).trim() || '(The subagent finished without a written report.)';
+      const parsed = explorer
+        ? parseExplorerRanges(reply.slice(reportStart).trim())
+        : { text: reply.slice(reportStart).trim(), ranges: [] as SidebarExplorerRange[] };
+      post({ state: 'complete', ...(explorer ? { ranges: parsed.ranges, tokens: explorerTokens } : {}) });
+      let result = parsed.text || '(The subagent finished without a written report.)';
+      if (explorer) {
+        const rangeBlock = formatExplorerRanges(parsed.ranges);
+        if (rangeBlock) result += `\n\n${rangeBlock}`;
+      }
       if (run.changed.size) {
         result += `\n\n---\nFiles changed by this subagent: ${[...run.changed].join(', ')}`;
         if (run.outOfScope.size) result += `\nWARNING: edits outside its locked paths (${files.join(', ') || 'none'}): ${[...run.outOfScope].join(', ')}`;
       } else if (!readOnly) {
         result += '\n\n---\nNo files were changed by this subagent.';
       }
+      const mediaBlocks = await this.deliverRunMediaToParent(run);
+      if (mediaBlocks.length) return { text: result, content: [{ type: 'text', text: result }, ...mediaBlocks] };
       return { text: result };
     } catch (error) {
       post({ state: cancelled ? 'cancelled' : 'error' });
@@ -3464,8 +3789,12 @@ class ExtensionHost implements vscode.Disposable {
       if (partial) result += `\n\nIts reply so far:\n${partial.length > 1500 ? `…${partial.slice(-1500)}` : partial}`;
       if (toolLog.length) result += `\n\nTools it ran${toolCount > toolLog.length ? ` (last ${toolLog.length} of ${toolCount})` : ''}:\n${toolLog.join('\n')}`;
       if (run.changed.size) result += `\n\n---\nFiles changed by this subagent: ${[...run.changed].join(', ')}`;
+      // Images it already sent still reach the parent, even when the run failed.
+      const mediaBlocks = await this.deliverRunMediaToParent(run);
+      if (mediaBlocks.length) return { text: result, isError: true, content: [{ type: 'text', text: result }, ...mediaBlocks] };
       return { text: result, isError: true };
     } finally {
+      unregisterSubagentAgent(agentId);
       for (const [path, lock] of [...chat.locks]) if (lock.owner === owner) chat.locks.delete(path);
       this.childRuns.delete(run); chat.children.delete(run);
       await this.releaseRuntime(run.runtimeKey);
@@ -3494,7 +3823,7 @@ class ExtensionHost implements vscode.Disposable {
     const pick = await vscode.window.showQuickPick([
       ...(this.smartAutoReady() ? [{ label: SMART_AUTO, description: 'A decider model picks a ranked model for each message', name: SMART_AUTO }] : []),
       ...this.availableModels().filter(model => model.enabled).map(model => ({
-        label: model.name, description: `${model.provider} · ${model.backend}`, name: model.name,
+        label: model.name, description: model.provider, detail: model.backend, name: model.name,
       })),
     ], { placeHolder: 'Select a model' });
     if (pick) await this.selectModel(pick.name);
@@ -3528,13 +3857,13 @@ class ExtensionHost implements vscode.Disposable {
   }
 
   private async manageAccounts(): Promise<void> {
-    await vscode.commands.executeCommand('workbench.view.extension.dsh');
+    await vscode.commands.executeCommand('workbench.view.extension.unify');
     this.sidebar.postMessage({ type: 'showPage', page: 'accounts' });
     await this.refreshAccounts();
   }
 
   private async manageModels(): Promise<void> {
-    await vscode.commands.executeCommand('workbench.view.extension.dsh');
+    await vscode.commands.executeCommand('workbench.view.extension.unify');
     this.sidebar.postMessage({ type: 'showPage', page: 'models' });
     this.refreshModels();
   }
@@ -3632,28 +3961,27 @@ class ExtensionHost implements vscode.Disposable {
   private async reviewNext(): Promise<void> {
     const item = this.review?.pending()[0];
     if (item) await this.review?.open(item.id);
-    else void vscode.window.showInformationMessage('DSH has no pending edits.');
+    else void vscode.window.showInformationMessage('Unify has no pending edits.');
   }
 
   private async openWorkingCopyTerminal(): Promise<void> {
     if (!this.active) await this.newChat();
     if (!this.active) return;
     const chat = await this.loadChat(this.active);
-    const terminal = vscode.window.createTerminal({ name: 'DSH Working Copy', cwd: chat.mirror.cwd });
+    const terminal = vscode.window.createTerminal({ name: 'Unify Working Copy', cwd: chat.mirror.cwd });
     terminal.show();
   }
 
   private onProposalsChanged(chatId: string, items: ReviewProposal[]): void {
     if (this.active?.id !== chatId) return;
     this.sidebar.postMessage({ type: 'diffState', diffs: this.diffItems(items) });
-    this.updateStatus();
   }
 
   private diffItems(items: ReviewProposal[]): { id: string; path: string; summary: string; additions: number; deletions: number; state: ReviewProposal['state'] }[] {
     const lineCount = (value?: string): number => value ? value.split(/\r\n|\r|\n/).length - (/[\r\n]$/.test(value) ? 1 : 0) : 0;
     return items.map(item => ({
         id: item.id, path: item.path,
-        summary: `${item.fromPath ? `Rename from ${item.fromPath}` : item.base === undefined ? 'Create' : item.proposed === undefined ? 'Delete' : `${item.hunks.length} hunk${item.hunks.length === 1 ? '' : 's'}`} · ${item.state}`,
+        summary: item.fromPath ? `Rename from ${item.fromPath}` : item.base === undefined ? 'Create' : item.proposed === undefined ? 'Delete' : `${item.hunks.length} hunk${item.hunks.length === 1 ? '' : 's'}`,
         additions: item.base === undefined ? lineCount(item.proposed) : item.proposed === undefined ? 0 : item.hunks.reduce((sum, hunk) => sum + hunk.currentLines.length, 0),
         deletions: item.proposed === undefined ? lineCount(item.base) : item.base === undefined ? 0 : item.hunks.reduce((sum, hunk) => sum + hunk.baseLines.length, 0),
         state: item.state,
@@ -3671,6 +3999,7 @@ class ExtensionHost implements vscode.Disposable {
     const chatId = chat.record.id;
     if (chat.cancelRequested) return;
     const update = event.update;
+    const places = this.internalPlaces(chat);
     const kind = String(update.sessionUpdate || '');
     if (kind === 'cursor_task') {
       const id = String(update.toolCallId || update.agentId || Date.now());
@@ -3728,10 +4057,20 @@ class ExtensionHost implements vscode.Disposable {
       if (!chat.startedTools.has(id)) { chat.startedTools.add(id); chat.segment++; }
       const rawInput = update.rawInput && typeof update.rawInput === 'object' ? JSON.stringify(update.rawInput) : undefined;
       const shown = displayTool(title, rawInput && toolKind === 'shell' ? rawInput : detail);
-      this.sidebar.postMessage({ type: 'toolEvent', sessionId: chatId, entryId: `tool:${chat.turnEntryId}:${id}`, event: {
-        id, kind: shown.kind === 'other' ? toolKind : shown.kind, title: shown.title, detail: shown.detail, full: shown.full,
-        state: update.status === 'failed' ? 'error' : kind === 'tool_call' || update.status === 'in_progress' ? 'running' : 'complete',
-      } });
+      const state = update.status === 'failed' ? 'error' : kind === 'tool_call' || update.status === 'in_progress' ? 'running' : 'complete';
+      const entryId = `tool:${chat.turnEntryId}:${id}`;
+      const shownEvent = {
+        id, kind: shown.kind === 'other' ? toolKind : shown.kind, title: shown.title, detail: shown.detail, full: shown.full, state,
+        internal: internalToolOf({ tool: title, input: update.rawInput ?? detail }, places),
+      };
+      this.sidebar.postMessage({ type: 'toolEvent', sessionId: chatId, entryId, event: shownEvent });
+      // Images a tool returned (batch read_file, screenshots) go on the same row once stored.
+      const images = this.incomingImages(update.content);
+      if (images.length) void this.storeIncomingImages(chatId, images, 'the main agent').then(items => {
+        if (items.length && !this.deletedSessions.has(chatId)) {
+          this.sidebar.postMessage({ type: 'toolEvent', sessionId: chatId, entryId, event: { ...shownEvent, media: items } });
+        }
+      });
       if (chat.running) this.postRun(chatId, 'tool', 'Using tools…');
     }
   }
@@ -3746,7 +4085,7 @@ class ExtensionHost implements vscode.Disposable {
     const options = Array.isArray(params.options) ? params.options as Record<string, unknown>[] : [];
     const allow = options.find(option => option.kind === 'allow_once');
     const reject = options.find(option => option.kind === 'reject_once');
-    const title = typeof tool?.title === 'string' ? tool.title : 'DSH tool';
+    const title = typeof tool?.title === 'string' ? tool.title : 'Unify tool';
     if (!parent) return reject ? String(reject.optionId || '') : undefined;
     const locations = Array.isArray(tool?.locations) ? tool.locations as Record<string, unknown>[] : [];
     const path = locations.find(item => typeof item.path === 'string')?.path;
@@ -3761,6 +4100,11 @@ class ExtensionHost implements vscode.Disposable {
     // Claude sends this hint on every tool, including reads.
     if (info?.autoAllowEdits && !EDIT_TOOLS.test(info.tool)) info = { ...info, autoAllowEdits: false };
     const verdict = await this.decideApprovalInner(chat, actor, description, info);
+    if (verdict === true && info && EDIT_TOOLS.test(info.tool)) {
+      // Keep what an agent is about to overwrite, so Knowledge's Undo can restore it.
+      const rel = this.relPath(chat, info.input);
+      if (rel) this.recordAgentKnowledgeVersion(chat, rel, actor.owner === PARENT.owner ? chat.record.name : actor.label);
+    }
     if (verdict === true && info && EDIT_TOOLS.test(info.tool) && actor.owner !== PARENT.owner) {
       const rel = this.relPath(chat, info.input);
       const run = [...this.childRuns].find(item => item.owner === actor.owner);
@@ -3772,12 +4116,27 @@ class ExtensionHost implements vscode.Disposable {
     return verdict;
   }
 
+  /** Snapshots project rules, memory notes and skills before an agent edits them (Knowledge screen Undo). */
+  private recordAgentKnowledgeVersion(chat: Chat, rel: string, by: string): void {
+    const knowledge = rel === 'AGENTS.md'
+      || rel.startsWith('.unify/memory/')
+      || rel.startsWith('.agents/skills/');
+    if (!knowledge) return;
+    const root = chat.record.project?.path ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!root) return;
+    try {
+      recordKnowledgeVersion(requestPaths({ workspaceRoot: root }), join(root, rel), by);
+    } catch (error) {
+      this.output.appendLine(`Could not keep a knowledge version: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   private async decideApprovalInner(chat: Chat, actor: Actor, description: string, info?: ToolInfo): Promise<boolean | string> {
     const background = !!this.backgroundRun(actor.owner);
     if (chat.cancelRequested && !background) return false;
     if (!vscode.workspace.isTrusted) return false;
     if (info && this.jobReadOnly(chat) && (EDIT_TOOLS.test(info.tool) || info.autoAllowEdits)) return 'The job is in a read-only phase (drafting or reviewing); do not edit files.';
-    if (info && isNativeSubagentTool(info.tool)) return 'Use DSH delegate_task with a configured subagent profile.';
+    if (info && isNativeSubagentTool(info.tool) && nativeAgentsBlocked()) return 'Use Unify delegate_task with a configured subagent profile.';
     if (info && EDIT_TOOLS.test(info.tool)) {
       if (actor.readOnly) return 'This subagent is read-only and may not edit files.';
       const path = this.relPath(chat, info.input);
@@ -3856,7 +4215,7 @@ class ExtensionHost implements vscode.Disposable {
         case 'checkDependencies': await this.refreshDependencies(); break;
         case 'installProvider': await this.installProvider(message.provider); break;
         case 'pageChanged': this.sidebar.setPage(message.page); if (message.page === 'accounts') this.refreshUsage(); if (message.page === 'instructions') await this.refreshInstructions(); break;
-        case 'ready': this.sidebar.postMessage({ type: 'usageState', usage: this.usage.snapshot() }); this.refreshUsage(); if (this.active) { this.restoreJob(this.active); this.postJob(this.active); } await this.refreshInstructions(); this.postToolpacks(); this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode }); this.refreshCustomize(); this.postUnifyFeatures(); if (this.agentRoster.size) this.sidebar.postMessage({ type: 'agentRoster', agents: [...this.agentRoster.values()] }); this.refreshMemory(); this.sync.post(); this.refreshSubagents(); this.refreshModels(); this.refreshSessions(); await this.refreshAccount(); await this.refreshAccounts(); break;
+        case 'ready': this.sidebar.setShutdown(this.shutdown.getStatus()); this.sidebar.postMessage({ type: 'usageState', usage: this.usage.snapshot() }); this.refreshUsage(); if (this.active) { this.restoreJob(this.active); this.postJob(this.active); } await this.refreshInstructions(); this.postToolpacks(); this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode }); this.refreshCustomize(); this.postUnifyFeatures(); if (this.agentRoster.size) this.sidebar.postMessage({ type: 'agentRoster', agents: [...this.agentRoster.values()] }); this.refreshMemory(); this.sync.post(); this.refreshSubagents(); this.refreshModels(); this.refreshSessions(); await this.refreshAccount(); await this.refreshAccounts(); break;
         case 'sendPrompt': {
           const slash = parseSlash(message.prompt);
           if (slash?.name === 'job') await this.startJob(slash.args, message.images);
@@ -3887,29 +4246,39 @@ class ExtensionHost implements vscode.Disposable {
         case 'saveSmartAutoRanks': await this.saveSmartAutoRanks(message.ranks); break;
         case 'setMemory': await this.setMemory(message.enabled === true); break;
         case 'openMemoryFolder': {
-          const folder = globalMemoryFolder(this.instructionRoots().dshHome);
+          const folder = globalMemoryFolder(this.instructionRoots().unifyHome);
           await mkdir(folder, { recursive: true });
           await vscode.env.openExternal(vscode.Uri.file(folder));
           break;
         }
         case 'saveAutoCompactTokens':
-          await vscode.workspace.getConfiguration('dsh').update('experimental.autoCompactTokens', normalizeCompactTokens(message.tokens), vscode.ConfigurationTarget.Global);
+          await vscode.workspace.getConfiguration('unify').update('experimental.autoCompactTokens', normalizeCompactTokens(message.tokens), vscode.ConfigurationTarget.Global);
           this.refreshCustomize();
           break;
         case 'saveProcessPriority':
-          await vscode.workspace.getConfiguration('dsh').update('runtime.processPriority', normalizeProcessPriority(message.priority), vscode.ConfigurationTarget.Global);
+          await vscode.workspace.getConfiguration('unify').update('runtime.processPriority', normalizeProcessPriority(message.priority), vscode.ConfigurationTarget.Global);
           this.refreshCustomize();
           break;
         case 'saveAccessibility': await this.saveAccessibility(message.accessibility); break;
         case 'voiceStart': void this.startVoice(); break;
         case 'voiceStop': this.stopVoice(); break;
         case 'saveVoiceCommands':
-          await vscode.workspace.getConfiguration('dsh').update('voice.commands', normalizeVoiceCommands(message.commands), vscode.ConfigurationTarget.Global);
+          await vscode.workspace.getConfiguration('unify').update('voice.commands', normalizeVoiceCommands(message.commands), vscode.ConfigurationTarget.Global);
           this.refreshCustomize();
           break;
         case 'deleteAllSessions': await this.deleteAllSessions(); break;
         case 'syncAction': await this.syncAction(message.action); break;
         case 'setSyncAuto': await this.sync.setAuto(message.enabled === true); break;
+        case 'cancelShutdown': this.shutdown?.cancelShutdown(); break;
+        case 'githubRefresh': await this.refreshGithub(); break;
+        case 'githubSetToken':
+          try {
+            this.setGithub(await setGithubToken(message.token));
+          } catch (error) {
+            this.setGithub(undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        case 'githubSignOut': await clearGithubToken(); this.setGithub(await getGithubAuth()); break;
         case 'toolpackAction':
           if (message.action === 'remove') await this.toolpacks.remove(message.id);
           else if (message.action === 'reload') await this.toolpacks.reload(message.id);
@@ -3968,7 +4337,7 @@ class ExtensionHost implements vscode.Disposable {
         }
         case 'listProviderModels': await this.listProviderModels(message.accountId); break;
         case 'openCliSetting':
-          await vscode.commands.executeCommand('workbench.action.openSettings', 'dsh.runtime.claudePath');
+          await vscode.commands.executeCommand('workbench.action.openSettings', 'unify.runtime.claudePath');
           break;
         case 'viewProviderUsage': {
           const url = PROVIDER_USAGE_URLS.get(message.provider);
@@ -4034,7 +4403,14 @@ class ExtensionHost implements vscode.Disposable {
     const handled = await handleUnifyRequest(
       message as unknown as { type: string; [key: string]: unknown },
       reply => this.sidebar.postMessage(reply as SidebarHostMessage),
-      { workspaceRoot: folder?.uri.fsPath },
+      { workspaceRoot: folder?.uri.fsPath,
+        workspaceRoots: vscode.workspace.workspaceFolders?.map(item => item.uri.fsPath),
+        refreshModelState: () => this.refreshModels(),
+        refreshUsageState: (id?: string) => this.refreshUsage(true, id),
+        refreshToolpacks: () => this.postToolpacks(),
+        installToolpack: async sourcePath => { await this.toolpacks.add(sourcePath); },
+        openExternal: url => vscode.env.openExternal(vscode.Uri.parse(url)),
+        getGithubAuth },
     );
     if (!handled) {
       const type = (message as { type?: unknown }).type;

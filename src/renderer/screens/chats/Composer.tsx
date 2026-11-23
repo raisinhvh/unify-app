@@ -11,21 +11,12 @@
  * @ mentions: the protocol has no file search yet, so "@" is plain text for now (see screens/README.md).
  */
 import { createSignal, For, Show, type JSX } from 'solid-js';
-import { Button, Icon, IconButton, Menu, Select, type MenuEntry } from '../../components';
+import { Button, Icon, IconButton, Menu, type MenuEntry } from '../../components';
+import { ModelPicker } from '../../components/ModelPicker';
 import { Collapse, Presence } from '../../motion';
 import { post } from '../../bridge';
 import type { SidebarImage } from '../../protocol';
 import { rememberSentImages, setEngineError, viewState } from '../../store';
-import {
-  effortOptions,
-  modelOptions,
-  selectedModelLabel,
-  selectedModelValue,
-  selectEffort,
-  selectModel,
-  selectSpeed,
-  speedOptions,
-} from './models';
 import './composer.css';
 
 const maxAttachments = 8;
@@ -271,32 +262,13 @@ export function Composer(props: ComposerProps): JSX.Element {
             active={attachMenuOpen()}
             onClick={() => setAttachMenuOpen(!attachMenuOpen())}
           />
-          <Select
+          <ModelPicker
             class="composer-choice"
-            value={selectedModelValue()}
-            display={selectedModelLabel()}
-            options={modelOptions()}
-            onChange={value => selectModel(value, props.chatId)}
-            title="Choose model"
+            chatId={props.chatId}
+            variant="compact"
+            placement="top-start"
+            title="Model"
           />
-          <Show when={speedOptions().length > 0}>
-            <Select
-              class="composer-choice"
-              value={viewState.selectedSpeed || speedOptions()[0]?.value}
-              options={speedOptions()}
-              onChange={value => selectSpeed(value, props.chatId)}
-              title="Response speed"
-            />
-          </Show>
-          <Show when={effortOptions().length > 0}>
-            <Select
-              class="composer-choice"
-              value={viewState.selectedEffort || ''}
-              options={effortOptions()}
-              onChange={value => selectEffort(value, props.chatId)}
-              title="Reasoning effort"
-            />
-          </Show>
           <span class="composer-spacer" />
           <Presence when={running()}>
             <IconButton

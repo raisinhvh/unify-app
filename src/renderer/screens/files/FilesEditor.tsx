@@ -8,15 +8,34 @@
  *
  * Feature `editor.enabled` off: a plain read-only code view replaces Monaco (same metrics, same tints).
  * Feature `editor.minimap` toggles the minimap live. Ctrl/⌘ S saves through the adapter.
+ *
+ * Organic motion: a tab opened for a file the agent just created types its name in, a deleted file's tab sweeps
+ * its name out before it closes, and the plain view's lines are EditedLines (removed lines sweep and collapse,
+ * added lines wipe in). Monaco gets one minimal edit, so an agent edit only touches the text it changed.
  */
-import { createEffect, createSignal, For, getOwner, Index, on, onCleanup, onMount, runWithOwner, Show, type JSX } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, getOwner, Index, on, onCleanup, onMount, runWithOwner, Show, untrack, type JSX } from 'solid-js';
 import { Icon, IconButton, Menu, type MenuEntry } from '../../components';
 import { pressable, Presence, flipList } from '../../motion';
+import { EditedLines, RetypeText } from '../../motion/organic';
 import { feature, setFeature } from '../../store/features';
 import { currentTheme } from '../../theme';
 import { baseName, openExternally, writeFile, type FileLineChanges } from './adapter';
 import { FileDelta } from './FilesPanel';
-import { activateTab, activePath, closeTab, documents, editFor, listingEdit, loadDocument, setDocuments, setDraft, tabs, type OpenDocument } from './state';
+import {
+  activateTab,
+  activePath,
+  closeTab,
+  createdRecently,
+  deletingTabs,
+  documents,
+  editFor,
+  listingEdit,
+  loadDocument,
+  setDocuments,
+  setDraft,
+  tabs,
+  type OpenDocument,
+} from './state';
 import type { Monaco } from './monaco';
 import type * as MonacoApi from 'monaco-editor';
 import './files.css';
@@ -27,7 +46,7 @@ import './files.css';
 function Tab(props: { path: string; closing: boolean; onClose: () => void; onExited: () => void }): JSX.Element {
   const active = () => activePath() === props.path;
   const dirty = () => documents[props.path]?.draft !== undefined;
-  // organic: a tab the agent opens for a new file should type its name in.
+  const typeIn = untrack(() => createdRecently(props.path));
   return (
     <div class="files-tab-slot" data-flip={props.path}>
       <Presence when={!props.closing} from={0.9} origin="center left" onExited={props.onExited}>
@@ -44,7 +63,15 @@ function Tab(props: { path: string; closing: boolean; onClose: () => void; onExi
           }}
         >
           <Icon name="file" size={14} class="files-tab-icon" />
-          <span class="files-tab-name">{baseName(props.path)}</span>
+          <span class="files-tab-name">
+            <RetypeText
+              value={baseName(props.path)}
+              typeOnMount={typeIn}
+              deleting={deletingTabs().includes(props.path)}
+              onDeleted={props.onClose}
+              data-motion="files-tab-name"
+            />
+          </span>
           <Show when={dirty()}>
             <span class="files-tab-dirty" aria-label="Unsaved" />
           </Show>
@@ -80,6 +107,71 @@ function documentEdit(document: OpenDocument | undefined) {
 
 type PlainLine = { kind: 'line'; number: number; text: string; added: boolean } | { kind: 'removed'; text: string };
 
+type KeyedLine = PlainLine & { key: string };
+
+/** Above this many cells (old × new changed lines) the middle of a change is re-keyed without matching. */
+const lineMatchLimit = 1_000_000;
+
+/**
+ * Keeps line keys stable across content changes, so EditedLines only animates what changed: the shared head and
+ * tail keep their keys and the middle is matched by text (longest common subsequence). A line that turns into a
+ * removed diff row keeps its key too, so it stays in place and turns red instead of leaving and coming back.
+ */
+function createLineKeys(): (lines: PlainLine[]) => KeyedLine[] {
+  let previous: KeyedLine[] = [];
+  let counter = 0;
+  const freshKey = () => {
+    counter += 1;
+    return `line-${counter}`;
+  };
+  return lines => {
+    const keys = new Array<string | undefined>(lines.length);
+    let head = 0;
+    while (head < lines.length && head < previous.length && lines[head].text === previous[head].text) {
+      keys[head] = previous[head].key;
+      head += 1;
+    }
+    let tail = 0;
+    while (
+      tail < lines.length - head &&
+      tail < previous.length - head &&
+      lines[lines.length - 1 - tail].text === previous[previous.length - 1 - tail].text
+    ) {
+      keys[lines.length - 1 - tail] = previous[previous.length - 1 - tail].key;
+      tail += 1;
+    }
+    const oldMiddle = previous.slice(head, previous.length - tail);
+    const newMiddle = lines.slice(head, lines.length - tail);
+    if (oldMiddle.length && newMiddle.length && oldMiddle.length * newMiddle.length <= lineMatchLimit) {
+      const columns = newMiddle.length + 1;
+      const common = new Uint32Array((oldMiddle.length + 1) * columns);
+      for (let oldIndex = oldMiddle.length - 1; oldIndex >= 0; oldIndex -= 1) {
+        for (let newIndex = newMiddle.length - 1; newIndex >= 0; newIndex -= 1) {
+          common[oldIndex * columns + newIndex] =
+            oldMiddle[oldIndex].text === newMiddle[newIndex].text
+              ? common[(oldIndex + 1) * columns + newIndex + 1] + 1
+              : Math.max(common[(oldIndex + 1) * columns + newIndex], common[oldIndex * columns + newIndex + 1]);
+        }
+      }
+      let oldIndex = 0;
+      let newIndex = 0;
+      while (oldIndex < oldMiddle.length && newIndex < newMiddle.length) {
+        if (oldMiddle[oldIndex].text === newMiddle[newIndex].text) {
+          keys[head + newIndex] = oldMiddle[oldIndex].key;
+          oldIndex += 1;
+          newIndex += 1;
+        } else if (common[(oldIndex + 1) * columns + newIndex] >= common[oldIndex * columns + newIndex + 1]) {
+          oldIndex += 1;
+        } else {
+          newIndex += 1;
+        }
+      }
+    }
+    previous = lines.map((line, index) => ({ ...line, key: keys[index] ?? freshKey() }));
+    return previous;
+  };
+}
+
 function plainLines(content: string, changes: FileLineChanges | undefined): PlainLine[] {
   const added = new Set(changes?.added ?? []);
   const removedAfter = new Map<number, string[]>();
@@ -98,10 +190,23 @@ function plainLines(content: string, changes: FileLineChanges | undefined): Plai
 }
 
 function PlainCode(props: { document: OpenDocument }): JSX.Element {
-  const lines = () => plainLines(props.document.draft ?? props.document.content, props.document.changes);
   return (
     <div class="files-plain type-mono" role="textbox" aria-readonly="true" aria-label={props.document.path}>
-      <Index each={lines()}>
+      {/* Keyed by path: another file mounts fresh lines instead of animating one file into the other. */}
+      <Show when={props.document.path} keyed>
+        {path => <PlainLines document={props.document} path={path} />}
+      </Show>
+    </div>
+  );
+}
+
+/** `path` only names which file these lines belong to; PlainCode remounts this when it changes. */
+function PlainLines(props: { document: OpenDocument; path: string }): JSX.Element {
+  const keyLines = createLineKeys();
+  const lines = createMemo(() => keyLines(plainLines(props.document.draft ?? props.document.content, props.document.changes)));
+  return (
+    <>
+      <EditedLines each={lines()} key={line => line.key} class="files-plain-lines" lineClass="files-plain-row">
         {line => (
           <div
             class="files-plain-line"
@@ -117,13 +222,41 @@ function PlainCode(props: { document: OpenDocument }): JSX.Element {
             <span class="files-plain-text">{line().text}</span>
           </div>
         )}
-      </Index>
-    </div>
+      </EditedLines>
+    </>
   );
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Monaco
+
+/** Replaces only the span between the shared head and tail of the old and new text, as one edit. */
+function replaceChangedText(model: MonacoApi.editor.ITextModel, next: string): void {
+  const current = model.getValue();
+  let head = 0;
+  while (head < current.length && head < next.length && current[head] === next[head]) head += 1;
+  let tail = 0;
+  while (
+    tail < current.length - head &&
+    tail < next.length - head &&
+    current[current.length - 1 - tail] === next[next.length - 1 - tail]
+  ) {
+    tail += 1;
+  }
+  const start = model.getPositionAt(head);
+  const end = model.getPositionAt(current.length - tail);
+  model.applyEdits([
+    {
+      range: {
+        startLineNumber: start.lineNumber,
+        startColumn: start.column,
+        endLineNumber: end.lineNumber,
+        endColumn: end.column,
+      },
+      text: next.slice(head, next.length - tail),
+    },
+  ]);
+}
 
 function MonacoCode(props: { path: string; onSave: () => void }): JSX.Element {
   const [ready, setReady] = createSignal(false);
@@ -233,8 +366,9 @@ function MonacoCode(props: { path: string; onSave: () => void }): JSX.Element {
         void document.changes;
         const model = models.get(path);
         if (model && document.draft === undefined && model.getValue() !== document.content) {
-          // organic: an agent edit landing on an open file should sweep removed lines out and wipe added ones in.
-          model.setValue(document.content);
+          // Monaco draws its own lines (EditedLines cannot drive them): one minimal edit keeps scroll and the
+          // untouched lines in place, and the change tints mark what the agent changed.
+          replaceChangedText(model, document.content);
         }
         show(path);
       });

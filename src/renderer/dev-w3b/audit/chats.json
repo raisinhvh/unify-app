@@ -1,0 +1,11 @@
+[
+  { "wait": 3500 },
+  { "mark": "rename chat" },
+  { "eval": "__w3b.renameChat('s-mistral', 'Route Mistral system prompts')" },
+  { "wait": 1400 },
+  { "mark": "start active" },
+  { "eval": "__w3b.startActive()" },
+  { "wait": 1400 },
+  { "mark": "reorder active" },
+  { "eval": "__w3b.reorderActive()" }
+]

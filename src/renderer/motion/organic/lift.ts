@@ -29,7 +29,8 @@ const maxLift = 900;
 
 interface Lifted {
   spring: Spring;
-  ticket: OrganicTicket;
+  /** Held while lifted; cleared once the row is dropped and settling back down. */
+  ticket: OrganicTicket | undefined;
   frame: number;
   started: number;
   peak: number;
@@ -96,7 +97,8 @@ export function liftMoves(container: HTMLElement): void {
     const state = lifted.get(row);
     if (!state) return;
     cancelAnimationFrame(state.frame);
-    state.ticket.release();
+    state.ticket?.release();
+    state.ticket = undefined;
     state.spring.set(0, 'panel');
   };
 
@@ -119,7 +121,12 @@ export function liftMoves(container: HTMLElement): void {
   const lift = (row: HTMLElement) => {
     const existing = lifted.get(row);
     if (existing) {
-      // Moved again mid-flight: stay up and keep watching the new travel.
+      // Moved again mid-flight: stay up and keep watching the new travel. A row already dropped (settling
+      // back down) released its ticket, so it needs a new one or it just travels without lifting.
+      if (!existing.ticket) {
+        existing.ticket = claimOrganicSlot();
+        if (!existing.ticket) return;
+      }
       cancelAnimationFrame(existing.frame);
       existing.started = performance.now();
       existing.peak = 0;
@@ -159,7 +166,7 @@ export function liftMoves(container: HTMLElement): void {
     observer.disconnect();
     for (const [row, state] of lifted) {
       cancelAnimationFrame(state.frame);
-      state.ticket.release();
+      state.ticket?.release();
       state.spring.stop();
       paint(row, 0);
     }

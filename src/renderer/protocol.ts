@@ -6,16 +6,20 @@
  * renderer-side extensions that ARCHITECTURE.md allows:
  *   - an optional `chatId` on outgoing messages, so several chats on screen can each address their own runtime;
  *   - `plan` on account usage (DSH's usage maths reads `usage.plan.monthlyUsd`);
- *   - an optional `project` on sessions, so the Chats tree can group chats by project folder.
+ *   - an optional `project` on sessions, so the Chats tree can group chats by project folder;
+ *   - `contextWindow` on models, and the `githubState` push, until view.ts lists them.
  * Everything here is `import type`, so Vite strips it at build time.
  */
 import type {
   SidebarAccountUsage as EngineAccountUsage,
   SidebarHostMessage as EngineHostMessage,
+  SidebarModel as EngineModel,
   SidebarSession as EngineSession,
   SidebarViewState as EngineViewState,
   SidebarWebviewMessage as EngineWebviewMessage,
 } from '@engine/sidebar/view';
+
+export type { AgentInfo, AgentMessage } from '@engine/unify/agentBus';
 
 export type {
   ApprovalMode,
@@ -30,10 +34,10 @@ export type {
   SidebarImage,
   SidebarJob,
   SidebarMedia,
-  SidebarModel,
   SidebarPage,
   SidebarQuestion,
   SidebarSubagent,
+  SidebarSubagentTool,
   SidebarTimelineItem,
   SidebarToolEvent,
   SidebarUsageMetric,
@@ -61,19 +65,57 @@ export type SidebarSession = EngineSession & { project?: SidebarProject };
  */
 export type SidebarWebviewMessage = EngineWebviewMessage & { chatId?: string; project?: SidebarProject };
 
+/** A model the engine offers; `contextWindow` is its context size in tokens, when the provider reports it. */
+export type SidebarModel = EngineModel & { contextWindow?: number };
+
+/** GitHub sign-in, as in `viewState.github`. */
+export type SidebarGithub = NonNullable<EngineViewState['github']>;
+
+/** Sent whenever GitHub auth changes; carries the same shape as `viewState.github`. */
+export interface GithubStateMessage {
+  type: 'githubState';
+  github: SidebarGithub;
+}
+
 type WithSessionExtensions<Message> = Message extends { type: 'sessionState'; sessions: EngineSession[] }
   ? Omit<Message, 'sessions'> & { sessions: SidebarSession[] }
   : Message extends { type: 'usageState' }
     ? Omit<Message, 'usage'> & { usage: Record<string, SidebarAccountUsage> }
-    : Message;
+    : Message extends { type: 'modelState' }
+      ? Omit<Message, 'models'> & { models: SidebarModel[] }
+      : Message;
 
-export type SidebarHostMessage = WithSessionExtensions<EngineHostMessage> & { chatId?: string };
+export type SidebarHostMessage = (WithSessionExtensions<EngineHostMessage> | GithubStateMessage) & { chatId?: string };
 
-export type SidebarViewState = Omit<EngineViewState, 'sessions' | 'usage'> & {
+export type SidebarViewState = Omit<EngineViewState, 'sessions' | 'usage' | 'models'> & {
   sessions: SidebarSession[];
   usage: Record<string, SidebarAccountUsage>;
+  models: SidebarModel[];
   /** Kept from DSH's webview state: Cursor backends offered by modelState. */
   cursorBackends?: { value: string; name: string }[];
 };
 
 export type RunState = SidebarViewState['runStates'][string];
+
+/**
+ * Toolpack Hub install (src/engine/unify/requests/hub.ts). A pack that ships an install script answers with
+ * `needsScriptConsent` and the script; the UI resends with `allowScript: true` once the user agrees.
+ */
+export interface HubInstallMessage {
+  type: 'hubInstall';
+  id: string;
+  target: 'this' | 'all';
+  allowScript?: boolean;
+  requestId?: string;
+}
+
+export interface HubInstallResultMessage {
+  type: 'hubInstallResult';
+  ok: boolean;
+  id: string;
+  needsScriptConsent?: boolean;
+  scriptName?: string;
+  scriptText?: string;
+  error?: string;
+  requestId?: string;
+}

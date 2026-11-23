@@ -7,10 +7,14 @@
  *   projects    one folder per project, newest first; 5 chats, then "Show N more"
  *
  * Click opens the chat in the focused pane; Ctrl/⌘-click or middle-click opens it beside the others.
+ *
+ * Organic motion (motion.organic.*): a renamed chat backspaces and retypes its title, a chat that moves up in
+ * Active lifts, travels and settles, and the counts roll like an odometer.
  */
 import { createMemo, createSignal, onCleanup, onMount, Show, type JSX } from 'solid-js';
 import { ChatLoader, Icon, IconButton, tooltip, TreeFolder, TreeItem } from '../../components';
 import { AnimatedList, Collapse } from '../../motion';
+import { liftMoves, RetypeText, RollingNumber } from '../../motion/organic';
 import { post } from '../../bridge';
 import { readPersisted, writePersisted } from '../../persist';
 import type { SidebarSession } from '../../protocol';
@@ -19,9 +23,14 @@ import { activeChats, activityDetail, activityStatus, pendingInterrupt } from '.
 import { isChatOnScreen, layout, openChat } from '../../shell/layout';
 import { chatAction, actionLabel } from '../../components/loaders/actions';
 import { chatTime, projectGroups, projectName, shortPath } from './projects';
+import { feature } from '../../store/features';
 import './chats-panel.css';
 
-const visibleLimit = 5;
+/** How many chats each project folder shows before "Show N more" (feature chats.maxPerProject, at least 1). */
+function visibleLimit(): number {
+  const value = feature<number>('chats.maxPerProject');
+  return Number.isFinite(value) && value > 0 ? value : 5;
+}
 
 const [closedFolders, setClosedFolders] = createSignal<string[]>(readPersisted<string[]>('closedFolders', []));
 const [expandedFolders, setExpandedFolders] = createSignal<string[]>([]);
@@ -90,7 +99,7 @@ function ChatRow(props: { session: SidebarSession; trailing: string; trailingWar
     <TreeItem
       ref={element => tooltip(element, () => <ChatTip session={props.session} />, { placement: 'right-start', delay: 600 })}
       leading={<ChatLoader sessionId={props.session.id} size={12} />}
-      label={props.session.name || 'New chat'}
+      label={<RetypeText value={props.session.name || 'New chat'} data-motion="chat-title" />}
       trailing={props.trailing}
       trailingTone={props.trailingWarn ? 'warn' : undefined}
       tone={props.warn ? 'warn' : undefined}
@@ -162,28 +171,41 @@ export function ChatsPanel(): JSX.Element {
         <Show when={active().length > 0}>
           <TreeFolder
             label="Active"
-            trailing={String(active().length)}
+            trailing={<RollingNumber value={active().length} data-motion="chats-active-count" />}
             open={!closedFolders().includes('__active__')}
             onToggle={open => setFolderOpen('__active__', open)}
           >
-            <AnimatedList each={active()} key={item => item.session.id}>
-              {item => (
-                <ChatRow
-                  session={item().session}
-                  trailing={item().session.project ? projectName(item().session.project!.path) : ''}
-                  warn={item().status === 'blocked'}
-                />
-              )}
-            </AnimatedList>
+            {/* Re-ranked chats lift, travel and settle (liftMoves on the AnimatedList's own container). */}
+            <div
+              style={{ display: 'contents' }}
+              ref={element => {
+                onMount(() => {
+                  const container = element.firstElementChild;
+                  if (container instanceof HTMLElement) liftMoves(container);
+                });
+              }}
+            >
+              <AnimatedList each={active()} key={item => item.session.id}>
+                {item => (
+                  <ChatRow
+                    session={item().session}
+                    trailing={item().session.project ? projectName(item().session.project!.path) : ''}
+                    warn={item().status === 'blocked'}
+                  />
+                )}
+              </AnimatedList>
+            </div>
           </TreeFolder>
           <div class="chats-rule" />
         </Show>
         <AnimatedList each={groups()} key={group => group.key}>
           {group => {
             const showAll = () => expandedFolders().includes(group().key) || !!query();
-            const visible = () => (showAll() ? group().sessions : group().sessions.slice(0, visibleLimit));
+            const visible = () => (showAll() ? group().sessions : group().sessions.slice(0, visibleLimit()));
             const hidden = () => group().sessions.length - visible().length;
-            const showToggle = () => hidden() > 0 || (expandedFolders().includes(group().key) && group().sessions.length > visibleLimit);
+            const showToggle = () => hidden() > 0 || (expandedFolders().includes(group().key) && group().sessions.length > visibleLimit());
+            // Memoised so the label is only rebuilt when it switches between "Show N more" and "Show less".
+            const hasHidden = createMemo(() => hidden() > 0);
             return (
               <TreeFolder
                 icon="folder"
@@ -209,7 +231,15 @@ export function ChatsPanel(): JSX.Element {
                   <TreeItem
                     class="chats-more"
                     tone="muted"
-                    label={hidden() > 0 ? `Show ${hidden()} more` : 'Show less'}
+                    label={
+                      hasHidden() ? (
+                        <>
+                          Show <RollingNumber value={hidden()} /> more
+                        </>
+                      ) : (
+                        'Show less'
+                      )
+                    }
                     onClick={() => toggleShowAll(group().key)}
                   />
                 </Collapse>

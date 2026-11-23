@@ -1,9 +1,9 @@
 /**
  * Electron main process for Unify.
  *
- * Boots the VS Code shim, activates the unmodified DSH engine against it, and
+ * Boots the VS Code shim, activates the unmodified agent engine against it, and
  * bridges the engine's sidebar provider to a BrowserWindow over IPC and a
- * loopback asset server (used by the legacy DSH sidebar for its media).
+ * loopback asset server (used by the legacy sidebar for its media).
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, safeStorage, shell, type OpenDialogOptions } from 'electron';
 import { spawn } from 'node:child_process';
@@ -14,8 +14,11 @@ import { homedir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 import { activate, deactivate } from '../engine/extension';
 import { getSidebarHtml, initialSidebarState } from '../engine/sidebar/view';
+import { configureGithubSecretStore } from '../engine/unify/github';
+import { installMediaProtocol, registerMediaSchemes } from './mediaProtocol';
+import { checkForUpdatesNow, startUpdater, stopUpdater } from './updater';
 import {
-  bootWebview, configureNotifications, detectVsCodeUserDir, prepareUnify, receiveRendererMessage, setUiAdapter, shimSetupStatus,
+  bootWebview, configureNotifications, prepareUnify, receiveRendererMessage, setUiAdapter, shimSetupStatus,
   type UiAdapter, type UiRequest,
 } from '../shim/vscode/index';
 import { appendLog } from '../shim/vscode/host';
@@ -31,7 +34,7 @@ interface CliOptions {
   keepOpen: boolean;
 }
 
-const stateRoot = join(homedir(), '.dsh', 'unify');
+const stateRoot = join(homedir(), '.unify');
 const logsPath = join(stateRoot, 'logs');
 const windowStatePath = join(stateRoot, 'window.json');
 const rendererStatePath = join(stateRoot, 'renderer-state.json');
@@ -108,9 +111,7 @@ function resolveProject(): string {
 const projectPath = resolveProject();
 const extensionPath = app.getAppPath();
 const stateFallback = join(stateRoot, 'storage');
-const importedUserDir = detectVsCodeUserDir();
-const importedGlobalStorage = importedUserDir ? join(importedUserDir, 'globalStorage', 'dsh-local.dsh-ide') : undefined;
-const globalStoragePath = importedGlobalStorage && existsSync(importedGlobalStorage) ? importedGlobalStorage : stateFallback;
+const globalStoragePath = stateFallback;
 mkdirSync(globalStoragePath, { recursive: true });
 
 let mainWindow: BrowserWindow | undefined;
@@ -197,7 +198,7 @@ const CONTENT_TYPES: Record<string, string> = {
 };
 
 function allowedRoots(): string[] {
-  const roots = [extensionPath, stateRoot, globalStoragePath, projectPath, join(homedir(), '.dsh')];
+  const roots = [extensionPath, stateRoot, globalStoragePath, projectPath];
   if (process.env.TEMP) roots.push(resolve(process.env.TEMP));
   return roots.map(root => resolve(root).toLowerCase());
 }
@@ -610,8 +611,25 @@ function loadShell(window: BrowserWindow): Promise<void> {
     mainLog(`loading built renderer ${built}`);
     return window.loadFile(built);
   }
-  mainLog(`loading legacy DSH sidebar ${assetOrigin}/legacy`);
+  mainLog(`loading legacy sidebar ${assetOrigin}/legacy`);
   return window.loadURL(`${assetOrigin}/legacy?token=${assetToken}`);
+}
+
+function createApplicationMenu(): void {
+  // macOS needs an application menu for Quit/Hide and an Edit menu so the
+  // standard copy/paste shortcuts work. Windows and Linux keep the frameless
+  // shell's custom title bar and no menu.
+  if (process.platform !== 'darwin') {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+  ]));
 }
 
 function createWindow(): BrowserWindow {
@@ -621,7 +639,11 @@ function createWindow(): BrowserWindow {
     minWidth: 900,
     minHeight: 620,
     show: false,
-    frame: false,
+    // macOS keeps its traffic lights, inset into the custom drag strip; the
+    // other platforms draw their own window buttons in the renderer.
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 } }
+      : { frame: false }),
     backgroundColor: '#0D0B09',
     title: 'Unify',
     icon: join(extensionPath, 'build', 'icon.png'),
@@ -635,7 +657,7 @@ function createWindow(): BrowserWindow {
       spellcheck: false,
     },
   });
-  window.setMenu(null);
+  if (process.platform !== 'darwin') window.setMenu(null);
   window.once('ready-to-show', () => window.show());
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
@@ -729,6 +751,7 @@ function installIpc(): void {
     persistRendererState();
   });
   ipcMain.handle('unify:setup-status', () => shimSetupStatus());
+  ipcMain.handle('unify:check-for-updates', () => checkForUpdatesNow());
   ipcMain.on('unify:ui-response', (_event, payload: { id?: string; result?: unknown }) => {
     if (!payload?.id) return;
     pendingUi.get(payload.id)?.(payload.result);
@@ -755,18 +778,26 @@ function requestUiFromRenderer(request: UiRequest): Promise<unknown> {
 }
 
 async function boot(): Promise<void> {
-  Menu.setApplicationMenu(null);
+  createApplicationMenu();
   app.setAppUserModelId('dev.unify.app');
+
+  try {
+    installMediaProtocol();
+  } catch (error) {
+    mainLog(`media protocol failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 
   await startAssetServer();
 
+  const secrets = new FileSecrets(join(stateRoot, 'secrets.json'));
+  configureGithubSecretStore(secrets);
   const { context, setup } = prepareUnify({
     extensionPath,
     stateRoot,
     globalStoragePath,
     projectPath,
     packageDefaults: readPackageDefaults(),
-    secrets: new FileSecrets(join(stateRoot, 'secrets.json')),
+    secrets,
     logsPath,
   });
   setUiAdapter(nativeUi());
@@ -800,6 +831,7 @@ async function boot(): Promise<void> {
 
   await loadShell(mainWindow);
   if (cli.screenshot) void captureScreenshot(mainWindow);
+  startUpdater({ notify: showNotification });
 }
 
 function readPackageDefaults(): Record<string, unknown> {
@@ -829,6 +861,12 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
+  try {
+    registerMediaSchemes();
+  } catch (error) {
+    mainLog(`media schemes failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   app.on('second-instance', () => {
     if (!mainWindow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -854,6 +892,7 @@ if (!hasSingleInstanceLock) {
   app.on('before-quit', event => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stopUpdater();
     event.preventDefault();
     const saved = deactivate();
     Promise.resolve(saved)
@@ -867,6 +906,7 @@ if (!hasSingleInstanceLock) {
   });
 
   app.on('window-all-closed', () => {
-    app.quit();
+    // macOS apps stay running with no windows, as the platform expects.
+    if (process.platform !== 'darwin') app.quit();
   });
 }

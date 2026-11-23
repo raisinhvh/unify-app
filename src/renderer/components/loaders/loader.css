@@ -1,4 +1,6 @@
 .loader {
+  /* Colour of status glyphs drawn in cells (the done check). */
+  --loader-ink: var(--text3);
   display: block;
   flex: none;
   overflow: visible;
@@ -10,14 +12,7 @@
   flex: none;
 }
 
-.chat-loader > .loader,
-.chat-loader-done {
+.chat-loader > .loader {
   position: absolute;
   inset: 0;
-}
-
-.chat-loader-done {
-  display: grid;
-  place-items: center;
-  color: var(--text3);
 }

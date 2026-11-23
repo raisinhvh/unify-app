@@ -11,7 +11,7 @@ const BRANCH = 'main';
 const TIMEOUT = 120_000;
 
 /**
- * DSH's own clone of the sync repository. DSH writes every file in it, so it never holds local edits:
+ * Unify's own clone of the sync repository. Unify writes every file in it, so it never holds local edits:
  * each read resets it to the remote branch, and each write commits on top of what was read.
  */
 export class SyncClone {
@@ -21,10 +21,10 @@ export class SyncClone {
     const config: [string, string][] = [
       // The token travels in git's environment-only config, never on a command line or in a file.
       ...(auth ? [['http.https://github.com/.extraheader', `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${auth.token}`).toString('base64')}`] as [string, string]] : []),
-      // No other helper may prompt or store anything; files stay byte for byte as DSH wrote them.
+      // No other helper may prompt or store anything; files stay byte for byte as Unify wrote them.
       ['credential.helper', ''], ['core.autocrlf', 'false'], ['core.safecrlf', 'false'], ['core.longpaths', 'true'], ['core.quotepath', 'false'],
     ];
-    const name = auth?.login || 'DSH-IDE';
+    const name = auth?.login || 'Unify';
     return {
       ...process.env,
       GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GIT_ASKPASS: '', SSH_ASKPASS: '',

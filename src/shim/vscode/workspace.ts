@@ -71,6 +71,12 @@ export class TextDocument {
     this.textValue = text;
     this.isDirty = true;
   }
+
+  /** Sets the text from disk without marking the document dirty. */
+  public setDiskText(text: string): void {
+    this.textValue = text;
+    this.isDirty = false;
+  }
 }
 
 interface EditOperation {
@@ -190,7 +196,7 @@ function walkFiles(base: string, maxResults: number, excluded: Set<string>, resu
   }
 }
 
-/** Implements the subset of workspace.findFiles DSH uses (`**` include plus a brace exclude). */
+/** Implements the subset of workspace.findFiles the engine uses (`**` include plus a brace exclude). */
 export async function findFiles(include: string | RelativePattern, exclude?: string | null, maxResults = 2000): Promise<Uri[]> {
   const base = typeof include === 'string' ? workspaceFolderPath() : include.base;
   const pattern = typeof include === 'string' ? include : include.pattern;

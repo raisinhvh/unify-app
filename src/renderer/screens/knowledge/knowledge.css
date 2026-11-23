@@ -1,0 +1,493 @@
+/* Knowledge (Figma 21 · Knowledge 306:2710). Tree rows come from components/tree.css. */
+
+/* ---------------------------------------------------------------- composite */
+
+.knowledge-screen {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface);
+}
+
+.knowledge-screen-panel {
+  position: relative;
+  flex: none;
+  width: var(--panel-width);
+  height: 100%;
+}
+
+.knowledge-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------------------------------------------------------------- segmented (scope, Read | Edit) */
+
+.knowledge-panel .segmented,
+.kd-topbar .segmented {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.knowledge-panel .segmented-indicator,
+.kd-topbar .segmented-indicator {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  background: var(--raised);
+  border-radius: calc(var(--radius-control) - 2px);
+  pointer-events: none;
+}
+
+.knowledge-panel .segmented-option,
+.kd-topbar .segmented-option {
+  position: relative;
+  flex: 1;
+  height: 24px;
+  padding: 0 12px;
+  color: var(--text3);
+  font-size: 12px;
+  white-space: nowrap;
+  transition: color 140ms ease;
+}
+
+.knowledge-panel .segmented-option:hover,
+.kd-topbar .segmented-option:hover {
+  color: var(--text2);
+}
+
+.knowledge-panel .segmented-option.selected,
+.kd-topbar .segmented-option.selected {
+  color: var(--text);
+}
+
+/* ---------------------------------------------------------------- panel */
+
+.knowledge-panel {
+  padding: 0 8px;
+}
+
+.knowledge-panel-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 0 0 8px;
+}
+
+.knowledge-panel-header h2 {
+  margin: 0;
+}
+
+.knowledge-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.knowledge-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin: 0 0 8px;
+  padding: 0 10px;
+  color: var(--text3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  transition: border-color 140ms ease;
+}
+
+.knowledge-search:focus-within {
+  border-color: var(--text3);
+}
+
+.knowledge-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.knowledge-search input::placeholder {
+  color: var(--text3);
+}
+
+.knowledge-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.knowledge-scope {
+  flex: none;
+}
+
+.knowledge-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 0 12px;
+  scrollbar-width: thin;
+}
+
+.knowledge-tree .tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-tree .tree-trailing {
+  font-variant-numeric: tabular-nums;
+}
+
+.knowledge-drop .tree-label {
+  color: var(--text3);
+}
+
+.knowledge-drop.dragging {
+  background: var(--accent-tint);
+}
+
+.knowledge-drop.dragging .tree-label,
+.knowledge-drop.dragging .tree-leading {
+  color: var(--text);
+}
+
+.knowledge-empty {
+  margin: 8px 8px 0;
+  color: var(--text3);
+}
+
+/* ---------------------------------------------------------------- document */
+
+.kd-document {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.kd-topbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 12px 0 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.kd-crumbs {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text3);
+  white-space: nowrap;
+}
+
+.kd-crumb {
+  flex: none;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kd-crumb.current {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--text);
+}
+
+.kd-crumb-sep {
+  flex: none;
+  color: var(--text3);
+}
+
+.kd-mode {
+  flex: none;
+}
+
+.kd-mode .segmented-option {
+  flex: none;
+}
+
+.kd-saved {
+  flex: none;
+  min-width: 52px;
+  margin: 0 4px 0 8px;
+  color: var(--text3);
+  text-align: center;
+}
+
+.kd-saved.error {
+  color: var(--del);
+}
+
+.kd-scroll {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.kd-article {
+  flex: 1;
+  min-width: 0;
+  padding: 40px 56px 56px;
+}
+
+.kd-article > * {
+  max-width: 640px;
+}
+
+.kd-article .confirm-bar {
+  margin: 0 0 20px;
+}
+
+.kd-title {
+  display: block;
+  width: 100%;
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-weight: var(--weight-title);
+  font-size: 20px;
+  line-height: 28px;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+
+.kd-description {
+  display: block;
+  width: 100%;
+  margin: 4px 0 0;
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.kd-input {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.kd-input::placeholder {
+  color: var(--text3);
+}
+
+.kd-input[readonly] {
+  cursor: default;
+}
+
+.kd-rule {
+  height: 0;
+  margin: 24px 0 24px;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.kd-body {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.kd-heading {
+  margin: 28px 0 10px;
+  font-weight: var(--weight-heading);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.kd-body > .kd-heading:first-child {
+  margin-top: 0;
+}
+
+.kd-paragraph {
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+
+.kd-list {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.kd-list li {
+  position: relative;
+  padding-left: 18px;
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+
+.kd-list li::before {
+  content: '–';
+  position: absolute;
+  left: 0;
+  color: var(--text3);
+}
+
+.kd-code {
+  color: var(--text2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.kd-pre {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  color: var(--text2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-menu);
+}
+
+.kd-muted {
+  color: var(--text3);
+}
+
+.kd-error {
+  color: var(--del);
+}
+
+.kd-editor {
+  display: block;
+  width: 100%;
+  min-height: 420px;
+  padding: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 20px;
+  background: transparent;
+  border: 0;
+  outline: none;
+  resize: none;
+  field-sizing: content;
+}
+
+/* ---------------------------------------------------------------- details */
+
+.kd-details {
+  position: sticky;
+  top: 0;
+  flex: none;
+  align-self: stretch;
+  width: 280px;
+  min-height: 100%;
+  padding: 36px 24px 24px;
+  border-left: 1px solid var(--border);
+}
+
+.kd-details-title {
+  margin: 0 0 16px;
+  color: var(--text3);
+  font-weight: var(--weight-label);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.kd-detail {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.kd-detail-label {
+  flex: none;
+  width: 80px;
+  color: var(--text3);
+}
+
+.kd-detail-value {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.kd-pair {
+  display: inline-flex;
+  flex-wrap: wrap;
+  column-gap: 10px;
+}
+
+.kd-audience {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 100%;
+  margin: 0 -6px;
+  padding: 0 6px;
+  color: var(--text);
+  text-align: left;
+  border-radius: var(--radius-row);
+  transition: background-color 120ms ease;
+}
+
+.kd-audience:hover,
+.kd-audience.open {
+  background: var(--hover);
+}
+
+.kd-audience-line {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kd-change {
+  display: flex;
+  gap: 4px;
+  margin: 2px 0 0 -6px;
+}
+
+.kd-change .kd-change-action {
+  height: 22px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.kd-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 420px;
+  margin: 96px auto 0;
+  color: var(--text3);
+}
+
+.kd-empty h1 {
+  margin: 0;
+  color: var(--text);
+}

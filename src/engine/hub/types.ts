@@ -4,6 +4,8 @@
  * These mirror `src/renderer/screens/hub/hubAdapter.ts`. Pack ids are Hub ids; installs map them to a valid
  * toolpack id (lowercase letters, digits and underscores) before writing a pack folder.
  */
+import type { GithubAuth } from '../unify/github';
+
 export interface HubPack {
   id: string;
   name: string;
@@ -52,12 +54,27 @@ export interface HubPackDetail {
 
 export type HubInstallTarget = 'this' | 'all';
 
+/** UI → engine `hubInstall`: retry with `allowScript` only after the user approved the shown script. */
+export interface HubInstallRequest {
+  id: string;
+  target?: HubInstallTarget;
+  /** Set once the user was shown `scriptName`/`scriptText` and agreed to run the pack's install script. */
+  allowScript?: boolean;
+}
+
 export interface HubInstallProgress {
   id: string;
   /** 0-100. */
   percent: number;
   state: 'downloading' | 'installing' | 'done' | 'error';
   error?: string;
+}
+
+/** What a publish attempt answered; the screen shows `message` next to Upload. */
+export interface HubPublishResult {
+  ok: boolean;
+  message: string;
+  url?: string;
 }
 
 /** What the request handlers need from a registry; each implementation owns its own source of packs. */
@@ -67,4 +84,6 @@ export interface HubRegistry {
   detail(id: string): Promise<HubPackDetail | undefined>;
   /** Writes the pack files (and optional install script) into `destination`. */
   download(id: string, destination: string): Promise<void>;
+  /** Checks the signed-in login against the approved publishers and answers the screen. */
+  publish(auth: GithubAuth | undefined): Promise<HubPublishResult>;
 }

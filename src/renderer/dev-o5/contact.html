@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- DEV ONLY: lays captured PNGs out as a contact sheet. /dev-o5/contact.html?dir=__screens__/tmp&files=a,b&cols=2&width=480 -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Contact sheet</title>
+    <style>
+      body { margin: 0; padding: 16px; background: #222; color: #ddd; font: 12px monospace; }
+      .sheet { display: grid; gap: 16px; }
+      figure { margin: 0; }
+      figcaption { padding: 4px 0; }
+      img { display: block; width: 100%; height: auto; }
+    </style>
+  </head>
+  <body>
+    <div class="sheet" id="sheet"></div>
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+      const dir = params.get('dir');
+      const files = (params.get('files') || '').split(',').filter(Boolean);
+      const cols = Number(params.get('cols') || 2);
+      const width = Number(params.get('width') || 480);
+      const sheet = document.getElementById('sheet');
+      sheet.style.gridTemplateColumns = `repeat(${cols}, ${width}px)`;
+      for (const file of files) {
+        const figure = document.createElement('figure');
+        const caption = document.createElement('figcaption');
+        caption.textContent = file;
+        const image = document.createElement('img');
+        image.src = `./${dir}/${file}.png`;
+        figure.append(caption, image);
+        sheet.append(figure);
+      }
+    </script>
+  </body>
+</html>

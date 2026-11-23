@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { build } from 'esbuild';
 import { isLimitNotice, isUsageLimit, isUsageLimitText, UsageLimitError } from '../dist/runtime/limits.mjs';
 
 test('recognizes Claude and ChatGPT (Codex) usage limit errors', () => {
@@ -20,3 +21,50 @@ test('treats a reply as a limit notice only when it is nothing but the notice', 
   assert.ok(!isLimitNotice('I fixed the rate limit bug in the uploader.'));
   assert.ok(!isLimitNotice(`5-hour limit reached ∙ resets 3pm ${'x'.repeat(300)}`));
 });
+
+const queueBundle = await build({
+  entryPoints: ['src/engine/delegate/limits.ts'],
+  bundle: true,
+  write: false,
+  platform: 'node',
+  format: 'esm',
+});
+const { DelegateTaskQueue } = await import(
+  `data:text/javascript;base64,${Buffer.from(queueBundle.outputFiles[0].text).toString('base64')}`
+);
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+test('raising the concurrency limit starts every waiting task', async () => {
+  let limit = 1;
+  const queue = new DelegateTaskQueue(() => limit);
+  const started = [];
+  const gates = [];
+  const tasks = [];
+  for (let index = 0; index < 3; index += 1) {
+    const gate = deferred();
+    gates.push(gate);
+    tasks.push(queue.run(async () => {
+      started.push(index);
+      await gate.promise;
+    }));
+  }
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(started, [0]);
+  assert.equal(queue.queued, 2);
+
+  limit = 3;
+  gates[0].resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(started, [0, 1, 2]);
+  assert.equal(queue.queued, 0);
+
+  gates[1].resolve();
+  gates[2].resolve();
+  await Promise.all(tasks);
+});
+

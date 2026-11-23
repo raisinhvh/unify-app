@@ -1,0 +1,11 @@
+{
+  "extends": "chatpane",
+  "messages": [
+    {
+      "type": "diffState",
+      "diffs": [
+        { "id": "d1", "path": "src/engine/extension.ts", "summary": "Register the pane commands", "additions": 12, "deletions": 3 }
+      ]
+    }
+  ]
+}

@@ -29,7 +29,9 @@
   color: var(--text);
   text-align: left;
   white-space: nowrap;
-  transition: background-color 100ms ease;
+  /* Hover colour at alpha 0, so the highlight fades in its own hue (no dark flash from transparent black). */
+  background-color: rgb(from var(--hover) r g b / 0);
+  transition: background-color 100ms ease-out, color 100ms ease-out;
 }
 
 .menu-item.highlighted {
@@ -67,4 +69,10 @@
 .menu-hint {
   color: var(--text3);
   margin-left: 16px;
+}
+
+/* Press: darkens instantly on pointer-down; the menu closes on click, so there is no release to ease. */
+.menu-item:active:not(:disabled) {
+  transition-duration: 0ms;
+  background-color: color-mix(in srgb, var(--hover), var(--text) 7%);
 }

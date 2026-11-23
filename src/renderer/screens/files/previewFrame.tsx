@@ -9,8 +9,9 @@
  */
 import type { JSX } from 'solid-js';
 import { render } from 'solid-js/web';
-import { Rail, TooltipHost } from '../../components';
+import { TooltipHost } from '../../components';
 import { railRoutes } from '../../router';
+import { NavRail } from '../../shell/NavRail';
 import { connectStore } from '../../store';
 import { installTheme, setTheme, type ThemeId } from '../../theme';
 import '../../shell/shell.css';
@@ -33,7 +34,13 @@ export function mountPreview(root: HTMLElement, screens: PreviewScreens): void {
     () => (
       <>
         <div class="preview-frame">
-          <Rail items={railRoutes} active={screens.route} onSelect={() => undefined} onSettings={() => undefined} />
+          <NavRail
+            items={railRoutes.map(info => ({ ...info, visible: () => true }))}
+            active={screens.route}
+            onSelect={() => undefined}
+            onSettings={() => undefined}
+            showMeter
+          />
           {composite ? (
             <main class="preview-content">
               <section class="content-screen preview-composite">{screens.composite()}</section>

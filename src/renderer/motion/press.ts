@@ -17,9 +17,10 @@ export function pressable(element: HTMLElement, depth = 0.94): void {
   const press = (event: PointerEvent) => {
     if (event.button !== 0 || prefersReducedMotion()) return;
     if ((element as HTMLButtonElement).disabled) return;
-    spring.set(depth);
+    // Pass the token again so the Button preset re-resolves (motion.bounce may have changed).
+    spring.set(depth, 'button');
   };
-  const release = () => spring.set(1);
+  const release = () => spring.set(1, 'button');
   element.addEventListener('pointerdown', press);
   element.addEventListener('pointerup', release);
   element.addEventListener('pointerleave', release);

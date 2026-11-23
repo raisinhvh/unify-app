@@ -14,5 +14,6 @@ export function createHubRegistry(kind: HubRegistryKind = 'local'): HubRegistry 
 
 export * from './types';
 export { installHubPack } from './install';
-export { GithubHubRegistry } from './githubRegistry';
+export { GithubHubRegistry, HUB_PUBLISHERS_URL } from './githubRegistry';
 export { LocalHubRegistry } from './localRegistry';
+export { PUBLISH_NOT_APPROVED, PUBLISH_NOT_WIRED, PUBLISH_SIGNED_OUT } from './publishing';

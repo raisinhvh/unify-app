@@ -6,15 +6,15 @@
  * adapter applies them optimistically until the next accountsState.
  */
 import { createEffect, createSignal, For, on, Show, type JSX } from 'solid-js';
-import { Button, Icon, IconButton, Menu, Select, Toggle, type MenuEntry } from '../../components';
+import { Button, Icon, IconButton, Menu, ModelPicker, ProviderGlyph, Toggle, type MenuEntry } from '../../components';
 import { createSpring, pressable } from '../../motion';
 import { clampPercent, resetColor, resetIn } from '../../store/usage';
 import type { SidebarUsageMetric } from '../../protocol';
-import type { AccountView, ModelView } from './adapter';
+import type { AccountView } from './adapter';
 import {
   accountModels,
   accountStateLabel,
-  accountTitle,
+  accountName,
   brandedPlan,
   findAccount,
   formatContext,
@@ -28,7 +28,6 @@ import {
   signOut,
   signedInWith,
 } from './adapter';
-import { ProviderGlyph } from './glyphs';
 import { select, selection } from './selection';
 
 function Crumb(props: { account: AccountView }): JSX.Element {
@@ -39,7 +38,7 @@ function Crumb(props: { account: AccountView }): JSX.Element {
       </button>
       <span class="pv-crumb-sep">/</span>
       <button type="button" class="pv-crumb-link" onClick={() => select({ kind: 'usage' })}>
-        {accountTitle(props.account).split(' · ')[0]}
+        {accountName(props.account).provider}
       </button>
       <span class="pv-crumb-sep">/</span>
       <span class="pv-crumb-current">{props.account.label}</span>
@@ -80,7 +79,6 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
   const models = () => accountModels(account());
   const enabledCount = () => models().filter(model => model.enabled).length;
   const defaultModel = () => account().defaultModel || models().find(model => model.enabled)?.id;
-  const defaultModelName = () => models().find(model => model.id === defaultModel())?.name ?? 'None';
 
   createEffect(
     on(
@@ -128,13 +126,15 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
       <header class="pv-account-header">
         <ProviderGlyph provider={account().provider} size={24} class="pv-account-glyph" />
         <div class="pv-account-titles">
-          <h1 class="pv-title pv-account-title">{accountTitle(account())}</h1>
+          <h1 class="pv-title pv-account-title">
+            {accountName(account()).provider}
+            <span class="pv-title-muted">{accountName(account()).label}</span>
+          </h1>
           <p class="pv-account-status">
             <Show when={account().status === 'connected'} fallback={<span class="pv-account-caption warn">{accountStateLabel(account())}</span>}>
               <Icon name="check" size={12} class="pv-account-check" />
               <span class="pv-account-connected">Connected</span>
             </Show>
-            <span class="pv-sep">·</span>
             <span class="pv-account-models">{enabledCount()} of {models().length} models on</span>
           </p>
         </div>
@@ -226,14 +226,15 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
             <div class="pv-setting-row">
               <span class="pv-setting-label">Default model</span>
               <span class="pv-setting-value">
-                <Select
+                <ModelPicker
                   class="pv-default-model"
-                  value={defaultModel()}
-                  placeholder="None"
-                  display={defaultModelName()}
-                  options={models().map((model: ModelView) => ({ value: model.id, label: model.name }))}
+                  variant="regular"
+                  value={defaultModel() ?? ''}
+                  onChange={id => setAccountDefaultModel(account().id, id)}
+                  smartAuto={false}
+                  noneLabel="None"
+                  modelIds={models().map(model => model.id)}
                   disabled={!models().length}
-                  onChange={modelId => setAccountDefaultModel(account().id, modelId)}
                   placement="bottom-start"
                 />
               </span>

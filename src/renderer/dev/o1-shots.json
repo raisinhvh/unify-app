@@ -1,0 +1,17 @@
+{
+  "size": "1000x900",
+  "themes": ["walnutDark", "walnutLight"],
+  "shots": [
+    { "name": "media-row", "page": "chat-media?timed=end" },
+    { "name": "media-expanded", "page": "chat-media?timed=end", "steps": [{ "click": ".tool-media .media-print", "wait": 700 }] },
+    { "name": "media-feed", "page": "chat-media?timed=end", "steps": [{ "click": ".subagent-row", "wait": 700 }] },
+    { "name": "media-strip-expanded", "page": "chat-media?timed=end", "steps": [{ "click": ".subagent-strip .media-print", "wait": 700 }] },
+    { "name": "media-viewer", "page": "chat-media?timed=end", "steps": [{ "click": ".subagent-strip .media-print", "wait": 700 }, { "click": ".subagent-strip .media-expand-layer", "wait": 900 }] },
+    { "name": "media-viewer-more", "page": "chat-media?timed=end", "steps": [{ "click": ".media-print-more", "wait": 900 }] },
+    { "name": "explored-running", "page": "chat-agents?timed=0" },
+    { "name": "explored-complete", "page": "chat-agents?timed=end" },
+    { "name": "internal", "page": "chat-agents?timed=end", "steps": [{ "click": ".tool-batch-head", "wait": 500 }, { "click": ".tool-row-button", "wait": 600 }] },
+    { "name": "agent-message-clamped", "page": "chat-agents?timed=end", "size": "640x900", "clip": ".agent-message", "pad": 12 },
+    { "name": "agent-message-open", "page": "chat-agents?timed=end", "size": "640x900", "steps": [{ "click": ".agent-message", "wait": 800 }], "clip": ".agent-message", "pad": 12 }
+  ]
+}

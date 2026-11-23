@@ -368,7 +368,13 @@
   padding-right: 24px;
 }
 
-.files-plain-line.added {
+/* Lines are EditedLines rows: the list is as wide as the longest line, so tints reach the scrolled edge. */
+.files-plain-lines {
+  min-width: max-content;
+}
+
+/* The tint sits on the row (not the line, which the add wipe clips), so it spans the full width at once. */
+.files-plain-row:has(> .organic-line-text > .files-plain-line.added) {
   background: var(--add-tint);
 }
 
@@ -376,7 +382,7 @@
   color: var(--add);
 }
 
-.files-plain-line.removed {
+.files-plain-row:has(> .organic-line-text > .files-plain-line.removed) {
   background: var(--del-tint);
 }
 

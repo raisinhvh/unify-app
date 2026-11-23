@@ -13,7 +13,7 @@ const minute = 60_000;
 const at = (minutes: number): number => Date.now() + minutes * minute;
 const seen = (minutes: number): number => Date.now() - minutes * minute;
 
-type Model = SidebarModel & { contextWindow?: number };
+type Model = SidebarModel;
 
 const model = (
   id: string,
@@ -73,7 +73,7 @@ function messages(state: string): SidebarHostMessage[] {
           metrics: [
             { label: '5-hour', value: '34%', usedPercent: 34, resetsAt: at(185) },
             { label: 'Weekly', value: '21%', usedPercent: 21, resetsAt: at(2880) },
-            { label: 'Weekly · Opus', value: '12%', usedPercent: 12, resetsAt: at(10080) },
+            { label: 'Weekly limit for Opus', value: '12%', usedPercent: 12, resetsAt: at(10080) },
           ],
         },
         'anthropic-personal': {
@@ -127,9 +127,10 @@ async function boot(): Promise<void> {
   const { installMockBridge } = await import('../../dev/mockBridge');
   await installMockBridge();
 
-  const [{ render }, { Rail, TooltipHost }, router, store, theme, screens, dialog, selection] = await Promise.all([
+  const [{ render }, { TooltipHost }, { NavRail }, router, store, theme, screens, dialog, selection] = await Promise.all([
     import('solid-js/web'),
     import('../../components'),
+    import('../../shell/NavRail'),
     import('../../router'),
     import('../../store'),
     import('../../theme'),
@@ -152,7 +153,13 @@ async function boot(): Promise<void> {
     () => (
       <>
         <div class="pv-preview-frame">
-          <Rail items={router.railRoutes} active="providers" onSelect={() => undefined} onSettings={() => undefined} />
+          <NavRail
+            items={router.railRoutes.map(info => ({ ...info, visible: () => true }))}
+            active="providers"
+            onSelect={() => undefined}
+            onSettings={() => undefined}
+            showMeter
+          />
           <div class="pv-preview-slot">
             <screens.ProvidersPanel />
           </div>

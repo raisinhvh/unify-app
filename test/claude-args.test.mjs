@@ -1,8 +1,15 @@
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { build } from 'esbuild';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const originalUnifyHome = process.env.UNIFY_HOME;
+const isolatedUnifyHome = await mkdtemp(join(tmpdir(), 'unify-claude-args-'));
+process.env.UNIFY_HOME = isolatedUnifyHome;
 
 // Checks the Claude Code command line and usage reporting without starting the CLI.
 const launches = [];
@@ -17,7 +24,8 @@ globalThis.__dshClaudeArgsTestSpawn = (command, args, options) => {
 };
 
 const bundled = await build({
-  entryPoints: ['src/engine/runtime/oauthCli.ts'], bundle: true, write: false, format: 'esm', platform: 'node',
+  stdin: { contents: "export * from './runtime/oauthCli.ts'; export { resetUnifySettingsCache } from './unify/settings.ts';", resolveDir: 'src/engine', loader: 'ts' },
+  bundle: true, write: false, format: 'esm', platform: 'node',
   plugins: [{ name: 'fake-cli', setup(builder) {
     builder.onResolve({ filter: /^node:child_process$/ }, () => ({ path: 'process', namespace: 'fake' }));
     builder.onResolve({ filter: /accounts\/oauthCli$/ }, () => ({ path: 'accounts', namespace: 'fake' }));
@@ -26,7 +34,14 @@ const bundled = await build({
       : 'export const cliCommand = provider => provider; export const cliEnv = () => ({ HOME: "home" });' }));
   } }],
 });
-const { ClaudeCliRuntime, LEAN_SYSTEM, OAuthCliRuntime, claudeArgs, parseUsage } = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
+const { ClaudeCliRuntime, LEAN_SYSTEM, OAuthCliRuntime, claudeArgs, parseUsage, resetUnifySettingsCache } = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
+resetUnifySettingsCache();
+after(async () => {
+  if (originalUnifyHome === undefined) delete process.env.UNIFY_HOME;
+  else process.env.UNIFY_HOME = originalUnifyHome;
+  resetUnifySettingsCache();
+  await rm(isolatedUnifyHome, { recursive: true, force: true });
+});
 const delegate = { command: 'node', args: ['delegate-server.js'], env: { DSH_DELEGATE_OWNER: 'owner' } };
 const turn = (extras = {}) => ({ account: { provider: 'claude-cli' }, cwd: process.cwd(), backend: 'configured-model', prompt: 'Say hi', onText() {}, onTool() {}, ...extras });
 const send = (child, event) => child.stdout.write(JSON.stringify(event) + '\n');
@@ -36,7 +51,7 @@ test('a normal Claude turn keeps the arguments it had before the refactor', () =
   assert.deepEqual(args, [
     '--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
     '--permission-prompt-tool', 'stdio', '--disallowedTools', 'Agent,Task', '--append-system-prompt', 'Rules',
-    '--mcp-config', JSON.stringify({ mcpServers: { 'dsh-delegate': delegate } }), '--allowedTools', 'mcp__dsh-delegate',
+    '--mcp-config', JSON.stringify({ mcpServers: { unify: delegate } }), '--allowedTools', 'mcp__unify',
     '--include-partial-messages', '--permission-mode', 'default', '--effort', 'high', '--model', 'configured-model', '--resume', 'session-1',
   ]);
   assert.deepEqual(claudeArgs(turn({ speed: 'Fast', backend: 'default' })).slice(0, 3), ['--print', '--settings', '{"fastMode":true}']);

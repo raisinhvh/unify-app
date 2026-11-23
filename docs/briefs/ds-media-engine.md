@@ -24,7 +24,7 @@ Repo: the Unify app, reached from this working copy as `unify/` (repo root) and 
 ## Rules
 - Preserve DSH's agentic behaviour everywhere else. Don't touch `src/renderer/`.
 - Style: 2-space indent like the surrounding engine code, descriptive names, no compressed one-liners, no invented APIs.
-- Don't write to the user's real `~/.dsh` in tests (use a temp home).
+- Don't write to the user's real `~/.unify` in tests (use a temp home).
 
 ## Verify
 - `npm test` in `unify/` passes (report counts), `npm run build` passes, tsc clean for your files.

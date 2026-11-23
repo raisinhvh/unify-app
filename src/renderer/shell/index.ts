@@ -4,9 +4,11 @@
  *   Shell        the whole window; mount once from App
  *   PaneGrid     tiled chats with splits and drag-to-arrange (Figma 11, 11b)
  *   layout.ts    the persisted pane layout and the functions that change it (openChat, closeChat, ...)
+ *   ShutdownArmRow  the "Shut down when done" switch for the usage popover
  */
 export { Shell } from './Shell';
 export { PaneGrid, type PaneContext, type PaneGridProps } from './PaneGrid';
+export { ShutdownArmRow } from './ShutdownArmRow';
 export {
   closeChat,
   dropChat,

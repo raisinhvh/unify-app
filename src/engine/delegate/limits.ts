@@ -38,7 +38,12 @@ export class DelegateTaskQueue {
 
     private release(): void {
         this.active = Math.max(0, this.active - 1);
-        if (this.active < this.currentLimit()) this.waiting.shift()?.();
+        // A raised limit can free several slots at once, so start every task that now fits.
+        while (this.active < this.currentLimit()) {
+            const next = this.waiting.shift();
+            if (!next) break;
+            next();
+        }
     }
 
     private currentLimit(): number {

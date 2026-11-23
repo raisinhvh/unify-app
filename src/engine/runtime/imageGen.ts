@@ -29,7 +29,7 @@ export interface GeneratedImage { bytes: Buffer; extension: string }
 
 export const GENERATE_IMAGE_TOOL: DelegateToolInfo = {
   name: GENERATE_IMAGE,
-  description: `Generate a PNG with GPT Image (the user's ChatGPT account) from a prompt, or edit, combine or restyle input images. It is saved under .dsh/images, its path returned, and shown in the chat (no ${SEND_MEDIA} needed). Can take a minute.`,
+  description: `Generate a PNG with GPT Image (the user's ChatGPT account) from a prompt, or edit, combine or restyle input images. It is saved under .unify/images, its path returned, and shown in the chat (no ${SEND_MEDIA} needed). Can take a minute.`,
   inputSchema: {
     type: 'object',
     properties: {
@@ -45,7 +45,7 @@ export const GENERATE_IMAGE_TOOL: DelegateToolInfo = {
   },
 };
 
-export const IMAGE_INSTRUCTIONS = `DSH images: ${GENERATE_IMAGE} creates images, or edits ones passed as input images.`;
+export const IMAGE_INSTRUCTIONS = `Unify images: ${GENERATE_IMAGE} creates images, or edits ones passed as input images.`;
 
 /** Validated generation options, or an error message for the agent. */
 export function parseImageRequest(args: Record<string, unknown>): ImageRequest | string {

@@ -183,7 +183,7 @@ export function webviewViewTypes(): string[] {
   return [...registrations.keys()];
 }
 
-export function hasWebviewProvider(viewType = 'dsh.sidebar'): boolean {
+export function hasWebviewProvider(viewType = 'unify.sidebar'): boolean {
   return registrations.has(viewType);
 }
 
@@ -255,7 +255,7 @@ export class FakeWebviewView implements WebviewViewLike {
 }
 
 /** Resolves the registered sidebar provider exactly as VS Code would. */
-export async function resolveWebviewView(viewType = 'dsh.sidebar'): Promise<{ view: FakeWebviewView; html: string } | undefined> {
+export async function resolveWebviewView(viewType = 'unify.sidebar'): Promise<{ view: FakeWebviewView; html: string } | undefined> {
   const registration = registrations.get(viewType);
   if (!registration) return undefined;
   if (resolvedView instanceof FakeWebviewView && resolvedView.viewType === viewType) {

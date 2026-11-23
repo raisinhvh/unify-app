@@ -56,9 +56,12 @@ const trace: LoaderFrame = seconds => {
     pieces.push([start, end]);
     start = end;
   }
-  pieces.slice(-2).forEach(([from, to], index) => {
+  pieces.slice(-2).forEach(([from, to]) => {
     const wrapped = ((from % perimeter) + perimeter) % perimeter;
     const side = Math.floor(wrapped / size);
+    // Keyed by side parity (the two pieces always lie on neighbouring sides), so a piece keeps its key while
+    // it shrinks into a corner or grows out of one; keyed by index, the keys would swap at every corner.
+    const index = side % 2;
     const along = wrapped - side * size;
     const extent = to - from;
     const thickness = 1.5;
@@ -268,6 +271,37 @@ export const loaders: Record<LoaderId, LoaderFrame> = {
   shelve,
   develop,
 };
+
+/** A round-capped stroke from (x1, y1) to (x2, y2), drawn as one rotated cell. */
+function strokeCell(key: string, x1: number, y1: number, x2: number, y2: number, weight: number, extra: Partial<LoaderCell>): LoaderCell {
+  const length = Math.hypot(x2 - x1, y2 - y1) + weight;
+  const centreX = (x1 + x2) / 2;
+  const centreY = (y1 + y2) / 2;
+  const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+  return cell(key, centreX - length / 2, centreY - weight / 2, length, weight, 0.5, { radius: weight / 2, angle, ...extra });
+}
+
+/**
+ * Status glyphs drawn in the loader cell language, so a loader morphs into them like into another loader.
+ *   done   the check after a finished turn (the Icon "check" path, as two strokes in --loader-ink)
+ */
+export type LoaderGlyph = 'done';
+
+const done: LoaderFrame = () => [
+  strokeCell('c0', 6, 11.333, 13.333, 4, 1.333, { ink: 1 }),
+  strokeCell('c1', 2.667, 8, 6, 11.333, 1.333, { ink: 1 }),
+];
+
+export const glyphs: Record<LoaderGlyph, LoaderFrame> = {
+  done,
+};
+
+/** Anything the <Loader> can draw: an action loader or a status glyph. */
+export type LoaderShape = LoaderId | LoaderGlyph;
+
+export function frameFor(shape: LoaderShape): LoaderFrame {
+  return shape in glyphs ? glyphs[shape as LoaderGlyph] : loaders[shape as LoaderId];
+}
 
 /** Display order and names (Figma). */
 export const loaderInfo: { id: LoaderId; name: string; action: string }[] = [

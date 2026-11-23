@@ -101,9 +101,9 @@ export async function installWhisper(root: string, onProgress: (fraction: number
       await rm(staging, { recursive: true, force: true });
       const expand = await run(
         'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:DSH_WHISPER_ZIP -DestinationPath $env:DSH_WHISPER_DEST -Force"],
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:UNIFY_WHISPER_ZIP -DestinationPath $env:UNIFY_WHISPER_DEST -Force"],
         120_000,
-        { ...process.env, DSH_WHISPER_ZIP: zip, DSH_WHISPER_DEST: staging },
+        { ...process.env, UNIFY_WHISPER_ZIP: zip, UNIFY_WHISPER_DEST: staging },
       );
       if (expand.code !== 0) throw new Error(`Could not unpack whisper.cpp: ${expand.stderr.slice(-1000)}`);
       if (!existsSync(join(staging, 'Release', 'whisper-cli.exe'))) throw new Error('The whisper.cpp download did not contain whisper-cli.exe.');

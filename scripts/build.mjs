@@ -31,8 +31,9 @@ const targets = [
     entryPoints: [join(root, 'src', 'main', 'index.ts')],
     outfile: join(dist, 'main.js'),
     // esbuild is loaded at runtime for toolpack transforms; the DSH CLI (and
-    // its plugin tree) is spawned as a separate Node process.
-    external: ['electron', 'esbuild', '@deepseek-ai/dsh'],
+    // its plugin tree) is spawned as a separate Node process. electron-updater
+    // is bundled with the app by electron-builder and required at runtime.
+    external: ['electron', 'esbuild', '@deepseek-ai/dsh', 'electron-updater'],
   },
   {
     name: 'preload',

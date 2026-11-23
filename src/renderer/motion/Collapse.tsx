@@ -3,6 +3,8 @@
  * fades. Whatever sits below moves with it, so the layout follows the size change instead of jumping.
  * Once fully open the height is released to `auto`, so content that grows later (streaming text) just flows.
  * Closed content is unmounted after the collapse finishes (pass `keepMounted` to keep it).
+ * While the height moves, the bottom edge feathers out instead of hard-clipping the content.
+ * The height is measured from the content's offsetHeight: space children with padding, not margin.
  */
 import { createEffect, createSignal, on, onCleanup, onMount, Show, type JSX } from 'solid-js';
 import { prefersReducedMotion } from './reducedMotion';
@@ -20,6 +22,9 @@ export interface CollapseProps {
   /** Marks the wrapper as a flipList child (AnimatedList rows). */
   'data-flip'?: string;
 }
+
+/** Bottom feather while the height springs; removed once it settles. */
+const movingMask = 'linear-gradient(to bottom, #000 calc(100% - 14px), transparent)';
 
 export function Collapse(props: CollapseProps): JSX.Element {
   let outer!: HTMLDivElement;
@@ -41,8 +46,10 @@ export function Collapse(props: CollapseProps): JSX.Element {
   height.onChange(value => {
     outer.style.height = `${Math.max(0, value)}px`;
     outer.style.overflow = 'hidden';
+    outer.style.maskImage = height.moving ? movingMask : '';
   });
   height.onRest(value => {
+    outer.style.maskImage = '';
     if (props.open) release();
     else if (value === 0) {
       if (!props.keepMounted) setMounted(false);

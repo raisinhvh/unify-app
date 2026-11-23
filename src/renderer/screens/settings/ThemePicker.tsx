@@ -13,13 +13,13 @@ import { createSpring, pressable } from '../../motion';
 import { currentTheme, setTheme, themeNames, themeOrder, themes, type ThemeId } from '../../theme';
 
 export const themeKinds: Record<ThemeId, string> = {
-  walnutDark: 'Dark · default',
+  walnutDark: 'Dark, default',
   walnutLight: 'Light',
   graphite: 'Dark',
   paper: 'Light',
   slate: 'Dark',
   moss: 'Dark',
-  ink: 'Dark · true black for OLED',
+  ink: 'Dark, true black for OLED',
 };
 
 /** A tiny window in the theme's colours: a side panel, two lines of text and the accent. Drawn at 48×32. */

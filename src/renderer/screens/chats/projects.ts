@@ -38,13 +38,13 @@ export const projectGroups = createRoot(() => createMemo<ProjectGroup[]>(() => {
   return [...groups.values()].sort((first, second) => second.updatedAt - first.updatedAt);
 }));
 
-/** The last two path segments, as Figma shows them ("Programs/DSH"). */
+/** The last two path segments, as Figma shows them ("Programs/Unify"). */
 export function shortPath(path: string): string {
   const parts = path.split(/[\\/]+/).filter(Boolean);
   return parts.slice(-2).join('/');
 }
 
-/** Parent folder name ("Programs" for …/Programs/DSH). */
+/** Parent folder name ("Programs" for …/Programs/Unify). */
 export function parentFolder(path: string): string {
   const parts = path.split(/[\\/]+/).filter(Boolean);
   return parts.length > 1 ? parts[parts.length - 2] : '';

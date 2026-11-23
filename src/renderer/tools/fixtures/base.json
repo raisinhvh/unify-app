@@ -2,21 +2,22 @@
   "persisted": {
     "route": "chats",
     "panelOpen": false,
-    "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" },
-    "unread": {}
+    "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" },
+    "unread": {},
+    "setupComplete": true
   },
   "messages": [
     {
       "type": "sessionState",
       "activeSessionId": "s-acp",
       "sessions": [
-        { "id": "s-acp", "name": "Fix ACP init timeout", "updatedAt": -1, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
-        { "id": "s-release", "name": "Release notes 1.1.5", "updatedAt": -4, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
-        { "id": "s-hub", "name": "Hub search ranking", "updatedAt": -12, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
-        { "id": "s-mistral", "name": "Send system role to Mistral", "updatedAt": -65, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
-        { "id": "s-assets", "name": "Package 1.1.5 release assets", "updatedAt": -4000, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
-        { "id": "s-old1", "name": "Mirror rules to Cursor", "updatedAt": -5000, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
-        { "id": "s-old2", "name": "Voice command list", "updatedAt": -6000, "project": { "name": "DSH", "path": "C:/Users/User/Documents/Projects/Programs/DSH" } },
+        { "id": "s-acp", "name": "Fix ACP init timeout", "updatedAt": -1, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
+        { "id": "s-release", "name": "Release notes 1.1.5", "updatedAt": -4, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
+        { "id": "s-hub", "name": "Hub search ranking", "updatedAt": -12, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
+        { "id": "s-mistral", "name": "Send system role to Mistral", "updatedAt": -65, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
+        { "id": "s-assets", "name": "Package 1.1.5 release assets", "updatedAt": -4000, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
+        { "id": "s-old1", "name": "Mirror rules to Cursor", "updatedAt": -5000, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
+        { "id": "s-old2", "name": "Voice command list", "updatedAt": -6000, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
         { "id": "s-pane", "name": "Pane layout store", "updatedAt": -2, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
         { "id": "s-refactor", "name": "Refactor sidebar state", "updatedAt": -3, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
         { "id": "s-drag", "name": "Drag-to-snap layouts", "updatedAt": -5, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } },
