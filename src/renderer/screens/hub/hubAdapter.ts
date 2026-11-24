@@ -7,7 +7,6 @@
  */
 import { createSignal } from 'solid-js';
 import { post } from '../../bridge';
-import { readPersisted, writePersisted } from '../../persist';
 import type { HubInstallMessage, HubInstallPackage, HubInstallResultMessage, SidebarWebviewMessage } from '../../protocol';
 import { onHostMessage } from '../../store';
 import { feature } from '../../store/features';
@@ -37,25 +36,15 @@ export interface HubCategory {
   label: string;
 }
 
-export interface HubDevice {
-  id: string;
-  label: string;
-  current: boolean;
-}
-
 export interface HubState {
   packs: HubPack[];
   categories: HubCategory[];
   /** Pack ids shown in Featured, in order. */
   featured: string[];
   authors: number;
-  /** Signed-in devices "Your devices" installs to (sync). */
-  devices: HubDevice[];
   fetchedAt: number;
   error?: string;
 }
-
-export type HubInstallTarget = 'this' | 'all';
 
 export interface HubInstallProgress {
   id: string;
@@ -81,7 +70,6 @@ export type HubReply =
 /** A pack whose install script waits for the user's consent (the Hub's script dialog). */
 export interface ScriptConsent {
   id: string;
-  target: HubInstallTarget;
   /** Empty when the pack only installs packages. */
   scriptName: string;
   scriptText: string;
@@ -119,16 +107,6 @@ export function dismissPublishStatus(): void {
   setPublishStatus({ pending: false });
 }
 
-const [installTarget, setInstallTargetSignal] = createSignal<HubInstallTarget>(readPersisted<HubInstallTarget>('hubInstallTarget', 'all'));
-export { installTarget };
-export function setInstallTarget(target: HubInstallTarget): void {
-  setInstallTargetSignal(target);
-  writePersisted('hubInstallTarget', target);
-}
-
-/** The target each pending install was sent with, so consenting to its script resends the same one. */
-const pendingTargets = new Map<string, HubInstallTarget>();
-
 function setInstall(id: string, progress: HubInstallProgress | undefined): void {
   setInstalls(current => {
     const next = { ...current };
@@ -139,13 +117,10 @@ function setInstall(id: string, progress: HubInstallProgress | undefined): void 
 }
 
 function applyInstallResult(result: HubInstallResultMessage): void {
-  const target = pendingTargets.get(result.id) ?? installTarget();
-  pendingTargets.delete(result.id);
   if (result.needsScriptConsent) {
     setInstall(result.id, undefined);
     setScriptConsent({
       id: result.id,
-      target,
       scriptName: result.scriptName ?? '',
       scriptText: result.scriptText ?? '',
       uninstallScriptName: result.uninstallScriptName ?? '',
@@ -203,14 +178,13 @@ export function browseHub(refresh = false): void {
   send({ type: 'hubBrowse', refresh });
 }
 
-function requestInstall(id: string, target: HubInstallTarget, allowScript?: boolean): void {
-  pendingTargets.set(id, target);
+function requestInstall(id: string, allowScript?: boolean): void {
   setInstall(id, { id, percent: 0, state: 'downloading' });
-  send({ type: 'hubInstall', id, target, ...(allowScript ? { allowScript } : {}) });
+  send({ type: 'hubInstall', id, ...(allowScript ? { allowScript } : {}) });
 }
 
 export function installFromHub(id: string): void {
-  requestInstall(id, installTarget());
+  requestInstall(id);
 }
 
 /** The user agreed to the pack's install script: install again, letting it run. */
@@ -218,7 +192,7 @@ export function runScriptAndInstall(): void {
   const consent = scriptConsent();
   if (!consent) return;
   setScriptConsent(undefined);
-  requestInstall(consent.id, consent.target, true);
+  requestInstall(consent.id, true);
 }
 
 export function cancelScriptConsent(): void {
@@ -229,13 +203,6 @@ export function cancelScriptConsent(): void {
 export function publishToHub(): void {
   setPublishStatus({ pending: true });
   send({ type: 'hubPublish' });
-}
-
-/** "5.2k", "12.4k", "860". */
-export function formatCount(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-  if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k`;
-  return String(value);
 }
 
 /** "4 days ago", "today". */

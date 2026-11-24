@@ -30,19 +30,12 @@ export interface HubCategory {
   label: string;
 }
 
-export interface HubDevice {
-  id: string;
-  label: string;
-  current: boolean;
-}
-
 export interface HubState {
   packs: HubPack[];
   categories: HubCategory[];
   /** Pack ids shown in Featured, in order. */
   featured: string[];
   authors: number;
-  devices: HubDevice[];
   fetchedAt: number;
   error?: string;
 }
@@ -52,12 +45,9 @@ export interface HubPackDetail {
   readme?: string;
 }
 
-export type HubInstallTarget = 'this' | 'all';
-
 /** UI → engine `hubInstall`: retry with `allowScript` only after the user approved the shown script. */
 export interface HubInstallRequest {
   id: string;
-  target?: HubInstallTarget;
   /** Set once the user was shown the pack's install/uninstall scripts and agreed to run them. */
   allowScript?: boolean;
 }

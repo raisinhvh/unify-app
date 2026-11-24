@@ -479,6 +479,7 @@ export function Composer(props: ComposerProps): JSX.Element {
         onClose={() => setSendMenuOpen(false)}
         placement="top-end"
         items={sendMenuItems}
+        highlightFirst
         onSelect={id => {
           setSendMenuOpen(false);
           send(id as 'interrupt' | 'queue');

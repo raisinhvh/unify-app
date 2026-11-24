@@ -4,7 +4,9 @@
  *
  *   breadcrumb + more menu (reload, logs, remove)
  *   title row     glyph tile, name, description
- *   meta strip    version, source, synced devices            Enabled switch
+ *   meta strip    version, source                            Enabled switch
+ *   install       while the pack needs installing on this PC: "Not installed on this PC" + Install / Reinstall,
+ *                 and the last install error under it
  *   Finish setup  the pack's setup checklist while it has one (SetupChecklist)
  *   Tools         "22 of 24 enabled", filter; groups Read / Write / Run with a permission picker each,
  *                 one row per tool with its own switch
@@ -21,6 +23,7 @@ import { feature } from '../../store/features';
 import {
   addLocalPack,
   packAction,
+  reinstallPack,
   setGroupPolicy,
   setPackEnabled,
   setToolEnabled,
@@ -182,19 +185,34 @@ function PackDetail(props: { pack: InstalledPack }): JSX.Element {
           <Show when={sourceLabel()}>
             <span class="tp-meta-item">From <span class="tp-meta-value">{sourceLabel()}</span></span>
           </Show>
-          <Show when={props.pack.syncedDevices}>
-            <span class="tp-meta-item">
-              <Icon name="cloud" size={14} />
-              <span class="tp-meta-value">Synced to {props.pack.syncedDevices} device{props.pack.syncedDevices === 1 ? '' : 's'}</span>
-            </span>
-          </Show>
-          <Show when={!props.pack.version && !sourceLabel() && !props.pack.syncedDevices}>
+          <Show when={!props.pack.version && !sourceLabel()}>
             <span class="tp-meta-item tp-meta-status"><span class="tp-meta-value">{props.pack.status}</span></span>
           </Show>
         </span>
         <span class="tp-meta-enabled">Enabled</span>
-        <Toggle checked={props.pack.enabled} onChange={on => setPackEnabled(props.pack.id, on)} label={`${props.pack.name} enabled`} />
+        <Toggle
+          checked={props.pack.enabled}
+          disabled={props.pack.needsInstall}
+          onChange={on => setPackEnabled(props.pack.id, on)}
+          label={`${props.pack.name} enabled`}
+        />
       </div>
+
+      <Show when={props.pack.needsInstall}>
+        <div class="tp-install">
+          <div class="tp-notice">
+            <span class="tp-notice-text tp-install-status">Not installed on this PC</span>
+            <Button variant="secondary" disabled={props.pack.installing} onClick={() => reinstallPack(props.pack.id)}>
+              {props.pack.installing ? 'Installing…' : props.pack.installError ? 'Reinstall' : 'Install'}
+            </Button>
+          </div>
+          <Show when={props.pack.installError}>
+            <div class="tp-notice error">
+              <span class="tp-notice-text">{props.pack.installError}</span>
+            </div>
+          </Show>
+        </div>
+      </Show>
 
       <Show when={props.pack.state === 'error' || props.pack.state === 'starting'}>
         <div class="tp-notice" classList={{ error: props.pack.state === 'error' }}>

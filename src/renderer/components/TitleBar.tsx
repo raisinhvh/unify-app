@@ -4,12 +4,15 @@
  * Anything interactive placed inside the strip must set `-webkit-app-region: no-drag` (class `no-drag`).
  *
  * While "shut down when done" is armed (viewState.shutdown.armed, feature power.shutdownWhenIdle), a small power
- * glyph sits left of the window controls; clicking it disarms (cancelShutdown). It pops in and out.
+ * glyph sits left of the window controls; clicking it disarms (cancelShutdown). "No questions" (feature
+ * agents.noQuestions) shows the same way, a struck-through question mark; clicking it turns the feature off.
+ * Both pop in and out.
  */
 import { createSignal, onMount, Show, type JSX } from 'solid-js';
 import { bridge, post } from '../bridge';
 import { Presence, pressable } from '../motion';
 import { viewState } from '../store';
+import { feature, setFeature } from '../store/features';
 import { Icon } from './Icon';
 import { tooltip } from './Tooltip';
 import './titlebar.css';
@@ -37,6 +40,55 @@ export function PowerGlyph(props: { size?: number }): JSX.Element {
   );
 }
 
+/** A question mark struck through (16×16, stroke 1.333, currentColor): "no questions". */
+function NoQuestionsGlyph(props: { size?: number }): JSX.Element {
+  return (
+    <svg
+      class="icon"
+      width={props.size ?? 16}
+      height={props.size ?? 16}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+    >
+      {/* The question mark is cut back around the slash, so the two read as separate strokes. */}
+      <mask id="no-questions-gap" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
+        <rect width="16" height="16" fill="white" />
+        <path d="M2.5 2.5L13.5 13.5" stroke-width="3.33" stroke-linecap="round" stroke="black" />
+      </mask>
+      <g mask="url(#no-questions-gap)">
+        <path
+          d="M5.67 5.67C5.67 4.38 6.71 3.33 8 3.33C9.29 3.33 10.33 4.38 10.33 5.67C10.33 7.17 8 7.67 8 9.33"
+          stroke-width="1.33333"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke="currentColor"
+        />
+        <circle cx="8" cy="12.17" r="0.83" fill="currentColor" />
+      </g>
+      <path d="M2.5 2.5L13.5 13.5" stroke-width="1.33333" stroke-linecap="round" stroke="currentColor" />
+    </svg>
+  );
+}
+
+/** "No questions" is on (feature agents.noQuestions, toggled with /noquestions): clicking turns it off. */
+function NoQuestionsIndicator(): JSX.Element {
+  return (
+    <button
+      type="button"
+      class="titlebar-armed no-drag"
+      aria-label="No questions is on: agents decide and state their assumptions. Click to turn off"
+      ref={element => {
+        pressable(element);
+        tooltip(element, 'No questions: agents decide and state their assumptions. Click to turn off', { placement: 'bottom-end' });
+      }}
+      onClick={() => setFeature('agents.noQuestions', false)}
+    >
+      <NoQuestionsGlyph size={14} />
+    </button>
+  );
+}
+
 function ShutdownArmedIndicator(): JSX.Element {
   const countingDown = () => viewState.shutdown?.phase === 'countdown';
   return (
@@ -48,7 +100,7 @@ function ShutdownArmedIndicator(): JSX.Element {
       data-shutdown-armed
       ref={element => {
         pressable(element);
-        tooltip(element, 'Shut down when done', { placement: 'bottom-end' });
+        tooltip(element, 'Shutting down when all tasks finish. Click to cancel', { placement: 'bottom-end' });
       }}
       onClick={() => post({ type: 'cancelShutdown' })}
     >
@@ -73,6 +125,11 @@ export function TitleBar(): JSX.Element {
   return (
     <div class="titlebar" classList={{ mac: isMac() }}>
       <div class="titlebar-trailing">
+        <Presence when={feature('agents.noQuestions')} from={0.6} origin="center">
+          <div class="titlebar-armed-slot">
+            <NoQuestionsIndicator />
+          </div>
+        </Presence>
         <Presence when={armed()} from={0.6} origin="center">
           <div class="titlebar-armed-slot">
             <ShutdownArmedIndicator />

@@ -44,6 +44,8 @@ export interface UnifyRequestContext {
   refreshModelState?: () => void;
   /** Refreshes one account's usage, or all of them (the extension's `refreshUsage`). */
   refreshUsageState?: (accountId?: string) => void;
+  /** Removes an account completely (record, credentials, default pointer). The extension's `removeAccount`. */
+  removeAccount?: (accountId: string) => Promise<void>;
   /** Rebuilds and posts `toolpacksState` (the extension's `postToolpacks`). */
   refreshToolpacks?: () => void;
   /** Adds a freshly installed pack file to the registry so `refreshToolpacks` sees it. */
@@ -217,6 +219,7 @@ export type ProviderRequest =
   | { type: 'setModelEnabled'; modelId: string; enabled: boolean }
   | { type: 'renameAccount'; accountId: string; label: string }
   | { type: 'setAccountDefaultModel'; accountId: string; modelId: string }
+  | { type: 'setProviderDefaultModel'; provider: string; modelId: string }
   | { type: 'signOutAccount'; accountId: string };
 
 /* ---------------------------------------------------------------------------------------------------------------
@@ -272,9 +275,7 @@ export interface SetupState {
 
 export type {
   HubCategory,
-  HubDevice,
   HubInstallProgress,
-  HubInstallTarget,
   HubPack,
   HubPackDetail,
   HubState,

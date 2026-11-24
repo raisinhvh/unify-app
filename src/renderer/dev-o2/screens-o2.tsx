@@ -14,7 +14,6 @@ type PreviewPack = SidebarViewState['toolpacks'][number] & {
   name?: string;
   version?: string;
   source?: 'hub' | 'local';
-  syncedDevices?: number;
 };
 
 const tool = (name: string, description: string) => ({ name, description });
@@ -29,7 +28,6 @@ const packs: PreviewPack[] = [
     status: 'Connected to Studio',
     version: '1.4.0',
     source: 'hub',
-    syncedDevices: 2,
     logs: ['Listening on 127.0.0.1:44755', 'Studio plugin connected'],
     tools: [
       tool('studio_tree', 'List the instance tree under a path.'),
@@ -50,7 +48,6 @@ const packs: PreviewPack[] = [
     status: 'Connected',
     version: '0.9.2',
     source: 'hub',
-    syncedDevices: 1,
     logs: [],
     tools: [
       tool('figma_pages', 'List the pages in the file.'),

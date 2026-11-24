@@ -225,7 +225,6 @@ export async function installHubPack(options: InstallHubPackOptions): Promise<Hu
       version: pack.version,
       source: 'hub',
       tools: [...pack.tools],
-      syncedDevices: options.target === 'this' ? 1 : 2,
       installedAt: Date.now(),
     };
     options.onInstalled?.(installed);

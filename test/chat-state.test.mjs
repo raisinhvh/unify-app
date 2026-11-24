@@ -42,6 +42,9 @@ function navigationHost(records) {
     effectiveModel: model => model, choiceFor: () => ({}), accounts: { getDefault: () => undefined },
     refreshModels() {}, refreshAccount: async () => {}, syncActiveView() {}, updateStatus() {},
     output: { appendLine() {} },
+    cursorAccount: { connected: true },
+    toolProgress: { start() {}, output() {}, end() {} },
+    backgroundProcesses: { add() {}, update() {}, end() {}, sync() {}, clear() {}, list: () => [], stop: () => false },
   });
   return { host, store, messages };
 }

@@ -37,6 +37,8 @@ export interface MenuProps {
   class?: string;
   /** Leave a check column even when nothing is checked, so labels line up across menus. */
   checkColumn?: boolean;
+  /** Highlight the first item on open when nothing is checked, so Enter picks it straight away. */
+  highlightFirst?: boolean;
 }
 
 const isItem = (entry: MenuEntry): entry is MenuItem => 'id' in entry;
@@ -51,7 +53,7 @@ export function Menu(props: MenuProps): JSX.Element {
   createEffect(() => {
     if (!props.open) return;
     const checkedIndex = selectable().findIndex(item => item.checked);
-    setHighlight(checkedIndex);
+    setHighlight(checkedIndex < 0 && props.highlightFirst ? 0 : checkedIndex);
     queueMicrotask(() => surface?.focus({ preventScroll: true }));
   });
 

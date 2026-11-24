@@ -1,0 +1,11 @@
+{
+  "modelEnabled": {
+    "Claude Default": false
+  },
+  "accountLabels": {
+    "acc1": "Work"
+  },
+  "providerDefaults": {
+    "claude-cli": "Claude Default"
+  }
+}

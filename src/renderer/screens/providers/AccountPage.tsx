@@ -1,36 +1,31 @@
 /**
  * Providers › one account (Figma "24 · Providers", right content).
  *
- * Breadcrumb, account header (provider glyph, label, status, models on), then Account / Usage / Models
- * sections. Labels and the default model are edits the engine does not own yet (protocol-requests.md); the
- * adapter applies them optimistically until the next accountsState.
+ * Breadcrumb, account header (provider glyph, label, status), then Account (plan, signed in with, usage, label).
+ * Models belong to the provider, so they live on the Provider page; this page only links there. Label is an edit
+ * the engine does not own yet (protocol-requests.md); the adapter applies it optimistically until the next
+ * accountsState.
  */
 import { createEffect, createSignal, For, on, Show, type JSX } from 'solid-js';
-import { Button, Icon, IconButton, Menu, ModelPicker, ProviderGlyph, Toggle, type MenuEntry } from '../../components';
-import { createSpring, pressable } from '../../motion';
+import { Button, Icon, IconButton, Menu, ProviderGlyph, type MenuEntry } from '../../components';
+import { createSpring } from '../../motion';
 import { viewState } from '../../store';
 import { clampPercent, resetColor, resetIn } from '../../store/usage';
 import type { SidebarUsageMetric } from '../../protocol';
 import type { AccountView } from './adapter';
 import {
-  accountModels,
   accountStateLabel,
   accountName,
   brandedPlan,
   findAccount,
-  formatContext,
   openProviderUsage,
+  providerTitle,
   refreshUsage,
   removeAccount,
-  removeModel,
   renameAccount,
-  setAccountDefaultModel,
-  setModelEnabled,
-  signIn,
   signOut,
   signedInWith,
 } from './adapter';
-import { AddModelForm } from './AddModelForm';
 import { select, selection } from './selection';
 
 function Crumb(props: { account: AccountView }): JSX.Element {
@@ -40,7 +35,7 @@ function Crumb(props: { account: AccountView }): JSX.Element {
         Providers
       </button>
       <span class="pv-crumb-sep">/</span>
-      <button type="button" class="pv-crumb-link" onClick={() => select({ kind: 'usage' })}>
+      <button type="button" class="pv-crumb-link" onClick={() => select({ kind: 'provider', provider: props.account.provider })}>
         {accountName(props.account).provider}
       </button>
       <span class="pv-crumb-sep">/</span>
@@ -101,19 +96,12 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
   const [menuOpen, setMenuOpen] = createSignal(false);
   const [anchor, setAnchor] = createSignal<HTMLButtonElement>();
   const [label, setLabel] = createSignal(account().label);
-  const [addingModel, setAddingModel] = createSignal(false);
-  const [editingModel, setEditingModel] = createSignal<string>();
-  const models = () => accountModels(account());
-  const enabledCount = () => models().filter(model => model.enabled).length;
-  const defaultModel = () => account().defaultModel || models().find(model => model.enabled)?.id;
 
   createEffect(
     on(
       () => account().id,
       () => {
         setLabel(account().label);
-        setAddingModel(false);
-        setEditingModel(undefined);
       },
     ),
   );
@@ -127,6 +115,8 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
     if (next !== account().label) renameAccount(account().id, next);
   };
 
+  const leaveAccount = () => select({ kind: 'provider', provider: account().provider });
+
   const menuItems = (): MenuEntry[] => {
     const items: MenuEntry[] = [
       { kind: 'group', label: 'Account' },
@@ -134,8 +124,7 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
       { id: 'usage', label: 'View usage', icon: 'usage' },
       { kind: 'separator' },
     ];
-    if (account().status === 'signedOut') items.push({ id: 'signin', label: 'Sign in' });
-    else if (account().authType === 'oauth') items.push({ id: 'signout', label: 'Sign out', danger: true });
+    if (account().authType === 'oauth') items.push({ id: 'signout', label: 'Sign out', danger: true });
     else items.push({ id: 'remove', label: 'Remove account', danger: true });
     return items;
   };
@@ -143,11 +132,10 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
   const onMenu = (id: string) => {
     if (id === 'refresh') refreshUsage(account().id);
     else if (id === 'usage') openProviderUsage(account());
-    else if (id === 'signin') signIn(account());
     else if (id === 'signout') signOut(account());
     else if (id === 'remove') {
       removeAccount(account());
-      select({ kind: 'usage' });
+      leaveAccount();
     }
   };
 
@@ -166,7 +154,6 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
               <Icon name="check" size={12} class="pv-account-check" />
               <span class="pv-account-connected">Connected</span>
             </Show>
-            <span class="pv-account-models">{enabledCount()} of {models().length} models on</span>
           </p>
         </div>
         <IconButton
@@ -186,18 +173,6 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
           placement="bottom-end"
         />
       </header>
-
-      <Show when={account().status === 'signedOut'}>
-        <div class="pv-notice">
-          <span class="pv-status-dot warn" />
-          <span class="pv-notice-text">
-            This account is signed out. Sign in again to use its models and see usage.
-          </span>
-          <Button variant="primary" class="pv-notice-action" onClick={() => signIn(account())}>
-            Sign in
-          </Button>
-        </div>
-      </Show>
 
       <div class="pv-account-divider" />
 
@@ -219,7 +194,7 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
                   if (account().authType === 'oauth') signOut(account());
                   else {
                     removeAccount(account());
-                    select({ kind: 'usage' });
+                    leaveAccount();
                   }
                 }}
               >
@@ -231,9 +206,7 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
               fallback={
                 <div class="pv-setting-row">
                   <span class="pv-setting-label">Usage</span>
-                  <p class="pv-section-note type-body">
-                    {account().status === 'signedOut' ? 'Sign in to see usage for this account.' : 'This account has not reported usage yet.'}
-                  </p>
+                  <p class="pv-section-note type-body">This account has not reported usage yet.</p>
                 </div>
               }
             >
@@ -246,30 +219,6 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
                 </div>
               </div>
             </Show>
-          </div>
-        </section>
-
-        <div class="pv-section-divider" />
-
-        <section class="pv-section">
-          <h2 class="pv-section-heading">Defaults</h2>
-          <div class="pv-rows">
-            <div class="pv-setting-row">
-              <span class="pv-setting-label">Default model</span>
-              <span class="pv-setting-value">
-                <ModelPicker
-                  class="pv-default-model"
-                  variant="regular"
-                  value={defaultModel() ?? ''}
-                  onChange={id => setAccountDefaultModel(account().id, id)}
-                  smartAuto={false}
-                  noneLabel="None"
-                  modelIds={models().map(model => model.id)}
-                  disabled={!models().length}
-                  placement="bottom-start"
-                />
-              </span>
-            </div>
             <div class="pv-setting-row">
               <label class="pv-setting-label" for="pv-account-label">Label</label>
               <span class="pv-setting-value">
@@ -298,80 +247,10 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
 
         <div class="pv-section-divider" />
 
-        <section class="pv-section">
-          <div class="pv-section-heading-row">
-            <h2 class="pv-section-heading">Models</h2>
-            <Show when={models().length > 0 || addingModel()}>
-              <Button
-                variant="text"
-                icon="plus"
-                class="pv-add-model-trigger"
-                aria-expanded={addingModel()}
-                onClick={() => { setEditingModel(undefined); setAddingModel(open => !open); }}
-              >
-                Add model
-              </Button>
-            </Show>
-          </div>
-          <AddModelForm
-            account={account()}
-            open={addingModel()}
-            model={models().find(model => model.name === editingModel())}
-            onClose={() => { setAddingModel(false); setEditingModel(undefined); }}
-          />
-          <Show
-            when={models().length}
-            fallback={
-              <Show when={!addingModel()}>
-                <div class="pv-models-empty">
-                  <p class="pv-models-empty-text type-body">No models yet. Add one by its model ID.</p>
-                  <Button
-                    variant="secondary"
-                    icon="plus"
-                    class="pv-models-empty-action"
-                    onClick={() => setAddingModel(true)}
-                  >
-                    Add model
-                  </Button>
-                </div>
-              </Show>
-            }
-          >
-            <div class="pv-models">
-              <For each={models()}>
-                {model => (
-                  <div class="pv-model-row">
-                    <span class="pv-model-name" classList={{ off: !model.enabled }} title={model.name}>
-                      {model.name}
-                    </span>
-                    <span class="pv-model-context">{formatContext(model.contextWindow)}</span>
-                    <div class="pv-model-actions">
-                      <button
-                        type="button"
-                        class="pv-model-edit"
-                        aria-label={`Configure ${model.name}`}
-                        title={`Configure ${model.name}`}
-                        onClick={() => { setAddingModel(false); setEditingModel(model.name); setAddingModel(true); }}
-                      >Configure</button>
-                      <IconButton
-                        icon="close"
-                        size="small"
-                        label={`Remove ${model.name}`}
-                        class="pv-model-remove"
-                        onClick={() => removeModel(model.name)}
-                      />
-                      <Toggle
-                        checked={model.enabled}
-                        label={`Use ${model.name}`}
-                        onChange={enabled => setModelEnabled(model.id, enabled)}
-                      />
-                    </div>
-                  </div>
-                )}
-              </For>
-            </div>
-          </Show>
-        </section>
+        <p class="pv-shared-models type-body">
+          Models are shared by every {providerTitle(account().provider)} account.{' '}
+          <button type="button" class="pv-shared-models-link" onClick={leaveAccount}>Manage models</button>
+        </p>
       </div>
     </>
   );

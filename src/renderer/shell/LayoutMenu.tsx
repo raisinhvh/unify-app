@@ -1,5 +1,5 @@
 /**
- * Title-bar control for the workspace layout: a grid of preset tiles, then equalize, add a files / knowledge /
+ * Title-bar control for the workspace layout: a grid of preset tiles, then equalize, add a files /
  * terminal pane, a source control pane, and close everything. Built on the shared Popover (anchored, closes on outside click / Escape).
  */
 import { createSignal, For, type JSX } from 'solid-js';
@@ -43,9 +43,6 @@ export function LayoutMenu(): JSX.Element {
           </button>
           <button type="button" class="layout-menu-row" onClick={() => run(() => openPane('files'))}>
             Add Files
-          </button>
-          <button type="button" class="layout-menu-row" onClick={() => run(() => openPane('knowledge'))}>
-            Add Knowledge
           </button>
           <button type="button" class="layout-menu-row" onClick={() => run(() => openPane('terminal'))}>
             Add Terminal

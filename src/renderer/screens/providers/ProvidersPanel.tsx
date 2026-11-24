@@ -6,7 +6,8 @@
  *   providers    one TreeFolder per provider (logo, name, account count), accounts inside as tree rows:
  *                a status mark, the account label, and what it reports (mini bar, "Connected", "Sign in")
  *
- * Rows only select; every action lives on the account page, except "Sign in" on a signed-out row.
+ * Rows only select: a provider row opens its Provider page, an account row opens the account. Signed-out
+ * accounts are not listed at all.
  */
 import { For, Show, type JSX } from 'solid-js';
 import { Icon, IconButton, ProviderGlyph, TreeFolder, TreeItem } from '../../components';
@@ -14,7 +15,7 @@ import { createSpring, pressable } from '../../motion';
 import { RollingNumber } from '../../motion/organic';
 import { clampPercent, usageSummary } from '../../store/usage';
 import type { AccountView, ProviderGroup } from './adapter';
-import { accountStateLabel, providerGroups, providerTitle, signIn } from './adapter';
+import { accountStateLabel, providerGroups, providerTitle } from './adapter';
 import { providerOpen, select, selection, setAddProviderOpen, setProviderOpen } from './selection';
 
 function UsageRow(): JSX.Element {
@@ -34,7 +35,7 @@ function UsageRow(): JSX.Element {
 function StatusMark(props: { account: AccountView }): JSX.Element {
   return (
     <Show
-      when={props.account.status === 'signedOut' || props.account.status === 'error' || props.account.status === 'loading'}
+      when={props.account.status === 'error' || props.account.status === 'loading'}
       fallback={<Icon name="check" size={12} class="pv-account-check" />}
     >
       <span class="pv-status-dot" classList={{ warn: props.account.status !== 'loading' }} />
@@ -61,7 +62,7 @@ function AccountRow(props: { account: AccountView }): JSX.Element {
   return (
     <div
       class="tree-row tree-item pv-account-row"
-      classList={{ selected: selected(), signedOut: account().status === 'signedOut' }}
+      classList={{ selected: selected() }}
       role="button"
       tabIndex={0}
       aria-current={selected() ? 'true' : undefined}
@@ -79,27 +80,10 @@ function AccountRow(props: { account: AccountView }): JSX.Element {
       </span>
       <span class="pv-account-label">{account().label}</span>
       <Show
-        when={account().status === 'signedOut'}
-        fallback={
-          <Show
-            when={account().binding}
-            fallback={<span class="pv-account-caption">{accountStateLabel(account())}</span>}
-          >
-            {binding => <MiniMeter used={binding().usedPercent} color={account().color} />}
-          </Show>
-        }
+        when={account().binding}
+        fallback={<span class="pv-account-caption">{accountStateLabel(account())}</span>}
       >
-        <span class="pv-account-caption warn">Signed out</span>
-        <button
-          type="button"
-          class="pv-signin"
-          onClick={event => {
-            event.stopPropagation();
-            signIn(account());
-          }}
-        >
-          Sign in
-        </button>
+        {binding => <MiniMeter used={binding().usedPercent} color={account().color} />}
       </Show>
     </div>
   );
@@ -109,10 +93,16 @@ function ProviderFolder(props: { group: ProviderGroup }): JSX.Element {
   const group = () => props.group;
   // Keyed by id: usage updates hand over new account objects, which must not remount the rows.
   const accountIds = () => group().accounts.map(account => account.id);
+  const selected = () => {
+    const current = selection();
+    return current.kind === 'provider' && current.provider === group().provider;
+  };
   // A folder like any other in the app; the provider's logo stands in for the folder glyph (as the Hub's does).
+  // Clicking the row opens the provider's page and opens or closes its accounts.
   return (
     <TreeFolder
       class="pv-provider"
+      rowClass={selected() ? 'selected' : undefined}
       label={
         <span class="pv-provider-label">
           <ProviderGlyph provider={group().provider} size={16} class="pv-provider-glyph" />
@@ -121,7 +111,10 @@ function ProviderFolder(props: { group: ProviderGroup }): JSX.Element {
       }
       trailing={String(group().accounts.length)}
       open={providerOpen(group().provider)}
-      onToggle={open => setProviderOpen(group().provider, open)}
+      onToggle={open => {
+        setProviderOpen(group().provider, open);
+        select({ kind: 'provider', provider: group().provider });
+      }}
     >
       <For each={accountIds()}>
         {id => <Show when={group().accounts.find(account => account.id === id)}>{account => <AccountRow account={account()} />}</Show>}

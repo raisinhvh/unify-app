@@ -28,8 +28,6 @@ interface SidebarToolpack {
   version?: string;
   /** Where it came from: "From Toolpack Hub" / "From a folder". */
   source?: 'hub' | 'local';
-  /** How many signed-in devices have this pack (sync). Shown as "Synced to N devices". */
-  syncedDevices?: number;
   /** Permission per tool group. Fallback: read 'always', write and run 'ask'. */
   permissions?: Partial<Record<'read' | 'write' | 'run', 'always' | 'ask' | 'off'>>;
   tools: {
@@ -75,17 +73,14 @@ interface HubPack {
   license: string;
 }
 interface HubCategory { id: string; label: string }
-interface HubDevice { id: string; label: string; current: boolean }
 interface HubState {
   packs: HubPack[];
   categories: HubCategory[];
   featured: string[];    // pack ids, in order (3 are shown)
   authors: number;
-  devices: HubDevice[];  // signed-in devices "Your devices" installs to
   fetchedAt: number;
   error?: string;        // registry unreachable etc.; the UI shows it with a retry
 }
-type HubInstallTarget = 'this' | 'all';
 interface HubInstallProgress {
   id: string;
   percent: number;       // 0-100
@@ -98,7 +93,7 @@ UI -> engine:
 
 ```ts
 | { type: 'hubBrowse'; refresh?: boolean }                     // reply: hubState
-| { type: 'hubInstall'; id: string; target: HubInstallTarget; allowScript?: boolean } // reply: hubInstallProgress (repeated), hubInstallResult
+| { type: 'hubInstall'; id: string; allowScript?: boolean } // reply: hubInstallProgress (repeated), hubInstallResult
 | { type: 'hubPublish' }                                       // engine: folder picker, validation, confirm, upload
 ```
 
@@ -116,9 +111,8 @@ and, if the user agrees, resends `hubInstall` with `allowScript: true`. `ok: fal
 row's Failed / Retry state.
 
 Install downloads the pack and runs its install script (spec), then sends `toolpacksState` with the new pack and a
-final `hubInstallProgress` with `state: 'done'`. With `target: 'all'` the pack is added to the synced set so the
-other devices install it too. The UI never uploads anything itself: `hubPublish` is a request, and the engine owns
-the confirmation.
+final `hubInstallProgress` with `state: 'done'`. The UI never uploads anything itself: `hubPublish` is a request,
+and the engine owns the confirmation.
 
 ### Publish
 

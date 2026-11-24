@@ -1,0 +1,6 @@
+{
+  "description": "Run local clip utilities.",
+  "enabled": true,
+  "hubId": "clip-runner",
+  "version": "1.0.0"
+}

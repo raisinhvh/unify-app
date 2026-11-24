@@ -53,6 +53,12 @@ export class AccountRegistry {
     const label = clean(input.label, "Account label");
     const secret = input.secret.trim();
     if (!secret) throw new Error("Account secret is required");
+    // The same key for the same server is the same account: keep the existing record instead of a second one.
+    const baseURL = typeof input.metadata?.baseURL === "string" ? input.metadata.baseURL : "";
+    for (const existing of this.list(provider)) {
+      const existingBaseURL = typeof existing.metadata?.baseURL === "string" ? existing.metadata.baseURL : "";
+      if (existingBaseURL === baseURL && (await this.getSecret(existing.id)) === secret) return existing;
+    }
     const now = Date.now();
     const id = clean(input.id || `${provider}:${randomBytes(8).toString("hex")}`, "Account id");
     if (this.get(id)) throw new Error(`An account with id '${id}' already exists`);

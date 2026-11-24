@@ -152,6 +152,29 @@ test('waiting on background tasks after the answer is reported, and ends when Cl
   await result;
 });
 
+test('a message sent while Claude waits on background tasks goes to the live process instead of waiting', async () => {
+  const waits = [];
+  const runtime = new ClaudeCliRuntime();
+  const result = runtime.prompt(turn({ onBackgroundWait: tasks => waits.push(tasks) }));
+  const { child } = launches.at(-1);
+  const written = [];
+  child.stdin.on('data', chunk => written.push(String(chunk)));
+  assert.equal(runtime.waitingOnBackground(), false, 'not waiting while the reply runs');
+  send(child, { type: 'system', subtype: 'task_started', task_id: 't1', description: 'Build the release' });
+  send(child, { type: 'result', result: 'Started the build.' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(runtime.waitingOnBackground(), true);
+  assert.equal(runtime.say('Why no progress bar?'), true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(runtime.waitingOnBackground(), false, 'a new reply has started');
+  assert.match(written.join(''), /Why no progress bar\?/);
+  assert.deepEqual(waits, [['Build the release'], []]);
+  assert.equal(child.stdin.writableEnded, false, 'input stays open for the new reply');
+  child.emit('close', 0);
+  await result;
+  assert.equal(runtime.say('late'), false);
+});
+
 test('a CLI that exited ends the turn even when its output pipes stay open', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const result = new ClaudeCliRuntime().prompt(turn());

@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, access, rm } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  accountForModel, applyFiles, applyToolpackSettings, collectFiles, collectToolpacks, findConfigGist, hashBundle, localModels, parseBundle, portableModels,
+  accountForModel, applyFiles, collectFiles, findConfigGist, hashBundle, localModels, parseBundle, portableModels,
   readConfigGist, restoreMcpSecrets, serializeBundle, stripMcpSecrets, syncPath, writeConfigGist, GIST_FILE, LOCAL_SETTINGS, mergeBundles, SYNCED_SETTINGS,
 } from '../dist/sync/configSync.mjs';
 import { readFileSync } from 'node:fs';
@@ -14,7 +14,7 @@ const exists = path => access(path).then(() => true, () => false);
 async function roots(t) {
   const base = await mkdtemp(join(tmpdir(), 'unify-sync-'));
   t.after(() => rm(base, { recursive: true, force: true }));
-  return { unifyHome: join(base, 'unify'), agentsHome: join(base, 'agents'), toolpacks: join(base, 'toolpacks') };
+  return { unifyHome: join(base, 'unify'), agentsHome: join(base, 'agents') };
 }
 
 async function put(file, text) {
@@ -22,7 +22,7 @@ async function put(file, text) {
   await writeFile(file, text);
 }
 
-const bundle = (files = {}, settings = {}, toolpacks = {}) => ({ format: 'unify-config', version: 1, settings, files, toolpacks });
+const bundle = (files = {}, settings = {}) => ({ format: 'unify-config', version: 1, settings, files });
 
 test('collects global rules and skills, skipping hidden and bundled folders', async t => {
   const r = await roots(t);
@@ -72,15 +72,15 @@ test('every unify setting either syncs or is listed as staying on this PC', () =
 });
 
 test('edits made on both PCs merge item by item', () => {
-  const base = bundle({ 'unify/AGENTS.md': { data: 'rules' }, 'agents/skills/a/SKILL.md': { data: 'a' } }, { models: [1] }, { p: { enabled: true, source: 's' } });
-  const local = bundle({ 'unify/AGENTS.md': { data: 'rules' }, 'agents/skills/a/SKILL.md': { data: 'a' }, 'agents/skills/b/SKILL.md': { data: 'b' } }, { models: [1], subagents: [2] }, {});
-  const remote = bundle({ 'unify/AGENTS.md': { data: 'new rules' } }, { models: [1, 3] }, { p: { enabled: true, source: 's' } });
+  const base = bundle({ 'unify/AGENTS.md': { data: 'rules' }, 'agents/skills/a/SKILL.md': { data: 'a' } }, { models: [1] });
+  const local = bundle({ 'unify/AGENTS.md': { data: 'rules' }, 'agents/skills/a/SKILL.md': { data: 'a' }, 'agents/skills/b/SKILL.md': { data: 'b' } }, { models: [1], subagents: [2] });
+  const remote = bundle({ 'unify/AGENTS.md': { data: 'new rules' } }, { models: [1, 3] });
   const { bundle: merged, conflicts } = mergeBundles(base, local, remote);
   assert.deepEqual(conflicts, []);
-  // Remote deleted skill a and edited the rules; this PC added skill b, a subagent and removed toolpack p.
+  // Remote deleted skill a and edited the rules; this PC added skill b and a subagent.
   assert.deepEqual(merged.files, { 'unify/AGENTS.md': { data: 'new rules' }, 'agents/skills/b/SKILL.md': { data: 'b' } });
   assert.deepEqual(merged.settings, { models: [1, 3], subagents: [2] });
-  assert.deepEqual(merged.toolpacks, {});
+  assert.equal('toolpacks' in merged, false);
 });
 
 test('an item changed differently on both PCs is a conflict settled by the chosen side', () => {
@@ -97,7 +97,7 @@ test('an item changed differently on both PCs is a conflict settled by the chose
 });
 
 test('rejects paths outside the synced folders', () => {
-  const r = { unifyHome: join(tmpdir(), 'd'), agentsHome: join(tmpdir(), 'a'), toolpacks: join(tmpdir(), 't') };
+  const r = { unifyHome: join(tmpdir(), 'd'), agentsHome: join(tmpdir(), 'a') };
   for (const path of ['unify/config.json', 'unify/skills/../x/SKILL.md', 'agents/AGENTS.md', 'other/skills/a/SKILL.md', 'unify/skills/.system/a/SKILL.md', 'unify/skills/a/C:x', 'unify/skills/x.md', 'unify/skills//SKILL.md']) {
     assert.throws(() => syncPath(r, path), /unexpected path/, path);
   }
@@ -107,20 +107,18 @@ test('rejects paths outside the synced folders', () => {
 
 test('bundles parse back and hash independently of key order', () => {
   const a = bundle({ 'unify/AGENTS.md': { data: 'x' } }, { 'features.autoName': false, models: [{ name: 'M', provider: 'p', backend: 'b' }] });
-  const b = { toolpacks: {}, files: a.files, settings: { models: [{ backend: 'b', provider: 'p', name: 'M' }], 'features.autoName': false }, version: 1, format: 'unify-config' };
+  const b = { files: a.files, settings: { models: [{ backend: 'b', provider: 'p', name: 'M' }], 'features.autoName': false }, version: 1, format: 'unify-config' };
   assert.equal(hashBundle(a), hashBundle(b));
   assert.deepEqual(parseBundle(serializeBundle(a)), JSON.parse(serializeBundle(b)));
-  assert.throws(() => parseBundle('{"format":"unify-config","version":2,"settings":{},"files":{},"toolpacks":{}}'), /version 2/);
+  assert.throws(() => parseBundle('{"format":"unify-config","version":2,"settings":{},"files":{}}'), /version 2/);
   assert.throws(() => parseBundle('nope'), /not valid JSON/);
 });
 
-test('reads toolpack sources and their on/off state', async t => {
-  const r = await roots(t);
-  await put(join(r.toolpacks, 'echo', 'pack.ts'), 'export default {}');
-  await put(join(r.toolpacks, 'echo', 'meta.json'), JSON.stringify({ description: 'Echo', enabled: false }));
-  await put(join(r.toolpacks, 'echo', 'data', 'secret.txt'), 'runtime data');
-  await put(join(r.toolpacks, '.staging-1', 'pack.ts'), 'partial');
-  assert.deepEqual(await collectToolpacks(r.toolpacks), { echo: { enabled: false, source: 'export default {}' } });
+test('toolpacks in a config from an older build are dropped, never synced', () => {
+  const old = { ...bundle({ 'unify/AGENTS.md': { data: 'x' } }), toolpacks: { echo: { enabled: true, source: 'export default {}' } } };
+  const parsed = parseBundle(JSON.stringify(old));
+  assert.equal('toolpacks' in parsed, false);
+  assert.equal(hashBundle(parsed), hashBundle(bundle({ 'unify/AGENTS.md': { data: 'x' } })));
 });
 
 test('MCP env and header values are blanked on upload and refilled on download', () => {
@@ -136,67 +134,27 @@ test('MCP env and header values are blanked on upload and refilled on download',
   assert.deepEqual(restoreMcpSecrets(remote, local), [...local, remote[2]]);
 });
 
-test('models carry account labels across PCs', () => {
-  const here = [{ id: 'acct-1', provider: 'deepseek-official', label: 'Work' }];
-  const there = [{ id: 'acct-9', provider: 'deepseek-official', label: 'Work' }];
+test('synced models carry no account, in either direction', () => {
   const models = [
     { name: 'A', provider: 'deepseek-official', backend: 'x', account: 'acct-1' },
-    { name: 'B', provider: 'deepseek-official', backend: 'y', account: 'default' },
+    { name: 'B', provider: 'deepseek-official', backend: 'y', accountLabel: 'Work' },
+    { name: 'C', provider: 'deepseek-official', backend: 'z' },
   ];
-  const portable = portableModels(models, here);
-  assert.deepEqual(portable[0], { name: 'A', provider: 'deepseek-official', backend: 'x', accountLabel: 'Work' });
-  assert.deepEqual(portable[1], models[1]);
-  assert.equal(localModels(portable, there)[0].account, 'acct-9');
-  assert.equal(localModels(portable, [])[0].account, 'default');
-  // A PC without that account keeps the label, so its next upload does not unbind the model elsewhere.
-  const unresolved = localModels(portable, []);
-  assert.equal(unresolved[0].accountLabel, 'Work');
-  assert.deepEqual(portableModels(unresolved, []), portable);
-  assert.deepEqual(portableModels(localModels(portable, there), there), portable);
+  const expected = [
+    { name: 'A', provider: 'deepseek-official', backend: 'x' },
+    { name: 'B', provider: 'deepseek-official', backend: 'y' },
+    { name: 'C', provider: 'deepseek-official', backend: 'z' },
+  ];
+  assert.deepEqual(portableModels(models), expected);
+  assert.deepEqual(localModels(models), expected);
 });
 
-test('models resolve their account by id, then synced label, then provider default', () => {
+test('models resolve to their provider default account', () => {
   const work = { id: 'acct-9', provider: 'claude-cli', label: 'Work' };
   const home = { id: 'acct-2', provider: 'claude-cli', label: 'Home' };
-  const source = { get: id => [work, home].find(item => item.id === id), list: () => [work, home], getDefault: () => home };
-  assert.equal(accountForModel(source, { provider: 'claude-cli', account: 'acct-9' }), work);
-  assert.equal(accountForModel(source, { provider: 'claude-cli', account: 'default', accountLabel: 'Work' }), work);
-  assert.equal(accountForModel(source, { provider: 'claude-cli', account: 'gone', accountLabel: 'Work' }), work);
-  assert.equal(accountForModel(source, { provider: 'claude-cli', account: 'default', accountLabel: 'Other' }), home);
-  assert.equal(accountForModel(source, { provider: 'claude-cli', account: 'gone' }), undefined);
-  assert.equal(accountForModel(source, { provider: 'codex-cli', account: 'default', accountLabel: 'Work' }), home, 'labels only match the same provider');
-});
-
-test('toolpack settings sync without secrets, and downloads keep this PC\'s secrets', async t => {
-  const r = await roots(t);
-  const meta = { description: 'Roblox', enabled: true, sync: { files: ['opencloud.json', '../evil.json'], secrets: ['apiKey'] } };
-  await put(join(r.toolpacks, 'roblox', 'pack.ts'), 'export default {}');
-  await put(join(r.toolpacks, 'roblox', 'meta.json'), JSON.stringify(meta));
-  await put(join(r.toolpacks, 'roblox', 'data', 'opencloud.json'), JSON.stringify({ apiKey: 'k-1', groupId: '42', hfToken: 't', nested: { a: 1 } }));
-  await put(join(r.toolpacks, 'roblox', 'data', 'uploads.json'), '{"x":1}');
-  const packs = await collectToolpacks(r.toolpacks);
-  assert.deepEqual(packs.roblox.settings, { 'opencloud.json': { groupId: '42', nested: { a: 1 } } });
-  assert.equal(JSON.stringify(packs).includes('k-1'), false);
-  assert.ok(parseBundle(serializeBundle(bundle({}, {}, packs))));
-  assert.throws(() => parseBundle(serializeBundle(bundle({}, {}, { roblox: { ...packs.roblox, settings: { '../x.json': {} } } }))), /invalid settings/);
-
-  // Another PC with its own key and an older group id.
-  const other = await roots(t);
-  await put(join(other.toolpacks, 'roblox', 'pack.ts'), 'export default {}');
-  await put(join(other.toolpacks, 'roblox', 'meta.json'), JSON.stringify(meta));
-  await put(join(other.toolpacks, 'roblox', 'data', 'opencloud.json'), JSON.stringify({ apiKey: 'k-2', groupId: '7', stale: true }));
-  await applyToolpackSettings(other.toolpacks, 'roblox', packs.roblox.settings);
-  assert.deepEqual(JSON.parse(await readFile(join(other.toolpacks, 'roblox', 'data', 'opencloud.json'), 'utf8')), { apiKey: 'k-2', groupId: '42', nested: { a: 1 } });
-  assert.deepEqual((await collectToolpacks(other.toolpacks)).roblox, packs.roblox, 'both PCs now hash the same');
-
-  // A PC with no settings yet gets the non-secret values only.
-  const fresh = await roots(t);
-  await put(join(fresh.toolpacks, 'roblox', 'meta.json'), JSON.stringify(meta));
-  await applyToolpackSettings(fresh.toolpacks, 'roblox', packs.roblox.settings);
-  assert.deepEqual(JSON.parse(await readFile(join(fresh.toolpacks, 'roblox', 'data', 'opencloud.json'), 'utf8')), { groupId: '42', nested: { a: 1 } });
-  // Undeclared files are never written.
-  await applyToolpackSettings(fresh.toolpacks, 'roblox', { 'other.json': { a: 1 } });
-  assert.equal(await exists(join(fresh.toolpacks, 'roblox', 'data', 'other.json')), false);
+  const source = { get: id => [work, home].find(item => item.id === id), list: () => [work, home], getDefault: provider => provider === 'claude-cli' ? home : undefined };
+  assert.equal(accountForModel(source, { provider: 'claude-cli', account: 'acct-9' }), home);
+  assert.equal(accountForModel(source, { provider: 'codex-cli' }), undefined);
 });
 
 function fakeGitHub() {

@@ -1,0 +1,17 @@
+{
+  "extends": "base",
+  "persisted": {
+    "panelOpen": false,
+    "layout": { "preset": "single", "cells": ["s-progress"], "splits": { "x": 0.5, "y": 0.5 }, "focused": 0 }
+  },
+  "messages": [
+    {
+      "type": "sessionState",
+      "activeSessionId": "s-progress",
+      "sessions": [
+        { "id": "s-progress", "name": "Dev server and tests", "updatedAt": -1, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } }
+      ]
+    },
+    { "type": "runState", "sessionId": "s-progress", "state": "tool", "label": "npm test" }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "packs": {},
+  "installed": {
+    "clip-runner": {
+      "id": "clip-runner",
+      "name": "Clip Runner",
+      "description": "Run local clip utilities.",
+      "icon": "recorder",
+      "version": "1.0.0",
+      "source": "hub",
+      "tools": [
+        "clip_runner_info"
+      ],
+      "installedAt": 1795549492673
+    }
+  }
+}

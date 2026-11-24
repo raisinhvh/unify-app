@@ -8,6 +8,7 @@
  * at a time behind a small Tree | Editor (Tree | Document) toggle, which switches to the content half when the
  * selected file or item changes. Wider, a divider between the halves drags the tree's width (persisted per kind,
  * double-click resets); under 280px the tree keeps its full-size layout and scales down so its text still fits.
+ * Terminal and Source Control follow the same text-size rule (shell/paneScale.tsx); the terminal through its font size.
  * Styles: pane-content.css.
  */
 import { createEffect, createSignal, For, on, onCleanup, Match, onMount, Show, Switch, type JSX } from 'solid-js';
@@ -22,16 +23,15 @@ import { selection } from '../screens/knowledge/state';
 import { GitView } from '../screens/git/GitView';
 import { TerminalView } from '../screens/terminal/TerminalView';
 import { fillSlot, openPane, setPaneCwd, setPaneTitle, type PaneInstance } from './layout';
+import { createElementSize, paneFullWidth, scaleFor, ScaleToWidth } from './paneScale';
 import type { EmptySlotContext, PaneContext } from './PaneGrid';
 import './pane-content.css';
 
 /** Below this body width the Files / Knowledge halves take turns. */
 const narrowWidth = 620;
-/** The tree half's full-size width; narrower than this it scales down instead of cutting text off. */
-const sideDefaultWidth = 280;
+/** The tree half's full-size width; narrower than this it scales down instead of cutting text off (paneScale.tsx). */
+const sideDefaultWidth: number = paneFullWidth.tree;
 const sideMinWidth = 140;
-/** The tree never scales below this (≈10.5px text); narrower than that it stays this size and names truncate. */
-const sideMinScale = 0.8;
 /** The editor half never gets narrower than this while dragging the divider. */
 const mainMinWidth = 260;
 
@@ -155,8 +155,8 @@ function SplitPane(props: SplitPaneProps): JSX.Element {
     return Math.round(Math.max(sideMinWidth, Math.min(width, max)));
   };
   const shownSide = () => clampSide(sideWidth());
-  /** Under the default width the tree keeps its full-size layout and scales down (to sideMinScale at most). */
-  const sideScale = () => (narrow() ? 1 : Math.max(sideMinScale, Math.min(1, shownSide() / sideDefaultWidth)));
+  /** Under the default width the tree keeps its full-size layout and scales down (the shared pane rule). */
+  const sideScale = () => (narrow() ? 1 : scaleFor(shownSide(), sideDefaultWidth));
 
   const startResize = (event: PointerEvent) => {
     if (event.button !== 0) return;
@@ -250,6 +250,9 @@ function TerminalPane(props: { context: PaneContext }): JSX.Element {
   // Where the shell actually started (the project folder or home when the pane has no folder of its own).
   const [startedIn, setStartedIn] = createSignal<string>();
   const folder = () => pane()?.cwd ?? startedIn();
+  // The pane text-size rule as a font size: xterm measures cells itself, so it is not zoomed.
+  const [bodyRef, bodySize] = createElementSize();
+  const fontScale = () => scaleFor(bodySize().width, paneFullWidth.terminal);
   return (
     <div class="chat-pane pane-frame">
       <PaneHeader
@@ -271,13 +274,14 @@ function TerminalPane(props: { context: PaneContext }): JSX.Element {
           />
         }
       />
-      <div class="pane-body pane-terminal">
+      <div class="pane-body pane-terminal" ref={bodyRef}>
         {/* A new folder remounts the view, which replaces the shell with one started there. */}
         <For each={[pane()?.cwd]}>
           {cwd => (
             <TerminalView
               paneId={props.context.paneId}
               cwd={cwd}
+              fontScale={fontScale()}
               focused={props.context.focused()}
               onTitle={title => setPaneTitle(props.context.paneId, title)}
               onStarted={setStartedIn}
@@ -298,7 +302,9 @@ function GitPane(props: { context: PaneContext }): JSX.Element {
     <div class="chat-pane pane-frame">
       <PaneHeader context={props.context} title="Source Control" />
       <div class="pane-body pane-git">
-        <GitView />
+        <ScaleToWidth fullWidth={paneFullWidth.sourceControl}>
+          <GitView />
+        </ScaleToWidth>
       </div>
     </div>
   );
@@ -405,9 +411,9 @@ function ImagePane(props: { context: PaneContext }): JSX.Element {
 // Empty slot
 // ---------------------------------------------------------------------------------------------
 
-/** A leaf with no pane: open a Files, Knowledge, Terminal or Source Control pane here. Chats and images arrive by drop. */
+/** A leaf with no pane: open a Files, Terminal or Source Control pane here. Chats and images arrive by drop. */
 export function EmptySlot(props: { context: EmptySlotContext }): JSX.Element {
-  const fill = (kind: 'files' | 'knowledge' | 'terminal' | 'git') => fillSlot(props.context.leafKey, kind);
+  const fill = (kind: 'files' | 'terminal' | 'git') => fillSlot(props.context.leafKey, kind);
   return (
     <div class="pane-empty">
       <section class="pane-empty-card" classList={{ focused: props.context.focused() }}>
@@ -417,7 +423,6 @@ export function EmptySlot(props: { context: EmptySlotContext }): JSX.Element {
         <h3 class="pane-empty-title type-heading">Empty slot</h3>
         <div class="pane-empty-actions">
           <Button variant="secondary" onClick={() => fill('files')}>Files</Button>
-          <Button variant="secondary" onClick={() => fill('knowledge')}>Knowledge</Button>
           <Button variant="secondary" onClick={() => fill('terminal')}>Terminal</Button>
           <Button variant="secondary" onClick={() => fill('git')}>Source Control</Button>
         </div>

@@ -1,0 +1,24 @@
+{
+  "unify.oauthCliAccounts.v1": [
+    {
+      "id": "acc1",
+      "provider": "claude-cli",
+      "label": "Claude",
+      "email": "a@example.com",
+      "directory": "C:\\Users\\crazy\\Downloads\\Projects\\Unify\\unify-app\\test\\.tmp\\requests-37200-1795549515298\\accounts\\claude"
+    }
+  ],
+  "unify.accounts.v1": [
+    {
+      "id": "api1",
+      "provider": "self-hosted",
+      "label": "Server",
+      "metadata": {
+        "baseURL": "http://localhost:1234"
+      }
+    }
+  ],
+  "unify.oauthCliDefaults.v1": {
+    "claude-cli": "acc1"
+  }
+}

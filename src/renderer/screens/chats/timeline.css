@@ -19,7 +19,7 @@
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 11px;
   min-height: 100%;
   padding: 16px 20px 12px;
   box-sizing: border-box;
@@ -179,9 +179,10 @@
   margin-top: 6px;
 }
 
+/* Reply text: a little looser than body copy for reading. Unitless so it follows Text size and Line spacing. */
 .markdown {
   color: var(--text);
-  line-height: 20px;
+  line-height: calc(1.7 * var(--line-scale, 1));
   word-break: break-word;
 }
 
@@ -193,16 +194,21 @@
   margin-bottom: 0;
 }
 
+/* Block gap in em, scaled by Line spacing, so it stays clearly larger than the gap between lines at any text size. */
 .markdown p,
 .markdown ul,
 .markdown ol,
 .markdown pre {
-  margin: 0 0 8px;
+  margin: 0 0 calc(1.25em * var(--line-scale, 1));
 }
 
 .markdown ul,
 .markdown ol {
   padding-left: 20px;
+}
+
+.markdown li + li {
+  margin-top: 4px;
 }
 
 .markdown code {
@@ -267,7 +273,7 @@
   display: block;
   width: max-content;
   max-width: 100%;
-  margin: 0 0 8px;
+  margin: 0 0 12px;
   overflow-x: auto;
   border-collapse: separate;
   border-spacing: 0;
@@ -307,7 +313,7 @@
 }
 
 .markdown blockquote {
-  margin: 0 0 8px;
+  margin: 0 0 12px;
   padding: 0 0 0 12px;
   color: var(--text2);
   border-left: 2px solid var(--border);
@@ -332,6 +338,7 @@
 
 /* Tool rows */
 .tool-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -369,6 +376,64 @@
 
 .tool-cancelled {
   color: var(--text3);
+}
+
+/* Progress of a running call (ToolProgress): a 2px bar on the row's bottom edge, the row keeps its height. */
+.tool-progress-label {
+  flex: none;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tool-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text3) 22%, transparent);
+  pointer-events: none;
+}
+
+.tool-progress-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+}
+
+/* No estimate yet (first run of a command): a short segment sweeps across instead of filling. */
+.tool-progress-indeterminate .tool-progress-fill {
+  width: 30%;
+  transform: none !important;
+  animation: tool-progress-sweep 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes tool-progress-sweep {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 340% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-progress-indeterminate .tool-progress-fill {
+    animation: none;
+    opacity: 0.5;
+  }
+}
+
+.tool-progress-error .tool-progress-fill {
+  background: var(--del);
+}
+
+.tool-progress-cancelled .tool-progress-fill {
+  background: var(--text3);
 }
 
 .tool-tip {
@@ -573,7 +638,8 @@
 .question-summary {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
+  line-height: calc(1.65 * var(--line-scale, 1));
 }
 
 .question-summary-prompt {

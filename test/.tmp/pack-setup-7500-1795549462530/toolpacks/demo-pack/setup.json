@@ -1,0 +1,42 @@
+{
+  "steps": [
+    {
+      "id": "present",
+      "title": "Present",
+      "kind": "auto",
+      "install": {
+        "winget": "Demo.Present",
+        "brew": "present",
+        "pip": "present"
+      },
+      "check": {
+        "command": "unifyfake7500"
+      }
+    },
+    {
+      "id": "missing",
+      "title": "Missing",
+      "kind": "auto",
+      "install": {
+        "winget": "Demo.Missing",
+        "brew": "missing",
+        "pip": "missing"
+      },
+      "check": {
+        "command": "unify-not-a-program"
+      }
+    },
+    {
+      "id": "extra",
+      "title": "Extra",
+      "kind": "auto",
+      "optional": true,
+      "install": {
+        "pip": "extra[cli]"
+      },
+      "check": {
+        "command": "unify-not-a-program"
+      }
+    }
+  ]
+}

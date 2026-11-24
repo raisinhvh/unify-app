@@ -72,17 +72,19 @@ export class ReviewController implements vscode.TextDocumentContentProvider, vsc
     void this.enqueue(async () => {
       const modified = this.mergeChanges(changes);
       if (!modified) return;
-      this.proposalsChanged.fire(this.list());
+      // Auto-apply first and announce once: announcing the brief "pending" state first made the changes bar flip
+      // between Apply all / Keep all on every agent edit.
       for (const proposal of this.pending()) {
-        try { await this.applyBatch([proposal]); }
+        try { await this.applyBatch([proposal], false); }
         catch (error) { void vscode.window.showWarningMessage(`Unify could not auto-apply ${proposal.path}: ${error instanceof Error ? error.message : String(error)}`); }
       }
+      this.proposalsChanged.fire(this.list());
     });
   }
 
-  private async markApplied(proposal: ReviewProposal): Promise<void> {
+  private async markApplied(proposal: ReviewProposal, notify = true): Promise<void> {
     await this.recordApplied(proposal);
-    this.proposalsChanged.fire(this.list());
+    if (notify) this.proposalsChanged.fire(this.list());
   }
 
   private async recordApplied(proposal: ReviewProposal): Promise<void> {
@@ -302,9 +304,9 @@ export class ReviewController implements vscode.TextDocumentContentProvider, vsc
     this.proposalsChanged.dispose();
   }
 
-  private async applyBatch(proposals: ReviewProposal[]): Promise<void> {
+  private async applyBatch(proposals: ReviewProposal[], notify = true): Promise<void> {
     if (!proposals.length) return;
-    if (this.direct) { for (const proposal of proposals) await this.markApplied(proposal); return; }
+    if (this.direct) { for (const proposal of proposals) await this.markApplied(proposal, notify); return; }
     if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace before applying Unify edits.');
     const edit = new vscode.WorkspaceEdit();
     const newParents = new Set<string>();
@@ -364,7 +366,7 @@ export class ReviewController implements vscode.TextDocumentContentProvider, vsc
     if (!applied) throw new Error('VS Code could not apply the review. No item was marked applied; inspect the workspace before retrying.');
     await this.saveDocs(proposals.map(proposal => proposal.path));
     for (const proposal of proposals) await this.recordApplied(proposal);
-    this.proposalsChanged.fire(this.list());
+    if (notify) this.proposalsChanged.fire(this.list());
   }
 
   private virtualUri(path: string, role: 'base' | 'proposed'): vscode.Uri {

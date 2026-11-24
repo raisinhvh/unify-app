@@ -96,11 +96,6 @@
   cursor: pointer;
 }
 
-.pv-account-row.signedOut {
-  gap: 5px;
-  padding-right: 5px;
-}
-
 .pv-panel-status {
   display: grid;
   flex: none;
@@ -147,18 +142,53 @@
   color: var(--warn);
 }
 
-/* Figma draws "Sign in" as a plain text link, not a bordered button. */
-.pv-signin {
-  flex: none;
-  margin-left: 6px;
+/* A provider's account row on its page: a whole-row button, so it spans the full width. */
+.pv-provider-account {
+  width: 100%;
   padding: 0;
-  color: var(--text2);
-  font-size: calc(11px * var(--text-scale, 1));
-  line-height: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Account names are often emails: the label grows past the 168px column when it must, then ellipsizes. */
+.pv-provider-account .pv-setting-label {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 168px;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.pv-signin:hover {
+.pv-provider-account .pv-setting-value {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.pv-provider-account:hover .pv-setting-label {
+  color: var(--text);
+}
+
+.pv-provider-account-chevron {
+  flex: none;
+  color: var(--text3);
+}
+
+/* The note under the models: muted, with a plain text link to the provider page. */
+.pv-shared-models {
+  color: var(--text3);
+  font-size: calc(13px * var(--text-scale, 1));
+  line-height: 18px;
+}
+
+.pv-shared-models-link {
+  padding: 0;
+  color: var(--text2);
+  text-decoration: none;
+}
+
+.pv-shared-models-link:hover {
   color: var(--text);
   text-decoration: underline;
 }
@@ -878,6 +908,155 @@
 .pv-model-input {
   width: 260px;
   max-width: 100%;
+}
+
+/* Cursor catalog in the Add model form: search, then a scrolling list of the account's models, each with Add. */
+.pv-catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pv-catalog-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pv-catalog-search {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+}
+
+.pv-catalog-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text3);
+  pointer-events: none;
+}
+
+.pv-catalog-search-input.pv-text-input {
+  width: 100%;
+  padding-left: 28px;
+}
+
+.pv-catalog-search-input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.pv-catalog-list {
+  max-height: 264px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  overscroll-behavior: contain;
+}
+
+.pv-catalog-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr) 64px;
+  align-items: center;
+  gap: 12px;
+  height: 32px;
+  padding: 0 4px 0 12px;
+  cursor: pointer;
+  background-color: rgb(from var(--hover) r g b / 0);
+  transition: background-color 100ms ease;
+}
+
+.pv-catalog-row + .pv-catalog-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.pv-catalog-row:hover {
+  background-color: var(--hover);
+}
+
+.pv-catalog-row.added {
+  cursor: default;
+}
+
+.pv-catalog-row.added:hover {
+  background-color: rgb(from var(--hover) r g b / 0);
+}
+
+.pv-catalog-name,
+.pv-catalog-slug {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-catalog-name {
+  color: var(--text);
+  font-size: calc(13px * var(--text-scale, 1));
+  line-height: 18px;
+}
+
+.pv-catalog-row.added .pv-catalog-name {
+  color: var(--text2);
+}
+
+.pv-catalog-slug {
+  color: var(--text3);
+  font-family: var(--font-code);
+  font-size: calc(11px * var(--text-scale, 1));
+  line-height: 14px;
+}
+
+.pv-catalog-action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.pv-catalog-add.button {
+  height: 24px;
+  min-width: 44px;
+  padding: 0 8px;
+  color: var(--text2);
+  font-size: calc(12px * var(--text-scale, 1));
+}
+
+.pv-catalog-row:hover .pv-catalog-add.button {
+  color: var(--text);
+}
+
+.pv-catalog-added {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 8px;
+  color: var(--text3);
+  font-size: calc(12px * var(--text-scale, 1));
+}
+
+.pv-catalog-empty {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--text3);
+  font-size: calc(12px * var(--text-scale, 1));
+  line-height: 16px;
+}
+
+.pv-catalog-feedback {
+  margin: 0;
+  color: var(--text3);
+  font-size: calc(12px * var(--text-scale, 1));
+  line-height: 16px;
+}
+
+.pv-catalog-feedback.error {
+  color: var(--del);
+}
+
+.pv-catalog-or {
+  margin: 8px 0 0;
+  color: var(--text3);
+  font-size: calc(11px * var(--text-scale, 1));
+  line-height: 14px;
 }
 
 .pv-load-models.button {

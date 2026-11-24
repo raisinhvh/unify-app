@@ -10,7 +10,15 @@ import { batch, createSignal } from 'solid-js';
 import { createStore, produce, reconcile } from 'solid-js/store';
 import { bridge, post } from '../bridge';
 import { readPersisted, writePersisted } from '../persist';
-import type { AgentInfo, SidebarHostMessage, SidebarImage, SidebarScheduledPrompt, SidebarTimelineItem, SidebarViewState } from '../protocol';
+import type {
+  AgentInfo,
+  SidebarBackgroundProcess,
+  SidebarHostMessage,
+  SidebarImage,
+  SidebarScheduledPrompt,
+  SidebarTimelineItem,
+  SidebarViewState,
+} from '../protocol';
 import { defaultViewState, readBootState } from './defaults';
 
 const [viewState, setViewState] = createStore<SidebarViewState>({ ...defaultViewState(), ...readBootStateSafe() });
@@ -92,6 +100,17 @@ export const [progressTasks, setProgressTasks] = createSignal<ProgressTask[]>([]
 
 export function dismissProgressTask(id: string): void {
   setProgressTasks(current => current.filter(task => task.id !== id));
+}
+
+/**
+ * Background processes per chat (engine `backgroundProcesses`), keyed by sessionId like `jobs`. Kept beside
+ * viewState so the chat state shape stays as it is; a chat with none has no entry.
+ */
+const [backgroundStore, setBackgroundStore] = createStore<Record<string, SidebarBackgroundProcess[]>>({});
+
+/** The chat's background processes in the engine's order (running ones and ended ones still lingering). */
+export function backgroundProcesses(sessionId: string): SidebarBackgroundProcess[] {
+  return backgroundStore[sessionId] ?? [];
 }
 
 /** Fields a subagentEvent may carry beyond the protocol's own (the profile's effort and speed chips). */
@@ -197,6 +216,9 @@ export function applyHostMessage(message: SidebarHostMessage): void {
             delete (table as Record<string, unknown>)[message.sessionId];
           }
         }));
+        setBackgroundStore(produce(table => {
+          delete table[message.sessionId];
+        }));
         break;
       case 'progressNotice': {
         const task: ProgressTask = {
@@ -224,6 +246,13 @@ export function applyHostMessage(message: SidebarHostMessage): void {
         setViewState(produce(state => {
           if (message.job) state.jobs[message.sessionId] = message.job;
           else delete state.jobs[message.sessionId];
+        }));
+        break;
+      case 'backgroundProcesses':
+        setBackgroundStore(produce(table => {
+          const processes = message.processes || [];
+          if (processes.length) table[message.sessionId] = processes;
+          else delete table[message.sessionId];
         }));
         break;
       case 'queueState':

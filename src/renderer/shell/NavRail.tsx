@@ -23,6 +23,8 @@ export interface NavRailItem {
   icon: IconName;
   label: string;
   visible: () => boolean;
+  /** Draws a hairline above this entry and opens a little extra room for it (separates groups). */
+  dividerBefore?: boolean;
 }
 
 export interface NavRailProps {
@@ -62,6 +64,8 @@ function appInfo(): { version: string; dev: boolean } | undefined {
 
 const buttonTop = 64;
 const buttonStep = 44;
+/** Extra room a divider adds between two groups; the hairline sits in the middle of the widened gap. */
+const dividerGap = 9;
 
 export function NavRail(props: NavRailProps): JSX.Element {
   const entries = createMemo(mapArray(
@@ -90,10 +94,29 @@ export function NavRail(props: NavRailProps): JSX.Element {
     return slot;
   };
 
+  /** Dividers at or above an entry (never one above the first entry); each pushes it down by dividerGap. */
+  const dividersThrough = (index: number): number => {
+    let count = 0;
+    for (let at = 1; at <= index; at += 1) {
+      if (props.items[at]?.dividerBefore) count += 1;
+    }
+    return count;
+  };
+
+  /** Top of an entry inside the items column, on its animated place. */
+  const entryY = (index: number): number => animatedSlot(index) * buttonStep + dividersThrough(index) * dividerGap;
+
   const info = appInfo();
 
   const activeIndex = () => props.items.findIndex(item => item.id === props.active && item.visible());
-  const highlightY = createSpring(() => buttonTop + settledSlot(Math.max(0, activeIndex())) * buttonStep, 'indicator', { precision: 100 });
+  const highlightY = createSpring(
+    () => {
+      const index = Math.max(0, activeIndex());
+      return buttonTop + settledSlot(index) * buttonStep + dividersThrough(index) * dividerGap;
+    },
+    'indicator',
+    { precision: 100 },
+  );
   const highlightOpacity = createSpring(() => (activeIndex() >= 0 ? 1 : 0), 'indicator', { fadeOnly: true });
 
   return (
@@ -106,29 +129,41 @@ export function NavRail(props: NavRailProps): JSX.Element {
         <For each={entries()}>
           {(entry, index) => {
             const shownScale = () => 0.85 + 0.15 * Math.max(0, Math.min(1, entry.place()));
+            // The hairline sits halfway down the widened gap between the previous button and this one.
+            const dividerY = () => entryY(index()) - (buttonStep - 40 + dividerGap + 1) / 2;
             return (
-              <div
-                class="nav-rail-entry"
-                data-rail-entry={entry.item.id}
-                inert={!entry.item.visible()}
-                aria-hidden={entry.item.visible() ? undefined : 'true'}
-                style={{
-                  translate: `0 ${animatedSlot(index()) * buttonStep}px`,
-                  scale: String(shownScale()),
-                  opacity: Math.max(0, Math.min(1, entry.opacity())),
-                }}
-              >
-                <IconButton
-                  icon={entry.item.icon}
-                  label={entry.item.label}
-                  size="large"
-                  class="rail-button"
-                  classList={{ current: entry.item.id === props.active }}
-                  aria-current={entry.item.id === props.active ? 'page' : undefined}
-                  tooltipPlacement="right-start"
-                  onClick={() => props.onSelect(entry.item.id)}
-                />
-              </div>
+              <>
+                <Show when={index() > 0 && entry.item.dividerBefore}>
+                  <div
+                    class="nav-rail-divider"
+                    data-rail-divider
+                    aria-hidden="true"
+                    style={{ translate: `0 ${dividerY()}px` }}
+                  />
+                </Show>
+                <div
+                  class="nav-rail-entry"
+                  data-rail-entry={entry.item.id}
+                  inert={!entry.item.visible()}
+                  aria-hidden={entry.item.visible() ? undefined : 'true'}
+                  style={{
+                    translate: `0 ${entryY(index())}px`,
+                    scale: String(shownScale()),
+                    opacity: Math.max(0, Math.min(1, entry.opacity())),
+                  }}
+                >
+                  <IconButton
+                    icon={entry.item.icon}
+                    label={entry.item.label}
+                    size="large"
+                    class="rail-button"
+                    classList={{ current: entry.item.id === props.active }}
+                    aria-current={entry.item.id === props.active ? 'page' : undefined}
+                    tooltipPlacement="right-start"
+                    onClick={() => props.onSelect(entry.item.id)}
+                  />
+                </div>
+              </>
             );
           }}
         </For>

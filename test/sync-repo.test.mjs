@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { PushRejected, SyncClone } from '../dist/sync/gitRepo.mjs';
 import { bundleToTree, describeChanges, hashBundle, mergeBundles, treeToBundle } from '../dist/sync/configSync.mjs';
 
-const bundle = (files = {}, settings = {}, toolpacks = {}) => ({ format: 'unify-config', version: 1, settings, files, toolpacks });
+const bundle = (files = {}, settings = {}) => ({ format: 'unify-config', version: 1, settings, files });
 const hasGit = (() => { try { execFileSync('git', ['--version']); return true; } catch { return false; } })();
 
 async function remote(t) {
@@ -26,7 +26,7 @@ test('a config round-trips through the repository layout, binary files included'
   );
   const tree = bundleToTree(config);
   assert.ok(tree.has('settings/features.autoName.json'));
-  assert.ok(tree.has('toolpacks/blender/source.ts'));
+  assert.ok(![...tree.keys()].some(path => path.startsWith('toolpacks/')));
   assert.ok(tree.has('memory/tools/rig.md'));
   assert.deepEqual([...tree.get('memory/img/a.png')], [0, 255, 1]);
   assert.equal(hashBundle(treeToBundle(tree)), hashBundle(config));
@@ -35,6 +35,8 @@ test('a config round-trips through the repository layout, binary files included'
   // Files DSH does not know (a user's own README edits, CI files) are ignored rather than rejected.
   tree.set('.github/workflows/x.yml', Buffer.from('x'));
   tree.set('memory/.obsidian/app.json', Buffer.from('{}'));
+  // Toolpacks are no longer synced; an old repo's toolpacks/ folder is ignored and dropped on the next commit.
+  tree.set('toolpacks/blender/source.ts', Buffer.from('export default {}'));
   assert.equal(hashBundle(treeToBundle(tree)), hashBundle(config));
 });
 

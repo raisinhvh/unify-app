@@ -126,7 +126,6 @@ function createTestRegistry() {
         ],
         featured: ['notes', 'scene-tools'],
         authors: 1,
-        devices: [{ id: 'desktop', label: 'Desktop', current: true }],
         fetchedAt: Date.now(),
       };
     },
@@ -214,7 +213,6 @@ test('installHubPack returns the script without consent and runs it only when al
     id: 'notes',
     toolpacksDir,
     reply: message => replies.push(message),
-    target: 'this',
     allowScript: true,
     onInstalled: pack => { recorded = pack; },
   });
@@ -235,7 +233,6 @@ test('installHubPack returns the script without consent and runs it only when al
   assert.equal(meta.enabled, true);
   assert.equal(meta.hubId, 'notes');
   assert.equal(recorded.id, 'notes');
-  assert.equal(recorded.syncedDevices, 1);
 
   const require = createRequire(import.meta.url);
   const pack = require(join(folder, 'pack.js'));
@@ -250,7 +247,6 @@ test('installHubPack maps hyphenated ids to valid toolpack ids and keeps the ena
     id: 'scene-tools',
     toolpacksDir,
     reply: () => undefined,
-    target: 'all',
   });
   assert.equal(install.ok, true);
   const folder = join(toolpacksDir, 'scene_tools');
@@ -272,12 +268,10 @@ test('installHubPack maps hyphenated ids to valid toolpack ids and keeps the ena
     id: 'scene-tools',
     toolpacksDir,
     reply: () => undefined,
-    target: 'all',
   });
   assert.equal(reinstall.ok, true);
   const kept = JSON.parse(await readFile(join(folder, 'meta.json'), 'utf8'));
   assert.equal(kept.enabled, false);
-  assert.equal(reinstall.pack.syncedDevices, 2);
 });
 
 test('installHubPack throws on an empty id instead of writing the toolpacks folder itself', async () => {
@@ -299,7 +293,6 @@ test('installHubPack refuses to replace a folder that belongs to a different Hub
     id: 'clip-runner',
     toolpacksDir,
     reply: () => undefined,
-    target: 'this',
     allowScript: true,
   });
   assert.equal(install.ok, false);
@@ -310,7 +303,7 @@ test('installHubPack refuses to replace a folder that belongs to a different Hub
 });
 
 test('hubInstall forwards allowScript and posts hubInstallResult for consent, success and failure', async () => {
-  const blocked = await send({ type: 'hubInstall', id: 'clip-runner', target: 'all', requestId: 'h1' });
+  const blocked = await send({ type: 'hubInstall', id: 'clip-runner', requestId: 'h1' });
   const consent = ofType(blocked.replies, 'hubInstallResult')[0];
   assert.equal(consent.type, 'hubInstallResult');
   assert.equal(consent.requestId, 'h1');
@@ -321,23 +314,22 @@ test('hubInstall forwards allowScript and posts hubInstallResult for consent, su
   assert.match(consent.scriptText, /install-ran\.txt/);
   assert.equal(existsSync(join(toolpacksDir, 'clip_runner')), false, 'nothing was installed without consent');
 
-  const retried = await send({ type: 'hubInstall', id: 'clip-runner', target: 'this', requestId: 'h2', allowScript: true });
+  const retried = await send({ type: 'hubInstall', id: 'clip-runner', requestId: 'h2', allowScript: true });
   const installed = ofType(retried.replies, 'hubInstallResult')[0];
   assert.equal(installed.type, 'hubInstallResult');
   assert.equal(installed.requestId, 'h2');
   assert.equal(installed.ok, true);
   assert.equal(installed.pack.id, 'clip-runner');
-  assert.equal(installed.pack.syncedDevices, 1);
   assert.ok(existsSync(join(toolpacksDir, 'clip_runner/install-ran.txt')), 'allowScript ran the script');
 
-  const failed = await send({ type: 'hubInstall', id: 'not-in-the-hub', target: 'all', requestId: 'h3' });
+  const failed = await send({ type: 'hubInstall', id: 'not-in-the-hub', requestId: 'h3' });
   const error = ofType(failed.replies, 'hubInstallResult')[0];
   assert.equal(error.type, 'hubInstallResult');
   assert.equal(error.requestId, 'h3');
   assert.equal(error.ok, false);
   assert.match(error.error, /no pack/);
 
-  const empty = await send({ type: 'hubInstall', id: '', target: 'all', requestId: 'h4' });
+  const empty = await send({ type: 'hubInstall', id: '', requestId: 'h4' });
   const choose = ofType(empty.replies, 'hubInstallResult')[0];
   assert.equal(choose.requestId, 'h4');
   assert.equal(choose.ok, false);
@@ -345,7 +337,7 @@ test('hubInstall forwards allowScript and posts hubInstallResult for consent, su
 });
 
 test('hubInstall of an unknown pack fails with an error progress and writes nothing', async () => {
-  const install = await send({ type: 'hubInstall', id: 'not-in-the-hub', target: 'all' });
+  const install = await send({ type: 'hubInstall', id: 'not-in-the-hub' });
   const last = ofType(install.replies, 'hubInstallProgress').at(-1);
   assert.equal(last.state, 'error');
   assert.match(last.error, /no pack/);
@@ -379,7 +371,6 @@ test('GithubHubRegistry.state parses a live-format index.json and reports error 
       categories: [{ id: 'design', label: 'Design' }],
       featured: ['figma', 'missing-pack'],
       authors: 1,
-      devices: [{ id: 'desktop', label: 'Desktop', current: true }],
     };
 
     globalThis.fetch = async url => {

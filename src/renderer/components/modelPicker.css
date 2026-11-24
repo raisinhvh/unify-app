@@ -198,3 +198,14 @@
   transition-duration: 0ms;
   background-color: color-mix(in srgb, var(--hover), var(--text) 7%);
 }
+
+/* A model whose provider has no usable account: listed, never highlighted or pressed. */
+.model-picker-row.disabled,
+.model-picker-row.disabled:active {
+  color: var(--text3);
+  background-color: rgb(from var(--hover) r g b / 0);
+}
+
+.model-picker-row.disabled .model-picker-row-leading {
+  color: var(--text3);
+}

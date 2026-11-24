@@ -27,7 +27,7 @@
  * through `__unifyMock.emit({...})`. Everything else is logged.
  */
 import { setBridge, type UnifyBridge } from '../bridge';
-import type { SidebarHostMessage, SidebarSession, SidebarWebviewMessage } from '../protocol';
+import type { SidebarBackgroundProcess, SidebarHostMessage, SidebarSession, SidebarWebviewMessage } from '../protocol';
 
 interface Fixture {
   extends?: string;
@@ -153,6 +153,32 @@ export async function installMockBridge(): Promise<void> {
 
   const sendSessions = () => emit({ type: 'sessionState', sessions: [...sessions], activeSessionId });
 
+  // ?fixture=chat-progress: running tools with progress bars and the chat's background processes. Times are
+  // absolute, taken from now, so the elapsed labels and bar positions are the same on every load.
+  const progressSessionId = 's-progress';
+  let progressProcesses: SidebarBackgroundProcess[] = [];
+  const emitProgressDemo = () => {
+    const now = Date.now();
+    emit({
+      type: 'timelineState',
+      sessionId: progressSessionId,
+      subagents: {},
+      timeline: [
+        { id: 'pu1', kind: 'message', role: 'user', text: 'Start the dev server, write the tests, then lint.' },
+        { id: 'pt1', kind: 'tool', event: { id: 'pt1', kind: 'shell', title: 'Shell', detail: 'npm run build', state: 'running', progress: { startedAt: now - 5000, fraction: 0.42, label: '42%' } } },
+        { id: 'pt2', kind: 'tool', event: { id: 'pt2', kind: 'shell', title: 'Shell', detail: 'npm test', state: 'running', progress: { startedAt: now - 8000, expectedMs: 20000 } } },
+        { id: 'pa1', kind: 'message', role: 'assistant', text: 'Tests pass. Installing the new lint plugin.' },
+        { id: 'pt3', kind: 'tool', event: { id: 'pt3', kind: 'shell', title: 'Shell', detail: 'npm install eslint-plugin-solid', state: 'running', progress: { startedAt: now - 3000 } } },
+      ],
+    });
+    progressProcesses = [
+      { id: 'bg1', kind: 'shell', title: 'npm run dev', startedAt: now - 192000, state: 'running', stoppable: true },
+      { id: 'bg2', kind: 'subagent', title: 'Sol: write tests', startedAt: now - 60000, state: 'running' },
+      { id: 'bg3', kind: 'shell', title: 'npm run lint', startedAt: now - 120000, endedAt: now - 30000, state: 'done' },
+    ];
+    emit({ type: 'backgroundProcesses', sessionId: progressSessionId, processes: progressProcesses });
+  };
+
   for (const message of fixture.messages || []) {
     if (message.type === 'sessionState') {
       sessions.splice(0, sessions.length, ...message.sessions);
@@ -177,6 +203,7 @@ export async function installMockBridge(): Promise<void> {
     switch (message.type) {
       case 'ready': {
         for (const item of fixture.messages || []) emit(item);
+        if (fixtureName === 'chat-progress') emitProgressDemo();
         const timedMode = params.get('timed');
         const timed = [...(fixture.timed || [])].sort((first, second) => first.after - second.after);
         if (timedMode === '0') break;
@@ -224,6 +251,22 @@ export async function installMockBridge(): Promise<void> {
         break;
       case 'cancelProgress':
         console.info(`[mock] cancel progress ${message.id}`);
+        break;
+      case 'listProviderModels': {
+        // Answers with the fixture's Cursor list (the engine runs `cursor-agent models`); other accounts list nothing.
+        const listed = (fixture.messages || []).find(item => item.type === 'modelState' && item.cursorBackends);
+        const backends = listed && listed.type === 'modelState' ? listed.cursorBackends || [] : [];
+        window.setTimeout(() => emit({ type: 'providerModels', accountId: message.accountId, models: backends.map(item => item.value) }), 300);
+        break;
+      }
+      case 'stopBackgroundProcess':
+        if (message.sessionId === progressSessionId) {
+          // The engine ends the process and reports it; the mock keeps the ended entry in the list.
+          progressProcesses = progressProcesses.map(process => process.id === message.id
+            ? { ...process, state: 'stopped' as const, endedAt: Date.now(), stoppable: false }
+            : process);
+          emit({ type: 'backgroundProcesses', sessionId: progressSessionId, processes: progressProcesses });
+        }
         break;
       case 'cancel':
         if (sessionId) {

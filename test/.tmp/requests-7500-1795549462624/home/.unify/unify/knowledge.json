@@ -1,0 +1,35 @@
+{
+  "items": {
+    "rule:global:renamed-rule": {
+      "audiences": [
+        "subagents"
+      ],
+      "createdBy": "you",
+      "createdAt": 1795549493682,
+      "updatedBy": "you",
+      "updatedAt": 1795549493682
+    },
+    "skill:agents:skills/bar/SKILL.md": {
+      "updatedBy": "you",
+      "updatedAt": 1795549493831
+    },
+    "rule:project:other-rule": {
+      "audiences": [
+        "everyone"
+      ],
+      "createdBy": "you",
+      "createdAt": 1795549493952,
+      "updatedBy": "you",
+      "updatedAt": 1795549493952
+    }
+  },
+  "versions": {
+    "C:\\Users\\crazy\\Downloads\\Projects\\Unify\\unify-app\\test\\.tmp\\requests-7500-1795549462624\\outside-undo.txt": [
+      {
+        "at": 1795549493790,
+        "by": "agent",
+        "content": "hijacked\n"
+      }
+    ]
+  }
+}

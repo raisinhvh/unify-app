@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import * as vscode from 'vscode';
 import { AccountRegistry, ModelEntry, ModelRegistry, ResolvedModel } from './accounts';
 import { AccountUsageService, UsageTarget } from './accounts/usageService';
-import { OAuthCliAccount, OAuthCliAccounts, OAuthCliProvider, setDetectedCliCommand } from './accounts/oauthCli';
+import { OAuthCliAccount, OAuthCliAccounts, OAuthCliProvider, checkOAuthAccount, setDetectedCliCommand } from './accounts/oauthCli';
 import { freshCodexTokens } from './accounts/codexAuth';
 import { WindowsDependencies } from './runtime/dependencies';
 import { ReviewController, ReviewProposal } from './review/controller';
@@ -56,6 +56,11 @@ import { Checkpoint, checkpointHandoff, parseCheckpoint } from './runtime/checkp
 import { displayTool, internalToolOf } from './runtime/toolDisplay';
 import type { InternalToolPlaces } from './unify/internalRows';
 import { LiveEdits } from './unify/liveEdits';
+import { ProgressHistory, ToolProgressTracker } from './unify/toolProgress';
+import { BackgroundProcessList } from './unify/backgroundProcesses';
+import { parseCursorModelList } from './unify/cursorModels';
+import { listToolpacks } from './toolpacks/sync-state';
+import { installedHubPacks } from './unify/requests/toolpacks';
 import { applyRangeEdit } from './runtime/rangeEdit';
 import { chatCompactRequest, compactStep, CompactWatch, CONTINUE_AFTER_CHECKPOINT, MAX_SUBAGENT_SEGMENTS, sendCompactRequest, subagentCheckpoint, subagentCompactRequest, subagentResumeTask, takeFollowUp, TurnChannel } from './runtime/midTurnCompact';
 import { trimSessionImages } from './runtime/imageTrim';
@@ -148,6 +153,8 @@ const MAX_CHATS_PER_PROJECT = 25;
 const SELECTED_MODEL_KEY = 'unify.ide.selectedModel.v1';
 const ACTIVE_SESSION_KEY = 'unify.ide.activeSession.v1';
 const CURSOR_MODELS_KEY = 'unify.ide.cursorModels.v1';
+/** The id the Cursor login goes by wherever an account id is expected (usage, model routing, the Providers screen). */
+const CURSOR_ACCOUNT_ID = 'cursor-login';
 const MODEL_CHOICES_KEY = 'unify.ide.modelChoices.v1';
 const APPROVAL_KEY = 'unify.ide.approvalMode.v1';
 const TRANSCRIPTS_KEY = 'unify.ide.transcripts.v1';
@@ -348,6 +355,12 @@ class ExtensionHost implements vscode.Disposable {
   private windowFocused = true;
   /** Unify's media store: files under ~/.unify/media, deduplicated by sha256 (docs/contracts/media.md). */
   private readonly media = new DiskMediaStore(join(unifyHome(), 'media'));
+  /** Progress bars for builds, installs and tests, timed from past runs of the same command. */
+  private readonly toolProgress = new ToolProgressTracker({ history: new ProgressHistory(join(unifyHome(), 'tool-durations.json')) });
+  /** Shell commands, subagents and provider tasks that keep running after the agent's turn, shown above the composer. */
+  private readonly backgroundProcesses = new BackgroundProcessList({
+    onChange: (sessionId, processes) => this.sidebar.postMessage({ type: 'backgroundProcesses', sessionId, processes }),
+  });
   /** Images already shown per chat, whatever chats.showYourWork says (TODO 2e). */
   private readonly shownMedia = createShownMediaTracker();
   /** `/schedule` prompts, global so they survive project switches and restarts. */
@@ -394,10 +407,9 @@ class ExtensionHost implements vscode.Disposable {
       }, 1500); // Streaming changes the timeline constantly; dispose and shutdown flush the rest.
     }, vscode.Uri.joinPath(context.globalStorageUri, 'media'));
     this.sync = new ConfigSync(context, {
-      roots: () => ({ ...this.instructionRoots(), toolpacks: join(context.globalStorageUri.fsPath, 'toolpacks'), memory: this.memorySettings().global }),
+      roots: () => ({ ...this.instructionRoots(), memory: this.memorySettings().global }),
       git: () => this.gitPath(),
       accounts: () => [...this.oauthAccounts.list(), ...this.accounts.list()].map(({ id, provider, label }) => ({ id, provider, label })),
-      toolpacks: this.toolpacks,
       log: line => this.output.appendLine(line),
       post: sync => this.sidebar.postMessage({ type: 'syncState', sync }),
       applied: async () => { this.refreshModels(); this.refreshSubagents(); this.refreshCustomize(); await this.refreshInstructions(); },
@@ -429,7 +441,7 @@ class ExtensionHost implements vscode.Disposable {
       this.output, this.sidebar, this.sync,
       { dispose: () => clearInterval(keepAliveTimer) },
       { dispose: () => { for (const runtime of this.runtimes.values()) runtime.dispose(); this.runtimes.clear(); this.delegateHost.dispose(); void this.toolpacks.dispose(); this.fileSummaries?.dispose(); this.dictation?.stop(); } },
-      this.toolpacks.onChange(() => { this.postToolpacks(); this.sync.schedule(); }),
+      this.toolpacks.onChange(() => this.postToolpacks()),
       vscode.window.registerWebviewViewProvider(UnifySidebarProvider.viewType, this.sidebar, { webviewOptions: { retainContextWhenHidden: true } }),
       vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('unify.models')) this.refreshModels();
@@ -460,9 +472,12 @@ class ExtensionHost implements vscode.Disposable {
     }).catch(error => this.output.appendLine(`Subagent bridge failed to start: ${String(error)}`));
     const updateTimer = setTimeout(() => { void this.checkUpdates(); }, 5000);
     this.disposables.push({ dispose: () => clearTimeout(updateTimer) });
-    // Toolpacks must be loaded before a startup sync can install or remove them.
     // Models saved before they moved to settings must be in settings to sync.
     void this.models.migrate().catch(error => this.output.appendLine(`Could not move saved models to settings: ${String(error)}`));
+    // One-time: an OAuth account signed in twice (same email) keeps one record.
+    void this.oauthAccounts.collapseDuplicates()
+      .then(count => { if (count) { this.output.appendLine(`Merged ${count} duplicate sign-in${count === 1 ? '' : 's'}.`); void this.refreshAccounts(false); } })
+      .catch(error => this.output.appendLine(`Could not merge duplicate accounts: ${String(error)}`));
     this.ensureNode().then(async () => { await this.refreshDependencies(); await this.toolpacks.start(); this.sync.start(); void this.offerSync(); }).catch(error => {
       this.output.appendLine(`Dependency setup failed: ${String(error)}`);
       void vscode.window.showErrorMessage(`Unify setup failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -903,6 +918,7 @@ class ExtensionHost implements vscode.Disposable {
     else if (this.chats.get(id)?.running) throw new Error('Cancel this chat before deleting it.');
     const wasActive = this.active?.id === id || (!this.active && this.context.workspaceState.get<string>(ACTIVE_SESSION_KEY) === id);
     this.deletedSessions.add(id);
+    this.backgroundProcesses.clear(id);
     const liveCwd = this.chats.get(id)?.mirror.cwd;
     const unloaded = this.unloadChat(id);
     const remaining = this.sessions().filter(item => item.id !== id);
@@ -953,7 +969,7 @@ class ExtensionHost implements vscode.Disposable {
         // Config Sync can carry a context size for a model even though the core entry does not require one.
         const contextWindow = (model as ModelEntry & { contextWindow?: unknown }).contextWindow;
         return { id: model.name, name: model.name, provider: model.provider,
-          backend: model.backend, account: model.account, enabled: model.enabled,
+          backend: model.backend, enabled: model.enabled, usable: this.providerUsable(model.provider),
           speedOptions: model.speedOptions, effortOptions: model.effortOptions,
           ...(typeof contextWindow === 'number' && Number.isFinite(contextWindow) && contextWindow > 0 ? { contextWindow } : {}) };
       }),
@@ -990,8 +1006,25 @@ class ExtensionHost implements vscode.Disposable {
       const targets = this.usageTargets();
       const target = accountId === undefined ? undefined : targets.find(item => item.id === accountId);
       const refresh = accountId === undefined ? this.usage.refresh(targets, force) : target ? this.usage.refreshOne(target, force) : undefined;
-      void refresh?.catch(error => this.output.appendLine(`Usage refresh failed: ${String(error)}`));
+      void refresh?.then(() => this.removeInvalidOAuthAccounts())
+        .catch(error => this.output.appendLine(`Usage refresh failed: ${String(error)}`));
     } catch (error) { this.output.appendLine(`Usage refresh failed: ${String(error)}`); }
+  }
+
+  /**
+   * Removes a ChatGPT or Claude account whose sign-in the CLI now reports as gone. Only an explicit "invalid" removes;
+   * a network error or an unknown answer keeps the account. Accounts whose usage loaded are signed in and are skipped.
+   */
+  private async removeInvalidOAuthAccounts(): Promise<void> {
+    const usage = this.usage.snapshot();
+    for (const account of this.oauthAccounts.list()) {
+      if (usage[account.id]?.status === 'ready') continue;
+      try {
+        if (await checkOAuthAccount(account) !== 'invalid') continue;
+        this.output.appendLine(`Removed "${account.label}": its sign-in is no longer valid. Sign in again to use it.`);
+        await this.removeAccount(account.id);
+      } catch (error) { this.output.appendLine(`Could not remove "${account.label}": ${String(error)}`); }
+    }
   }
 
   private async refreshAccounts(checkCursor = true): Promise<void> {
@@ -1022,11 +1055,23 @@ class ExtensionHost implements vscode.Disposable {
     return this.availableModels().find(model => model.name === name);
   }
 
-  /** The picked model; when it was renamed, removed or turned off, falls back to (and saves) the first enabled one. */
+  /** Whether this PC can run the provider: Cursor when connected, otherwise the provider has a signed-in account. */
+  private providerUsable(provider: string): boolean {
+    if (provider === 'cursor-acp') return this.cursorAccount.connected;
+    if (isOAuthProvider(provider)) return !!this.oauthAccounts.getDefault(provider);
+    return !!this.accounts.getDefault(provider);
+  }
+
+  /** Enabled and runnable here. A model synced from another PC can be enabled yet have no account on this one. */
+  private isUsable(model: ModelEntry): boolean {
+    return model.enabled !== false && this.providerUsable(model.provider);
+  }
+
+  /** The picked model; when it was renamed, removed, turned off or has no account here, falls back to (and saves) the first usable one. */
   private selectedEntry(): ModelEntry | undefined {
     const current = this.availableModel(this.selectedModel);
-    if (current && current.enabled !== false) return current;
-    const fallback = this.models.list(true)[0];
+    if (current && this.isUsable(current)) return current;
+    const fallback = this.availableModels().find(model => this.isUsable(model));
     if (fallback) {
       this.selectedModel = fallback.name;
       void this.context.workspaceState.update(SELECTED_MODEL_KEY, fallback.name);
@@ -1039,8 +1084,7 @@ class ExtensionHost implements vscode.Disposable {
     const options = runtime.models(sessionId);
     if (!options.length) return;
     this.cursorModels = options.filter(option => option.value !== 'auto').map(option => ({
-      name: `Cursor ${option.name}`, provider: 'cursor-acp', backend: option.value,
-      account: 'cursor-login', enabled: true,
+      name: `Cursor ${option.name}`, provider: 'cursor-acp', backend: option.value, enabled: true,
     }));
     await this.context.workspaceState.update(CURSOR_MODELS_KEY, this.cursorModels);
     this.refreshModels();
@@ -1062,7 +1106,14 @@ class ExtensionHost implements vscode.Disposable {
     this.sidebar.postMessage({ type: 'accountState', provider: model.provider, label: account?.label || 'Add an account', connected: !!account });
   }
 
-  private async resolveRoute(override?: ModelEntry): Promise<ResolvedRoute> {
+  /** The error for a model whose provider has no signed-in account on this PC. */
+  private missingAccountError(model: { name: string; provider: string }): Error {
+    this.sidebar.postMessage({ type: 'showPage', page: 'accounts' });
+    return new Error(`No account for ${model.name} (${model.provider}). Sign in to a provider in Providers.`);
+  }
+
+  /** `accountId` is the account a pooled chat is running on; without it the provider's default account is used. */
+  private async resolveRoute(override?: ModelEntry, accountId?: string): Promise<ResolvedRoute> {
     await this.ensureNode();
     await this.refreshDependencies();
     const selected = override ?? this.selectedEntry();
@@ -1070,17 +1121,11 @@ class ExtensionHost implements vscode.Disposable {
     const model = override ?? this.effectiveModel(selected);
     if (model.provider === 'cursor-acp') return { model };
     if (isOAuthProvider(model.provider)) {
-      const oauthAccount = accountForModel(this.oauthAccounts, model);
-      if (!oauthAccount) {
-        this.sidebar.postMessage({ type: 'showPage', page: 'accounts' });
-        throw new Error(`Connect a ${model.provider === 'codex-cli' ? 'ChatGPT' : 'Claude'} account in Accounts first.`);
-      }
+      const oauthAccount = (accountId && this.oauthAccounts.get(accountId)) || accountForModel(this.oauthAccounts, model);
+      if (!oauthAccount) throw this.missingAccountError(model);
       return { model, oauthAccount };
     }
-    if (!accountForModel(this.accounts, model) && (!model.account || model.account === 'default')) {
-      this.sidebar.postMessage({ type: 'showPage', page: 'accounts' });
-      throw new Error(`Add a ${model.provider} API key account in Accounts before starting a chat.`);
-    }
+    if (!accountForModel(this.accounts, model)) throw this.missingAccountError(model);
     const route = await this.models.resolve(model.name);
     await this.refreshAccount();
     return { ...route, model };
@@ -1148,7 +1193,28 @@ class ExtensionHost implements vscode.Disposable {
     return { command: configured, args: ['acp'] };
   }
 
-  private runCursorCommand(subcommand: 'status' | 'login' | 'logout', onOutput?: (text: string) => void, timeoutMs = 30000): Promise<string> {
+  /**
+   * Lists the models the signed-in Cursor account can use (`cursor-agent models`: "slug - Name" lines), refreshes
+   * the cached list behind `cursorBackends`, and answers like a self-hosted server list (`providerModels`).
+   */
+  private async listCursorModels(accountId: string): Promise<void> {
+    const post = (models: string[], error?: string) => this.sidebar.postMessage({ type: 'providerModels', accountId, models, ...(error ? { error } : {}) });
+    try {
+      const output = await this.runCursorCommand('models', undefined, 45000);
+      const options = parseCursorModelList(output);
+      if (!options.length) throw new Error(/log ?in|sign ?in|auth/i.test(output) ? 'Sign in to Cursor first.' : 'Cursor returned no models.');
+      this.cursorModels = options.filter(option => option.value !== 'auto').map(option => ({
+        name: `Cursor ${option.name}`, provider: 'cursor-acp', backend: option.value, enabled: true,
+      }));
+      await this.context.workspaceState.update(CURSOR_MODELS_KEY, this.cursorModels);
+      this.refreshModels();
+      post(options.map(option => option.value));
+    } catch (error) {
+      post([], error instanceof Error ? error.message.replace('Open Accounts and try again.', 'Check that you are signed in to Cursor.') : String(error));
+    }
+  }
+
+  private runCursorCommand(subcommand: 'status' | 'login' | 'logout' | 'models', onOutput?: (text: string) => void, timeoutMs = 30000): Promise<string> {
     const launch = this.cursorAgentLaunch();
     return new Promise<string>((resolve, reject) => {
       let output = '';
@@ -1298,7 +1364,7 @@ class ExtensionHost implements vscode.Disposable {
     const account = this.oauthAccounts.get(record.accountId);
     if (!account) throw new Error('The ChatGPT account for this chat is missing. Connect it again in Accounts.');
     if (force) await freshCodexTokens(account.directory, { force: true });
-    const model: ModelEntry = { name: record.modelName, provider: record.provider, backend: record.backend, account: account.id, enabled: true };
+    const model: ModelEntry = { name: record.modelName, provider: record.provider, backend: record.backend, enabled: true };
     const slot = await this.ensureRuntime({ model, oauthAccount: account }, chat.mirror.cwd, chat.ownerId);
     if (!slot) throw new Error('ChatGPT (Codex) could not start.');
     if (slot.key === chat.runtimeKey && slot.runtime === chat.runtime && slot.runtime.isRunning) return true;
@@ -1510,8 +1576,23 @@ class ExtensionHost implements vscode.Disposable {
     return { text: await this.summaries.lookup(chat.mirror.cwd, paths.slice(0, 50)) };
   }
 
+  /** The progress bar for a shell call that builds, installs or tests; ends the timer when the call finishes. */
+  private toolProgressFor(id: string, kind: SidebarToolEvent['kind'], command: string | undefined, state: SidebarToolEvent['state'], cwd: string): SidebarToolEvent['progress'] {
+    if (state !== 'running') { this.toolProgress.end(id, state === 'complete'); return undefined; }
+    if (kind !== 'shell' || !command) return undefined;
+    return this.toolProgress.start(id, command, cwd);
+  }
+
   private postToolpacks(error?: string): void {
-    this.sidebar.postMessage({ type: 'toolpacksState', packs: this.toolpacks.list(), error });
+    const storage = this.context.globalStorageUri.fsPath;
+    let packs = this.toolpacks.list();
+    try {
+      // Hub packs whose files are here but that do not load show as needing an install instead of as installed.
+      packs = listToolpacks({ dir: join(storage, 'toolpacks'), installed: packs, hub: installedHubPacks(requestPaths({ workspaceRoot: undefined })) });
+    } catch (listError) {
+      this.output.appendLine(`Could not check toolpack install state: ${listError instanceof Error ? listError.message : String(listError)}`);
+    }
+    this.sidebar.postMessage({ type: 'toolpacksState', packs, error });
   }
 
   private async addToolpack(): Promise<void> {
@@ -1546,9 +1627,10 @@ class ExtensionHost implements vscode.Disposable {
   private rid(record: SessionRecord): string { return record.runtimeId || record.id; }
 
   /** `effort` replaces the chat's effort; without it an override keeps the chat's effort and a picker switch uses the picker's. */
-  private async switchModel(chat: Chat, override?: ModelEntry, effort?: string): Promise<void> {
+  /** `pinnedAccountId` keeps a chat on its own account (a pooled failover target, or the chat's current account). */
+  private async switchModel(chat: Chat, override?: ModelEntry, effort?: string, pinnedAccountId?: string): Promise<void> {
     const record = chat.record;
-    const route = await this.resolveRoute(override);
+    const route = await this.resolveRoute(override, pinnedAccountId);
     const model = route.model;
     effort = effort ?? (override ? record.effort : this.choiceFor(this.availableModel(model.name)).effort);
     const accountId = 'oauthAccount' in route ? route.oauthAccount.id : 'account' in route ? route.account.id : 'cursor-login';
@@ -1594,7 +1676,7 @@ class ExtensionHost implements vscode.Disposable {
     if (!selected) throw new Error(auto ? 'Smart Auto has no available ranked models. Set them in Customize.' : 'Turn on a model in Accounts first.');
     const model = auto ? selected : this.effectiveModel(selected);
     const account = isOAuthProvider(model.provider) ? accountForModel(this.oauthAccounts, model) : accountForModel(this.accounts, model);
-    if (model.provider !== 'cursor-acp' && !account) throw new Error('Connect an account in Accounts before starting a chat.');
+    if (model.provider !== 'cursor-acp' && !account) throw this.missingAccountError(model);
     // Creating a chat is a local navigation operation. Copy files and start the
     // provider only when the chat is used, rather than blocking the New button.
     const record: SessionRecord = {
@@ -1698,21 +1780,33 @@ class ExtensionHost implements vscode.Disposable {
     return load;
   }
 
+  /** The account a saved chat runs on. When that account is gone, the provider's default takes over and the chat is saved to it. */
+  private async chatAccount<T extends { id: string; provider: string; label: string }>(record: SessionRecord,
+    bound: () => T | undefined, fallback: () => T | undefined): Promise<T> {
+    const account = bound();
+    if (account) return account;
+    const replacement = fallback();
+    if (!replacement) throw new Error(`No account for ${record.modelName} (${record.provider}). Sign in to a provider in Providers.`);
+    record.accountId = replacement.id;
+    await this.saveSession(record);
+    return replacement;
+  }
+
   private async prepareChat(record: SessionRecord): Promise<Chat> {
     this.restoreJob(record);
     const root = { uri: await this.chatRoot(record) };
     let route: ResolvedRoute;
     if (record.provider === 'cursor-acp') {
-      route = { model: { name: record.modelName, provider: record.provider, backend: record.backend, account: 'cursor-login', enabled: true } };
+      route = { model: { name: record.modelName, provider: record.provider, backend: record.backend, enabled: true } };
     } else if (isOAuthProvider(record.provider)) {
-      const oauthAccount = this.oauthAccounts.get(record.accountId);
-      if (!oauthAccount) throw new Error(`Account for '${record.name}' is missing. Connect it again to continue.`);
-      route = { model: { name: record.modelName, provider: record.provider, backend: record.backend, account: oauthAccount.id, enabled: true }, oauthAccount };
+      const provider = record.provider as OAuthCliProvider;
+      const oauthAccount = await this.chatAccount(record, () => this.oauthAccounts.get(record.accountId), () => this.oauthAccounts.getDefault(provider));
+      route = { model: { name: record.modelName, provider: record.provider, backend: record.backend, enabled: true }, oauthAccount };
     } else {
-      const account = this.accounts.get(record.accountId);
+      const account = await this.chatAccount(record, () => this.accounts.get(record.accountId), () => this.accounts.getDefault(record.provider));
       const secret = account && await this.accounts.getSecret(account.id);
-      if (!account || !secret) throw new Error(`Account for '${record.name}' is missing. Add it again to continue.`);
-      const model: ModelEntry = { name: record.modelName, provider: record.provider, backend: record.backend, account: account.id, enabled: true };
+      if (!account || !secret) throw new Error(`No account for ${record.modelName} (${record.provider}). Sign in to a provider in Providers.`);
+      const model: ModelEntry = { name: record.modelName, provider: record.provider, backend: record.backend, enabled: true };
       route = { model, account, secret };
     }
     if (this.deletedSessions.has(record.id)) throw new Error('This chat was deleted.');
@@ -2327,6 +2421,21 @@ class ExtensionHost implements vscode.Disposable {
       return;
     }
     if (target.running) {
+      // The reply is done and Claude only waits on background tasks: hand the message to that live process, so it is
+      // answered now and the background tasks keep running (queueing would wait on them, interrupting would kill them).
+      if (target.record.provider === 'claude-cli' && !isCodexCliChat(target.record) && !attachments.length && !options.internal
+        && target.cli.waitingOnBackground() && target.cli.say(prompt.trim())) {
+        const history = this.transcripts.get(target.record.id) || [];
+        this.transcripts.set(target.record.id, history);
+        if (target.turnReply.trim() || target.turnTools.length) history.push({ role: 'assistant', text: target.turnReply.trim(), ...(target.turnTools.length ? { tools: target.turnTools } : {}) });
+        target.turnReply = '';
+        target.turnTools = [];
+        history.push({ role: 'user', text: prompt.trim(), displayText: shown });
+        target.breakMessage?.();
+        if (!displayed) echo();
+        this.postRun(target.record.id, 'thinking', 'Thinking…');
+        return;
+      }
       const message = { prompt: prompt.trim(), images: attachments };
       if (mode === 'queue') { target.queue.push(message); this.postQueue(target); return; }
       target.queue.unshift(message);
@@ -2388,10 +2497,12 @@ class ExtensionHost implements vscode.Disposable {
       if (state === 'running') this.noteRead(chat.mirror.cwd, readToolPath(title, detail));
       const shown = displayTool(title, detail);
       const edit = state === 'running' ? liveEdits.current(id) : liveEdits.finish(id, state === 'error' ? error || 'The edit failed.' : undefined);
+      const progress = this.toolProgressFor(`${record.id}:${id}`, shown.kind, shown.full ?? postedTools.get(id)?.full, state, chat.mirror.cwd);
       const event: SidebarToolEvent = {
         id, kind: shown.kind, title: shown.title, detail: shown.detail, full: shown.full, state,
         internal: internalToolOf({ tool: title, input: detail }, places),
         ...(edit ? { edit } : {}),
+        ...(progress ? { progress } : {}),
       };
       // A finished call reports no detail; the copy kept for the image repost keeps the one it started with.
       const previous = postedTools.get(id);
@@ -2451,7 +2562,7 @@ class ExtensionHost implements vscode.Disposable {
         if (!chat.runtime?.isRunning) {
           const configured = this.availableModel(record.modelName);
           if (!configured) throw new Error('The model for this chat is no longer configured.');
-          await this.switchModel(chat, { ...configured, provider: record.provider, backend: record.backend, account: record.accountId });
+          await this.switchModel(chat, { ...configured, provider: record.provider, backend: record.backend }, undefined, record.accountId);
         }
         if (record.provider === 'codex-cli' && !(await this.refreshCodexRuntime(chat))) chat.handoffPending = true;
       }
@@ -2567,6 +2678,14 @@ class ExtensionHost implements vscode.Disposable {
           images: imageAttachments.map(file => ({ path: file.path, mimeType: file.mimeType })),
           readOnly: this.jobReadOnly(chat), fullAccess: this.approvalMode === 'full' && !this.jobReadOnly(chat),
           delegate: this.delegateConfig(chat.ownerId), onText: postText, onMessageBreak: breakMessage, onTool: postTool,
+          onToolOutput: ({ id, chunk }) => {
+            // Live output that reports a percentage or a counter moves the bar past the time estimate.
+            const progress = this.toolProgress.output(`${record.id}:${id}`, chunk);
+            const event = postedTools.get(id);
+            if (!progress || !event || event.state !== 'running' || this.deletedSessions.has(record.id)) return;
+            postedTools.set(id, { ...event, progress });
+            this.sidebar.postMessage({ type: 'toolEvent', sessionId: record.id, entryId: `tool:${turnEntryId}:${id}`, event: { ...event, progress } });
+          },
           onUsage: usage => { this.logUsage(record.id, 'main', record.modelName, usage); this.noteContext(chat, usage.context ?? usage.total.input + usage.total.cacheRead); } });
         record.lastTurnAt = Date.now();
         await this.saveSession(record);
@@ -2606,6 +2725,12 @@ class ExtensionHost implements vscode.Disposable {
             if (!tasks.length) this.postRun(record.id, 'thinking', 'Thinking…');
             else this.postRun(record.id, 'tool', tasks.length === 1 ? `Waiting for background task: ${tasks[0]}` : `Waiting for ${tasks.length} background tasks…`);
           },
+          onBackgroundTasks: tasks => this.backgroundProcesses.sync(record.id, 'claude', tasks.map(task => ({
+            id: `claude:${task.id}`,
+            kind: task.command ? 'shell' : 'task',
+            title: task.command ?? task.description,
+            ...(task.command && task.description ? { detail: task.description } : {}),
+          }))),
           onText: postText,
           onMessageBreak: breakMessage,
           onTool: postTool,
@@ -2656,6 +2781,8 @@ class ExtensionHost implements vscode.Disposable {
     } finally {
       this.settleChatApprovals(record.id, true);
       for (const task of [...chat.background.values()]) if (!task.done && task.afterTurn === 'cancel') { chat.background.delete(task.id); task.run?.cancel(); }
+      // Claude's background tasks end with its process, which ends with the turn.
+      this.backgroundProcesses.sync(record.id, 'claude', []);
       if (chat.turnReply.trim() || chat.turnTools.length) this.transcripts.get(record.id)?.push({ role: 'assistant', text: chat.turnReply.trim(), ...(chat.turnTools.length ? { tools: chat.turnTools } : {}) });
       chat.turnTools = [];
       // A checkpoint Unify asked for mid-turn continues the task right away instead of waiting for the user's next message.
@@ -2781,7 +2908,7 @@ class ExtensionHost implements vscode.Disposable {
           this.output.appendLine(`ChatGPT account "${account.label}" hit its usage limit: ${message}`);
           const next = pool.find(candidate => !tried.has(candidate.id));
           if (!next) throw new Error(pool.length > 1 ? `All ${pool.length} ChatGPT accounts have hit their usage limits. ${message}` : message);
-          await this.switchModel(chat, { name: record.modelName, provider: record.provider, backend: record.backend, account: next.id, enabled: true });
+          await this.switchModel(chat, { name: record.modelName, provider: record.provider, backend: record.backend, enabled: true }, undefined, next.id);
           if (chat.cancelRequested) throw error;
           text = await reopen({ failed: account, next });
           authRetried = false;
@@ -3304,25 +3431,25 @@ class ExtensionHost implements vscode.Disposable {
     return normalizeRanks(vscode.workspace.getConfiguration('unify').get<unknown>('smartAutoRanks'));
   }
 
-  /** Ranked entries whose model is still configured and enabled, smartest first. */
+  /** Ranked entries whose model is still configured, enabled and runnable on this PC, smartest first. */
   private smartAutoCandidates(): (SmartAutoRank & { entry: ModelEntry })[] {
     return this.smartAutoRanks().flatMap(rank => {
       const entry = this.availableModel(rank.model);
-      return entry && entry.enabled !== false ? [{ ...rank, entry }] : [];
+      return entry && this.isUsable(entry) ? [{ ...rank, entry }] : [];
     });
   }
 
   private smartAutoReady(): boolean {
     const name = this.modelSetting('deciderModel').model;
     const decider = name ? this.availableModel(name) : undefined;
-    return this.feature('smartAuto') && !!decider && decider.enabled !== false && this.smartAutoCandidates().length > 0;
+    return this.feature('smartAuto') && !!decider && this.isUsable(decider) && this.smartAutoCandidates().length > 0;
   }
 
   /** Leaves Smart Auto for a real model once it is turned off or can no longer pick one. */
   private async dropSmartAuto(): Promise<void> {
     if (this.selectedModel !== SMART_AUTO || this.smartAutoReady()) return;
     const current = this.active && this.availableModel(this.active.modelName);
-    this.selectedModel = current?.enabled ? current.name : this.models.list(true)[0]?.name || '';
+    this.selectedModel = current && this.isUsable(current) ? current.name : this.availableModels().find(model => this.isUsable(model))?.name || '';
     await this.context.workspaceState.update(SELECTED_MODEL_KEY, this.selectedModel);
     this.refreshModels(); await this.refreshAccount();
   }
@@ -3660,9 +3787,20 @@ class ExtensionHost implements vscode.Disposable {
     const id = `bg-${randomUUID().slice(0, 8)}`;
     const entry: BackgroundTask = { id, label: profile.name, afterTurn, done: false, finished: Promise.resolve() };
     chat.background.set(id, entry);
+    const sessionId = chat.record.id;
+    this.backgroundProcesses.add(sessionId, {
+      id,
+      kind: 'subagent',
+      title: `${profile.name}: ${task.length > 80 ? `${task.slice(0, 80)}…` : task}`,
+      stop: async () => { await this.cancelSubagent(chat, { id }); },
+    });
     entry.finished = this.runSubagentCore(chat, profile, task, files, run => { entry.run = run; })
       .catch((error): DelegateResult => ({ text: `Subagent "${profile.name}" failed: ${error instanceof Error ? error.message : String(error)}`, isError: true }))
-      .then(result => { entry.done = true; entry.result = result; entry.run = undefined; this.backgroundSettled(chat); });
+      .then(result => {
+        entry.done = true; entry.result = result; entry.run = undefined;
+        this.backgroundProcesses.end(sessionId, id, result.isError ? 'error' : 'done');
+        this.backgroundSettled(chat);
+      });
     return { text: `Started subagent "${profile.name}" in the background as task ${id}. Keep working; call ${WAIT_SUBAGENTS} to yield until it finishes and get its report.`
       + ` If your turn ends first: ${afterTurn === 'resume' ? 'its result is sent to you in a new turn' : afterTurn === 'hold' ? 'its result is attached to the user\'s next message' : 'it is cancelled'}.` };
   }
@@ -4257,6 +4395,7 @@ class ExtensionHost implements vscode.Disposable {
     }
     const model = this.availableModel(name);
     if (!model || !model.enabled) throw new Error(`Model '${name}' is unavailable.`);
+    if (!this.isUsable(model)) throw this.missingAccountError(model);
     this.selectedModel = name;
     await this.context.workspaceState.update(SELECTED_MODEL_KEY, name);
     this.refreshModels(); await this.refreshAccount();
@@ -4293,7 +4432,6 @@ class ExtensionHost implements vscode.Disposable {
     const backend = message.backend.trim();
     if (!name || !backend || name.length > 80) throw new Error('A model name and backend ID are required.');
     if (name === SMART_AUTO) throw new Error(`"${SMART_AUTO}" is reserved for the model picker. Choose another name.`);
-    const account = message.provider === 'cursor-acp' ? 'cursor-login' : message.account || 'default';
     const speedOptions = message.speedOptions || [];
     const effortOptions = message.effortOptions || [];
     if (!Array.isArray(speedOptions) || speedOptions.length > 8 || speedOptions.some(item =>
@@ -4309,18 +4447,8 @@ class ExtensionHost implements vscode.Disposable {
     if (message.provider === 'cursor-acp' && [backend, ...speedOptions.map(item => item.backend)].some(slug => !cursorSlug.test(slug))) {
       throw new Error('Cursor model slugs may only use letters, digits and . _ : / @ [ ] = , + -');
     }
-    if (message.provider !== 'cursor-acp' && account !== 'default' &&
-      (isOAuthProvider(message.provider) ? this.oauthAccounts.get(account)?.provider : this.accounts.get(account)?.provider) !== message.provider) {
-      throw new Error('The selected account does not belong to this provider.');
-    }
-    // The label lets Config Sync match the account on other PCs. A model still on "default" because this PC
-    // lacks its synced account keeps that label, so editing it here does not unbind it everywhere.
-    const previous = message.originalName ? this.models.get(message.originalName) : undefined;
-    const chosen = account === 'default' || message.provider === 'cursor-acp' ? undefined
-      : isOAuthProvider(message.provider) ? this.oauthAccounts.get(account) : this.accounts.get(account);
-    const accountLabel = chosen?.label
-      ?? (account === 'default' && previous?.provider === message.provider && (!previous.account || previous.account === 'default') ? previous.accountLabel : undefined);
-    await this.models.set({ name, provider: message.provider, backend, account, ...(accountLabel ? { accountLabel } : {}), enabled: true, speedOptions, effortOptions }, message.originalName);
+    // A model names a provider, not an account: the provider's default account runs it on each PC.
+    await this.models.set({ name, provider: message.provider, backend, enabled: true, speedOptions, effortOptions }, message.originalName);
     if (message.originalName && message.originalName !== name && this.modelChoices[message.originalName]) {
       this.modelChoices[name] = this.modelChoices[message.originalName];
       delete this.modelChoices[message.originalName];
@@ -4329,9 +4457,7 @@ class ExtensionHost implements vscode.Disposable {
     if (message.originalName && this.selectedModel === message.originalName) {
       this.selectedModel = name;
       await this.context.workspaceState.update(SELECTED_MODEL_KEY, name);
-      if (this.active && this.active.provider === message.provider && this.active.backend === backend &&
-        (message.provider === 'cursor-acp' || this.active.accountId === (account === 'default' ?
-          isOAuthProvider(message.provider) ? this.oauthAccounts.getDefault(message.provider)?.id : this.accounts.getDefault(message.provider)?.id : account))) {
+      if (this.active && this.active.provider === message.provider && this.active.backend === backend) {
         this.active.modelName = name;
         await this.saveSession(this.active);
       }
@@ -4345,7 +4471,7 @@ class ExtensionHost implements vscode.Disposable {
     if (!this.models.get(name)) throw new Error(`Model '${name}' is not configured.`);
     try { await this.models.remove(name); } catch (error) { this.sidebar.postMessage({ type: 'modelRemoveFailed', name }); this.refreshModels(); throw error; }
     if (this.selectedModel === name) {
-      this.selectedModel = this.models.list(true)[0]?.name || '';
+      this.selectedModel = this.availableModels().find(model => this.isUsable(model))?.name || '';
       await this.context.workspaceState.update(SELECTED_MODEL_KEY, this.selectedModel);
     }
     this.refreshModels();
@@ -4493,10 +4619,13 @@ class ExtensionHost implements vscode.Disposable {
       const contents = Array.isArray(update.content) ? update.content as Record<string, unknown>[] : [];
       const failure = contents.map(item => (item.content as Record<string, unknown> | undefined)?.text ?? item.text).filter(text => typeof text === 'string').join('\n').trim().slice(0, 300);
       const edit = state === 'running' ? liveEdits.current(id) : liveEdits.finish(id, state === 'error' ? failure || 'The edit failed.' : undefined);
+      const shownKind = (shown.kind === 'other' ? toolKind : shown.kind) as SidebarToolEvent['kind'];
+      const progress = this.toolProgressFor(`${chatId}:${id}`, shownKind, shown.full, state as SidebarToolEvent['state'], chat.mirror.cwd);
       const shownEvent = {
-        id, kind: (shown.kind === 'other' ? toolKind : shown.kind) as SidebarToolEvent['kind'], title: shown.title, detail: shown.detail, full: shown.full, state: state as SidebarToolEvent['state'],
+        id, kind: shownKind, title: shown.title, detail: shown.detail, full: shown.full, state: state as SidebarToolEvent['state'],
         internal: internalToolOf({ tool: title, input: update.rawInput ?? detail }, places),
         ...(edit ? { edit } : {}),
+        ...(progress ? { progress } : {}),
       };
       this.sidebar.postMessage({ type: 'toolEvent', sessionId: chatId, entryId, event: shownEvent });
       // Images a tool returned (batch read_file, screenshots) go on the same row once stored.
@@ -4672,7 +4801,7 @@ class ExtensionHost implements vscode.Disposable {
         case 'checkDependencies': await this.refreshDependencies(); break;
         case 'installProvider': await this.installProvider(message.provider); break;
         case 'pageChanged': this.sidebar.setPage(message.page); if (message.page === 'accounts') this.refreshUsage(); if (message.page === 'instructions') await this.refreshInstructions(); break;
-        case 'ready': this.sidebar.setShutdown(this.shutdown.getStatus()); this.sidebar.postMessage({ type: 'usageState', usage: this.usage.snapshot() }); this.refreshUsage(); if (this.active) { this.restoreJob(this.active); this.postJob(this.active); } for (const id of this.chats.keys()) this.postChatDiffs(id); await this.refreshInstructions(); this.postToolpacks(); this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode }); this.sidebar.postMessage({ type: 'slashCommandsState', commands: SLASH_COMMANDS }); this.scheduled.refresh(); this.postScheduledPrompts(); this.refreshCustomize(); this.postUnifyFeatures(); if (this.agentRoster.size) this.sidebar.postMessage({ type: 'agentRoster', agents: [...this.agentRoster.values()] }); this.refreshMemory(); this.sync.post(); this.refreshSubagents(); this.refreshModels(); this.refreshSessions(); await this.refreshAccount(); await this.refreshAccounts(); break;
+        case 'ready': this.sidebar.setShutdown(this.shutdown.getStatus()); this.sidebar.postMessage({ type: 'usageState', usage: this.usage.snapshot() }); this.refreshUsage(); if (this.active) { this.restoreJob(this.active); this.postJob(this.active); } for (const id of this.chats.keys()) { this.postChatDiffs(id); this.sidebar.postMessage({ type: 'backgroundProcesses', sessionId: id, processes: this.backgroundProcesses.list(id) }); } await this.refreshInstructions(); this.postToolpacks(); this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode }); this.sidebar.postMessage({ type: 'slashCommandsState', commands: SLASH_COMMANDS }); this.scheduled.refresh(); this.postScheduledPrompts(); this.refreshCustomize(); this.postUnifyFeatures(); if (this.agentRoster.size) this.sidebar.postMessage({ type: 'agentRoster', agents: [...this.agentRoster.values()] }); this.refreshMemory(); this.sync.post(); this.refreshSubagents(); this.refreshModels(); this.refreshSessions(); await this.refreshAccount(); await this.refreshAccounts(); break;
         case 'sendPrompt': {
           const slash = parseSlash(message.prompt);
           if (slash?.name === 'job') await this.startJob(slash.args, message.images, message.chatId);
@@ -4804,6 +4933,7 @@ class ExtensionHost implements vscode.Disposable {
         case 'newSession': await this.newChat(message.project, !!message.noFolder); break;
         case 'selectSession': await this.continueChat(message.sessionId); break;
         case 'deleteSession': await this.deleteSession(message.sessionId); break;
+        case 'stopBackgroundProcess': this.backgroundProcesses.stop(message.sessionId, message.id); break;
         case 'renameSession': {
           // Prefer the loaded chat's record so a later turn save does not restore the old name.
           const record = this.chats.get(message.sessionId)?.record ?? this.sessions().find(item => item.id === message.sessionId);
@@ -4843,7 +4973,10 @@ class ExtensionHost implements vscode.Disposable {
           this.refreshUsage(true, message.accountId);
           break;
         }
-        case 'listProviderModels': await this.listProviderModels(message.accountId); break;
+        case 'listProviderModels':
+        if (message.accountId === CURSOR_ACCOUNT_ID) await this.listCursorModels(message.accountId);
+        else await this.listProviderModels(message.accountId);
+        break;
         case 'openCliSetting':
           await vscode.commands.executeCommand('workbench.action.openSettings', 'unify.runtime.claudePath');
           break;
@@ -4915,6 +5048,7 @@ class ExtensionHost implements vscode.Disposable {
         workspaceRoots: vscode.workspace.workspaceFolders?.map(item => item.uri.fsPath),
         refreshModelState: () => this.refreshModels(),
         refreshUsageState: (id?: string) => this.refreshUsage(true, id),
+        removeAccount: id => this.removeAccount(id),
         refreshToolpacks: () => this.postToolpacks(),
         installToolpack: async sourcePath => { await this.toolpacks.add(sourcePath); },
         openExternal: url => vscode.env.openExternal(vscode.Uri.parse(url)),

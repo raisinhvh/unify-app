@@ -437,13 +437,15 @@ test('providers: labels, default model, model toggle and OAuth sign-out', async 
   const providerStore = JSON.parse(await readFile(join(unifyHome, 'unify/providers.json'), 'utf8'));
   assert.equal(providerStore.modelEnabled['Claude Default'], false);
 
-  assert.ok(existsSync(join(seeded.accountDir, 'auth.json')));
-  const signOut = await send({ type: 'signOutAccount', accountId: 'acc1' });
-  const signedOut = ofType(signOut.replies, 'accountsState')[0].accounts.find(account => account.id === 'acc1');
-  assert.ok(signedOut, 'the account record stays');
-  assert.equal(existsSync(join(seeded.accountDir, 'auth.json')), false);
-  assert.equal(existsSync(join(seeded.accountDir, '.claude.json')), false);
+  // Signing out removes the account through the engine, so it disappears instead of showing as signed out.
+  const removed = [];
+  const signOutReplies = [];
+  await handleUnifyRequest({ type: 'signOutAccount', accountId: 'acc1' }, reply => signOutReplies.push(reply),
+    { ...context, removeAccount: async id => { removed.push(id); } });
+  assert.deepEqual(removed, ['acc1']);
+  assert.equal(ofType(signOutReplies, 'accountsState').length, 1);
 
+  // Without the engine nothing is removed, and the screen gets the unchanged state back.
   const apiKey = await send({ type: 'signOutAccount', accountId: 'api1' });
   assert.ok(ofType(apiKey.replies, 'accountsState')[0].accounts.some(account => account.id === 'api1'));
 });

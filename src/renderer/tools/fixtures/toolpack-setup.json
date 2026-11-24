@@ -77,7 +77,6 @@
         ],
         "featured": [],
         "authors": 2,
-        "devices": [{ "id": "this", "label": "This PC", "current": true }],
         "fetchedAt": 1795800000000
       }
     },

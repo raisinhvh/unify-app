@@ -89,6 +89,11 @@ export const icons = {
   minimize: path('M3.33 8H12.67'),
   /** Not in Figma yet: square for window maximize. */
   maximize: '<rect x="3.5" y="3.5" width="9" height="9" rx="1" ' + stroke + '/>',
+  /** Not in Figma yet: terminal window with a prompt chevron and cursor, drawn in the same stroke style. */
+  terminal:
+    path('M3.33333 2H12.6667C13.403 2 14 2.59695 14 3.33333V12.6667C14 13.403 13.403 14 12.6667 14H3.33333C2.59695 14 2 13.403 2 12.6667V3.33333C2 2.59695 2.59695 2 3.33333 2Z') +
+    path('M4.66667 6L6.66667 8L4.66667 10') +
+    path('M8.66667 10.6667H11.3333'),
   /** Not in Figma yet: stop square for cancelling a run. */
   stop: '<rect x="4.5" y="4.5" width="7" height="7" rx="1" fill="currentColor"/>',
 } as const;

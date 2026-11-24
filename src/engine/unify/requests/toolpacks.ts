@@ -10,8 +10,11 @@
  * The same file records which packs came from the Hub, so the extension can add version, glyph and source
  * to those `SidebarToolpack` entries.
  */
+import { existsSync } from 'node:fs';
+import * as path from 'node:path';
+import { clearInstallError, setInstallError } from '../../toolpacks/sync-state';
 import { RequestPaths, isRecord, readJsonFile, writeJsonFile } from './state';
-import { ToolKind, ToolPolicy } from './types';
+import { ToolKind, ToolPolicy, UnifyRequestContext, UnifyRequestMessage } from './types';
 
 export interface InstalledHubPack {
   id: string;
@@ -21,7 +24,6 @@ export interface InstalledHubPack {
   version: string;
   source: 'hub';
   tools: string[];
-  syncedDevices?: number;
   installedAt: number;
 }
 
@@ -34,23 +36,16 @@ interface ToolpackStore {
   packs: Record<string, ToolpackPackSettings>;
   /** Packs installed through the Hub; local packs are not listed here. */
   installed: Record<string, InstalledHubPack>;
-  /** Hub install target: this device only, or the synced set. */
-  syncTargets: Record<string, 'this' | 'all'>;
 }
 
 const TOOL_KINDS: ToolKind[] = ['read', 'write', 'run'];
 const POLICIES: ToolPolicy[] = ['always', 'ask', 'off'];
-
-function emptyStore(): ToolpackStore {
-  return { packs: {}, installed: {}, syncTargets: {} };
-}
 
 function readStore(paths: RequestPaths): ToolpackStore {
   const stored = readJsonFile<Partial<ToolpackStore>>(paths.toolpacksFile, {});
   return {
     packs: isRecord(stored.packs) ? stored.packs as Record<string, ToolpackPackSettings> : {},
     installed: isRecord(stored.installed) ? stored.installed as Record<string, InstalledHubPack> : {},
-    syncTargets: isRecord(stored.syncTargets) ? stored.syncTargets as Record<string, 'this' | 'all'> : {},
   };
 }
 
@@ -111,16 +106,10 @@ export function setToolpackPermission(paths: RequestPaths, id: string, group: To
 }
 
 /** Records a pack installed from the Hub so the extension can describe it without starting it. */
-export function recordHubInstall(paths: RequestPaths, pack: InstalledHubPack, target: 'this' | 'all'): void {
+export function recordHubInstall(paths: RequestPaths, pack: InstalledHubPack): void {
   const store = readStore(paths);
   store.installed[pack.id] = pack;
-  store.syncTargets[pack.id] = target;
   writeStore(paths, store);
-}
-
-/** Whether a Hub install was meant for this device only or for every signed-in device. */
-export function hubInstallTarget(paths: RequestPaths, id: string): 'this' | 'all' {
-  return readStore(paths).syncTargets[id] ?? 'all';
 }
 
 export interface ToolpackDecorationInput {
@@ -133,12 +122,11 @@ export interface ToolpackDecorationInput {
   icon?: string;
   version?: string;
   source?: 'hub' | 'local';
-  syncedDevices?: number;
 }
 
 /**
- * Adds the screen's optional fields to one `SidebarToolpack`: display name, glyph, version, source, synced
- * devices, group policies and per-tool switches. The extension calls this before posting `toolpacksState`.
+ * Adds the screen's optional fields to one `SidebarToolpack`: display name, glyph, version, source, group policies
+ * and per-tool switches. The extension calls this before posting `toolpacksState`.
  */
 export function decorateToolpack(paths: RequestPaths, pack: ToolpackDecorationInput): ToolpackDecorationInput & {
   permissions: Partial<Record<ToolKind, ToolPolicy>>;
@@ -157,11 +145,32 @@ export function decorateToolpack(paths: RequestPaths, pack: ToolpackDecorationIn
     icon: pack.icon ?? hub?.icon,
     version: pack.version ?? hub?.version,
     source: pack.source ?? (hub ? 'hub' : 'local'),
-    syncedDevices: pack.syncedDevices ?? hub?.syncedDevices,
     permissions,
     tools: pack.tools.map(tool => ({
       ...tool,
       enabled: settings.tools[tool.name] ?? tool.enabled ?? true,
     })),
   };
+}
+
+/**
+ * `reinstallToolpack`: installs a pack again from the `pack.ts` in its folder on this PC, after its install failed
+ * or the pack no longer loads. Success clears the remembered error; failure remembers the new one. Either way the
+ * toolpack list is rebuilt with `refreshToolpacks`, which replies with `toolpacksState`.
+ */
+export async function handleToolpackInstallRequest(message: UnifyRequestMessage, paths: RequestPaths, context: UnifyRequestContext): Promise<boolean> {
+  if (message.type !== 'reinstallToolpack') return false;
+  const id = typeof message.id === 'string' ? message.id : '';
+  try {
+    if (!id.trim() || id !== path.basename(id) || id === '.' || id === '..') throw new Error('Unknown toolpack.');
+    const sourcePath = path.join(paths.toolpacksDir, id, 'pack.ts');
+    if (!existsSync(sourcePath)) throw new Error(`"${id}" has no source on this PC. Install it again from the Hub.`);
+    if (!context.installToolpack) throw new Error('Installing toolpacks is not available here.');
+    await context.installToolpack(sourcePath);
+    clearInstallError(paths.toolpacksDir, id);
+  } catch (error) {
+    if (id) setInstallError(paths.toolpacksDir, id, error instanceof Error ? error.message : String(error));
+  }
+  context.refreshToolpacks?.();
+  return true;
 }

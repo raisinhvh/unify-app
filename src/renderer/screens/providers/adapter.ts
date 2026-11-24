@@ -2,8 +2,11 @@
  * Accounts and models as the Providers screen sees them. Reads the engine's accounts, cursor login, usage and
  * models; the usage maths stays in store/usage.ts (DSH's, unchanged).
  *
+ * Models belong to a provider: every account of that provider serves them, so the Provider page owns the
+ * default model and the model list. Accounts that are signed out are not listed at all.
+ *
  * Fields and actions the engine lacks (protocol-requests.md â€º Providers) go through typed requests here:
- * per-model on/off, model context size, account rename, account default model, OAuth sign-out.
+ * per-model on/off, model context size, account rename, provider default model, OAuth sign-out.
  * Changes are optimistic until the engine's next accountsState / modelState.
  */
 import { createMemo, createRoot, createSignal } from 'solid-js';
@@ -53,7 +56,7 @@ const oauthNames: Record<string, string> = {
 export const cursorAccountId = 'cursor-login';
 
 export interface AccountExtension {
-  /** Model id new chats on this account start with. */
+  /** Legacy per-account default; the provider default (`providerDefaults`) wins, this is its fallback. */
   defaultModel?: string;
 }
 
@@ -86,7 +89,7 @@ export interface ProviderGroup {
 export type ProviderRequest =
   | { type: 'setModelEnabled'; modelId: string; enabled: boolean }
   | { type: 'renameAccount'; accountId: string; label: string }
-  | { type: 'setAccountDefaultModel'; accountId: string; modelId: string }
+  | { type: 'setProviderDefaultModel'; provider: string; modelId: string }
   | { type: 'signOutAccount'; accountId: string }
   | { type: 'openProviderUsage'; accountId: string };
 
@@ -104,12 +107,14 @@ export function postProviderRequest(message: ProviderRequest): void {
 
 interface Overrides {
   labels: Record<string, string>;
-  defaults: Record<string, string>;
+  providerDefaults: Record<string, string>;
   models: Record<string, boolean>;
 }
 
-const [overrides, setOverrides] = createSignal<Overrides>({ labels: {}, defaults: {}, models: {} });
+const [overrides, setOverrides] = createSignal<Overrides>({ labels: {}, providerDefaults: {}, models: {} });
 const [removingModels, setRemovingModels] = createSignal<string[]>([]);
+/** The engine's `providerDefaults` from the last accountsState (provider id -> model id). */
+const [engineProviderDefaults, setEngineProviderDefaults] = createSignal<Record<string, string>>({});
 
 export interface ServerModelsResult {
   loading: boolean;
@@ -122,7 +127,12 @@ const [serverModels, setServerModels] = createSignal<Record<string, ServerModels
 export { serverModels };
 
 onHostMessage(message => {
-  if (message.type === 'accountsState') setOverrides(current => ({ ...current, labels: {}, defaults: {} }));
+  if (message.type === 'accountsState') {
+    setOverrides(current => ({ ...current, labels: {}, providerDefaults: {} }));
+    // Not in SidebarHostMessage yet: the engine adds it next to the per-account defaults.
+    const defaults = (message as { providerDefaults?: Record<string, string> }).providerDefaults;
+    setEngineProviderDefaults(defaults ?? {});
+  }
   if (message.type === 'modelState') {
     setOverrides(current => ({ ...current, models: {} }));
     const present = new Set((message.models || []).map(model => model.name));
@@ -177,7 +187,7 @@ export const providerGroups = createRoot(() =>
         isDefault: account.isDefault,
         authType: account.authType ?? (isCursor || account.provider === 'claude-cli' || account.provider === 'codex-cli' ? 'oauth' : 'api-key'),
         baseURL: account.baseURL,
-        defaultModel: local.defaults[account.id] ?? account.defaultModel,
+        defaultModel: account.defaultModel,
         isCursor,
         status: statusOf(usage),
         usage,
@@ -185,12 +195,23 @@ export const providerGroups = createRoot(() =>
         color: colors.get(account.id) || providerColor(account.provider),
       };
     };
+    // Signed-out accounts are not listed. Duplicates (same provider and email) are dropped as a guard: the engine
+    // merges them, but the list must never show two rows for one login while that catches up.
+    const seen = new Set<string>();
+    const listed = viewState.accounts.filter(account => {
+      if (statusOf(viewState.usage[account.id]) === 'signedOut') return false;
+      if (!account.email) return true;
+      const key = `${account.provider}\u0000${account.email.toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
     const groups: ProviderGroup[] = [];
     const known = new Set(accountGroupOrder);
-    const rest = [...new Set(viewState.accounts.map(account => account.provider))].filter(id => !displayOrder.includes(id));
+    const rest = [...new Set(listed.map(account => account.provider))].filter(id => !displayOrder.includes(id));
     const providers = [...displayOrder, ...rest].filter(provider => known.has(provider) || rest.includes(provider));
     for (const provider of providers) {
-      const accounts = viewState.accounts.filter(account => account.provider === provider).map(account => view(account));
+      const accounts = listed.filter(account => account.provider === provider).map(account => view(account));
       if (provider === 'cursor-acp' && viewState.cursor.connected) {
         accounts.push(view({ id: cursorAccountId, provider, label: viewState.cursor.label || 'Cursor account', isDefault: true, authType: 'oauth' }, true));
       }
@@ -238,35 +259,51 @@ export interface ModelView {
   name: string;
   provider: string;
   backend: string;
-  account: string;
   speedOptions?: { label: string; backend: string }[];
   effortOptions?: string[];
   enabled: boolean;
   contextWindow?: number;
 }
 
-/** Models served through an account: bound to it, or unbound on its provider when it is the provider default. */
-export function accountModels(account: AccountView): ModelView[] {
+/** Every model of a provider. All of its accounts serve the same list. */
+export function providerModels(provider: string): ModelView[] {
   const local = overrides();
   const removing = new Set(removingModels());
   return viewState.models
-    .filter((model: SidebarModel) => {
-      if (removing.has(model.name) || removing.has(model.id)) return false;
-      return model.account && model.account !== 'default'
-        ? model.account === account.id
-        : model.provider === account.provider && account.isDefault;
-    })
+    .filter((model: SidebarModel) => model.provider === provider && !removing.has(model.name) && !removing.has(model.id))
     .map(model => ({
       id: model.id,
       name: model.name,
       provider: model.provider,
       backend: model.backend,
-      account: model.account || 'default',
       speedOptions: model.speedOptions,
       effortOptions: model.effortOptions,
       enabled: model.id in local.models ? local.models[model.id] : model.enabled !== false,
       contextWindow: model.contextWindow,
     }));
+}
+
+/** The accounts of one provider as the list shows them (signed-out ones are gone). */
+export function providerAccounts(provider: string): AccountView[] {
+  return providerGroups().find(group => group.provider === provider)?.accounts ?? [];
+}
+
+/** The account a provider uses first: the engine's default, else the first one listed. */
+export function defaultAccount(provider: string): AccountView | undefined {
+  const accounts = providerAccounts(provider);
+  return accounts.find(account => account.isDefault) ?? accounts[0];
+}
+
+/**
+ * The model new chats on this provider start with: the local change, the engine's `providerDefaults`, else the
+ * default account's old per-account default.
+ */
+export function providerDefault(provider: string): string | undefined {
+  const local = overrides().providerDefaults[provider];
+  if (local) return local;
+  const engine = engineProviderDefaults()[provider];
+  if (engine) return engine;
+  return defaultAccount(provider)?.defaultModel;
 }
 
 /** "1M context", "200K context". */
@@ -298,7 +335,7 @@ const reservedModelName = 'Smart Auto';
 const cursorModelSlug = /^[A-Za-z0-9][A-Za-z0-9._:/@[\]=,+-]{0,119}$/;
 
 export interface SaveModelInput {
-  account: AccountView;
+  provider: string;
   backend: string;
   name?: string;
   originalName?: string;
@@ -308,7 +345,7 @@ export interface SaveModelInput {
 
 /** Client-side check matching src/engine/extension.ts saveModel rules. */
 export function validateModelInput(input: SaveModelInput): string | undefined {
-  if (!allowedModelProviders.has(input.account.provider)) {
+  if (!allowedModelProviders.has(input.provider)) {
     return 'Choose a supported model provider.';
   }
   const backend = input.backend.trim();
@@ -319,7 +356,7 @@ export function validateModelInput(input: SaveModelInput): string | undefined {
   if (name === reservedModelName) {
     return `"${reservedModelName}" is reserved for the model picker. Choose another name.`;
   }
-  if (input.account.provider === 'cursor-acp' && !cursorModelSlug.test(backend)) {
+  if (input.provider === 'cursor-acp' && !cursorModelSlug.test(backend)) {
     return 'Cursor model slugs may only use letters, digits and . _ : / @ [ ] = , + -';
   }
   const efforts = input.effortOptions || [];
@@ -330,22 +367,22 @@ export function validateModelInput(input: SaveModelInput): string | undefined {
   return undefined;
 }
 
+/**
+ * Saves a model for a provider. No `account` is sent: models are provider-scoped. The engine's SidebarWebviewMessage
+ * still lists `account` as required, so the cast keeps this compiling until the contract drops it.
+ */
 export function saveModel(input: SaveModelInput): void {
   const backend = input.backend.trim();
   const name = (input.name?.trim() || backend).trim();
-  const account = input.account.isCursor || input.account.provider === 'cursor-acp'
-    ? cursorAccountId
-    : input.account.id;
   post({
     type: 'saveModel',
     ...(input.originalName ? { originalName: input.originalName } : {}),
     name,
-    provider: input.account.provider,
+    provider: input.provider,
     backend,
-    account,
     speedOptions: input.speedOptions || [],
     effortOptions: input.effortOptions || [],
-  });
+  } as unknown as SidebarWebviewMessage);
 }
 
 export function removeModel(name: string): void {
@@ -414,8 +451,8 @@ const staticSuggestions: Record<string, ModelSuggestion[]> = {
 };
 
 /** Datalist suggestions for the Add model form: Cursor backends, self-hosted server list, or known provider IDs. */
-export function modelSuggestions(account: AccountView): ModelSuggestion[] {
-  if (account.provider === 'cursor-acp') {
+export function modelSuggestions(provider: string): ModelSuggestion[] {
+  if (provider === 'cursor-acp') {
     const entries: ModelSuggestion[] = [
       { value: 'auto', label: 'Auto' },
       ...(viewState.cursorBackends || [])
@@ -429,10 +466,11 @@ export function modelSuggestions(account: AccountView): ModelSuggestion[] {
       return true;
     });
   }
-  if (account.provider === 'self-hosted') {
-    return (serverModels()[account.id]?.models || []).map(value => ({ value }));
+  if (provider === 'self-hosted') {
+    const account = defaultAccount(provider);
+    return (account ? serverModels()[account.id]?.models || [] : []).map(value => ({ value }));
   }
-  return staticSuggestions[account.provider] || [];
+  return staticSuggestions[provider] || [];
 }
 
 export function modelIdPlaceholder(provider: string): string {
@@ -467,9 +505,9 @@ export function renameAccount(accountId: string, label: string): void {
   postProviderRequest({ type: 'renameAccount', accountId, label: trimmed });
 }
 
-export function setAccountDefaultModel(accountId: string, modelId: string): void {
-  setOverrides(current => ({ ...current, defaults: { ...current.defaults, [accountId]: modelId } }));
-  postProviderRequest({ type: 'setAccountDefaultModel', accountId, modelId });
+export function setProviderDefaultModel(provider: string, modelId: string): void {
+  setOverrides(current => ({ ...current, providerDefaults: { ...current.providerDefaults, [provider]: modelId } }));
+  postProviderRequest({ type: 'setProviderDefaultModel', provider, modelId });
 }
 
 export function signIn(account: AccountView): void {

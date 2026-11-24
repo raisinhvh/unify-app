@@ -2,13 +2,14 @@
   "extends": "chatpane",
   "messages": [
     {
-      "type": "diffState",
+      "type": "chatDiffState",
+      "sessionId": "s-header",
       "diffs": [
-        { "id": "d1", "path": "src/engine/extension.ts", "summary": "Register the pane commands", "additions": 12, "deletions": 3 },
-        { "id": "d2", "path": "src/renderer/shell/shell.css", "summary": "Hairline before close", "additions": 6, "deletions": 1 },
-        { "id": "d3", "path": "src/renderer/shell/PaneGrid.tsx", "summary": "Pass focus to the header", "additions": 21, "deletions": 9 },
-        { "id": "d4", "path": "src/renderer/screens/chats/ChatPane.tsx", "summary": "Model pill after the title", "additions": 14, "deletions": 6 },
-        { "id": "d5", "path": "src/renderer/store/index.ts", "summary": "Persist the pill placement", "additions": 4, "deletions": 0 }
+        { "id": "d1", "path": "src/engine/extension.ts", "summary": "Register the pane commands", "additions": 12, "deletions": 3, "state": "applied" },
+        { "id": "d2", "path": "src/renderer/shell/shell.css", "summary": "Hairline before close", "additions": 6, "deletions": 1, "state": "applied" },
+        { "id": "d3", "path": "src/renderer/shell/PaneGrid.tsx", "summary": "Pass focus to the header", "additions": 21, "deletions": 9, "state": "applied" },
+        { "id": "d4", "path": "src/renderer/screens/chats/ChatPane.tsx", "summary": "Model pill after the title", "additions": 14, "deletions": 6, "state": "applied" },
+        { "id": "d5", "path": "src/renderer/store/index.ts", "summary": "Persist the pill placement", "additions": 4, "deletions": 0, "state": "applied" }
       ]
     }
   ]

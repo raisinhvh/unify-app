@@ -60,13 +60,30 @@ function PackRow(props: { pack: InstalledPack }): JSX.Element {
           <span class="tree-label">{props.pack.name}</span>
           <span
             class="tree-trailing"
-            classList={{ warn: props.pack.state === 'error', 'tp-setup-needed': props.pack.state !== 'error' && setupNeeded() }}
-            title={setupNeeded() ? `Setup needed: ${pendingSetup(props.pack.id)} step${pendingSetup(props.pack.id) === 1 ? '' : 's'} to finish` : undefined}
+            classList={{
+              warn: props.pack.state === 'error' && !props.pack.needsInstall,
+              'tp-setup-needed': !props.pack.needsInstall && props.pack.state !== 'error' && setupNeeded(),
+              'tp-not-installed': props.pack.needsInstall,
+            }}
+            title={props.pack.needsInstall ? 'Not installed on this PC' : setupNeeded() ? `Setup needed: ${pendingSetup(props.pack.id)} step${pendingSetup(props.pack.id) === 1 ? '' : 's'} to finish` : undefined}
           >
-            {props.pack.state === 'error' ? 'error' : setupNeeded() ? 'Setup' : props.pack.enabled ? props.pack.tools.length : 'off'}
+            {props.pack.needsInstall
+              ? 'Install'
+              : props.pack.state === 'error'
+                ? 'error'
+                : setupNeeded()
+                  ? 'Setup'
+                  : props.pack.enabled
+                    ? props.pack.tools.length
+                    : 'off'}
           </span>
         </button>
-        <Toggle checked={props.pack.enabled} onChange={on => setPackEnabled(props.pack.id, on)} label={`${props.pack.name} enabled`} />
+        <Toggle
+          checked={props.pack.enabled}
+          disabled={props.pack.needsInstall}
+          onChange={on => setPackEnabled(props.pack.id, on)}
+          label={`${props.pack.name} enabled`}
+        />
       </div>
       <Collapse open={expanded()} class="tp-pack-tools">
         <Index each={props.pack.tools}>

@@ -1,0 +1,70 @@
+{
+  "extends": "base",
+  "persisted": {
+    "route": "toolpacks",
+    "panelOpen": true,
+    "toolpackSelected": "roblox-studio",
+    "toolpackTreeOpen": ["installed"]
+  },
+  "messages": [
+    {
+      "type": "toolpacksState",
+      "packs": [
+        {
+          "id": "roblox-studio",
+          "name": "Roblox Studio",
+          "icon": "roblox",
+          "description": "Read and edit the open place in Roblox Studio: instances, scripts, playtests.",
+          "version": "1.4.0",
+          "source": "hub",
+          "enabled": true,
+          "state": "stopped",
+          "status": "Not installed",
+          "needsInstall": true,
+          "installError": "Could not copy UnifyBridge.rbxm: the Roblox Studio Plugins folder was not found.",
+          "tools": [
+            { "name": "studio_tree", "description": "List instances under a path" },
+            { "name": "studio_get_properties", "description": "Read an instance's properties" },
+            { "name": "studio_set_property", "description": "Set a property on an instance" },
+            { "name": "studio_run_playtest", "description": "Start a playtest and capture output" }
+          ],
+          "logs": ["Install failed: Plugins folder missing"]
+        },
+        {
+          "id": "figma",
+          "name": "Figma",
+          "icon": "figma",
+          "description": "Inspect and edit the open Figma file through the Unify bridge plugin.",
+          "version": "0.9.2",
+          "source": "hub",
+          "enabled": true,
+          "state": "stopped",
+          "status": "Not installed",
+          "needsInstall": true,
+          "tools": [
+            { "name": "figma_get_selection", "description": "Read the current selection" },
+            { "name": "figma_execute", "description": "Run plugin code in the open file" }
+          ],
+          "logs": []
+        },
+        {
+          "id": "blender",
+          "name": "Blender",
+          "icon": "blender",
+          "description": "Drive Blender over its Python API.",
+          "version": "2.1.0",
+          "source": "local",
+          "enabled": true,
+          "state": "running",
+          "status": "Connected",
+          "needsInstall": false,
+          "tools": [
+            { "name": "blender_list_objects", "description": "List objects in the scene" },
+            { "name": "blender_render", "description": "Render the active camera" }
+          ],
+          "logs": []
+        }
+      ]
+    }
+  ]
+}

@@ -166,6 +166,7 @@ test('deleting a chat removes its record, transcript, mirror and selects the nex
     const calls = [];
     Object.assign(host, {
       deletedSessions: new Set(), chats: new Map(), chatLoads: new Map(), transcripts: new Map([['one', []]]), active: { id: 'one' },
+      backgroundProcesses: { clear() {} },
       context: { workspaceState: { get: (key, fallback) => store.has(key) ? store.get(key) : fallback, update: async (key, value) => { store.set(key, value); } }, globalStorageUri: { fsPath: dir } },
       unloadChat: async id => { calls.push(['unload', id]); host.active = undefined; },
       saveTranscripts: async () => {}, refreshSessions: () => {}, syncActiveView: () => {}, updateStatus: () => {},

@@ -1,0 +1,9 @@
+{
+  "extends": "chatpane",
+  "messages": [
+    { "type": "shutdownArmed", "armed": true }
+  ],
+  "timed": [
+    { "after": 300, "message": { "type": "unifyFeaturesState", "features": { "agents.noQuestions": true, "power.shutdownWhenIdle": true } } }
+  ]
+}

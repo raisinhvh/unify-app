@@ -6,7 +6,7 @@
  *
  * Closed: one flat line, provider glyph, model name and a chevron. Effort and speed live in EffortPicker.
  * It truncates with an ellipsis and never wraps.
- * Open: a Popover with a search field (focused; filters by name, provider, account and backend), an optional
+ * Open: a Popover with a search field (focused; filters by name, provider and backend), an optional
  * "None" row, Smart Auto when ready, then every enabled model grouped by provider like a folder tree.
  * Keyboard: arrows move, Enter picks, Esc closes, typing on the closed line opens it and starts the search.
  *
@@ -38,7 +38,7 @@ export interface ModelPickerProps {
   smartAuto?: boolean;
   /** Adds a first row with this label that picks ''. */
   noneLabel?: string;
-  /** Only offer these model ids (an account's own models). */
+  /** Only offer these model ids (for example one provider's models). */
   modelIds?: readonly string[];
   /** Shown on the line when nothing is picked and there is no None row. */
   placeholder?: string;
@@ -61,6 +61,8 @@ interface ChoiceRow {
   value: string;
   label: string;
   hint?: string;
+  /** Shown but not pickable (a model whose provider has no signed-in account). */
+  disabled?: boolean;
   /** Leading glyph: a provider id, the Smart Auto icon, or nothing. */
   provider?: string;
   smartAuto?: boolean;
@@ -79,6 +81,8 @@ interface Candidate {
   group?: string;
   provider?: string;
   smartAuto?: boolean;
+  /** False when the model's provider has no usable account: listed, but not pickable. */
+  disabled?: boolean;
   /** Lower-case text the search matches against. */
   haystack: string;
 }
@@ -87,11 +91,6 @@ const noneValue = '';
 let pickerCount = 0;
 /** DEV: ?open= opens only one picker (the first visible one in a composer). */
 let devOpened = false;
-
-function accountLabel(accountId: string | undefined): string | undefined {
-  if (!accountId) return undefined;
-  return viewState.accounts.find(account => account.id === accountId)?.label;
-}
 
 export function ModelPicker(props: ModelPickerProps): JSX.Element {
   pickerCount += 1;
@@ -126,14 +125,15 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
       }
       if (allowed && !allowed.has(option.value)) continue;
       const model = viewState.models.find(item => item.id === option.value);
-      const account = accountLabel(model?.account);
+      const disabled = model?.usable === false;
       list.push({
         value: option.value,
         label: option.label,
         group: option.group,
         provider: model?.provider,
-        hint: account,
-        haystack: [option.label, option.group, model?.provider, model?.backend, account].filter(Boolean).join(' ').toLowerCase(),
+        disabled,
+        hint: disabled ? 'No account' : undefined,
+        haystack: [option.label, option.group, model?.provider, model?.backend].filter(Boolean).join(' ').toLowerCase(),
       });
     }
     return list;
@@ -166,15 +166,14 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
     for (const [group, members] of groups) {
       const provider = members[0].provider;
       list.push({ kind: 'group', key: `group:${group}`, label: group, provider: provider ?? 'unknown' });
-      // Account labels only help when one provider lists models from more than one account.
-      const accounts = new Set(members.map(member => member.hint ?? ''));
       members.forEach((candidate, index) => {
         list.push({
           kind: 'choice',
           key: `model:${candidate.value}`,
           value: candidate.value,
           label: candidate.label,
-          hint: accounts.size > 1 ? candidate.hint : undefined,
+          hint: candidate.hint,
+          disabled: candidate.disabled,
           nested: true,
           last: index === members.length - 1,
         });
@@ -183,7 +182,8 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
     return list;
   });
 
-  const choices = createMemo(() => rows().filter((row): row is ChoiceRow => row.kind === 'choice'));
+  /** The rows keyboard navigation can reach: every choice except the disabled ones. */
+  const choices = createMemo(() => rows().filter((row): row is ChoiceRow => row.kind === 'choice' && !row.disabled));
 
   /**
    * The row to highlight when the list changes. While searching, the first match (what Enter should pick);
@@ -236,6 +236,7 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
   });
 
   function pick(row: ChoiceRow): void {
+    if (row.disabled) return;
     if (props.onChange) props.onChange(row.value);
     else selectModel(row.value, props.chatId);
     closePicker(true);
@@ -342,9 +343,11 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
           nested: !!choice().nested,
           last: !!choice().last,
           current: isCurrent(),
+          disabled: !!choice().disabled,
         }}
+        aria-disabled={choice().disabled ? true : undefined}
         onPointerMove={() => {
-          if (highlightKey() !== entry.key) setHighlightKey(entry.key);
+          if (!choice().disabled && highlightKey() !== entry.key) setHighlightKey(entry.key);
         }}
         onPointerDown={event => event.preventDefault()}
         onClick={() => pick(choice())}
@@ -352,7 +355,9 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
         <Show when={!choice().nested}>
           <span class="model-picker-row-leading">{rowLeading(choice())}</span>
         </Show>
-        <span class="model-picker-row-label">{choice().label}</span>
+        <span class="model-picker-row-label">
+          {choice().label}
+        </span>
         <Show when={choice().hint}>
           <span class="model-picker-row-hint type-caption">{choice().hint}</span>
         </Show>

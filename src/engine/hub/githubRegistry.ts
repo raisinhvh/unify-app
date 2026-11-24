@@ -18,7 +18,6 @@ import { HUB_BRANCH, HUB_PUBLISHERS_URL, HUB_REPOSITORY, publishHubPack } from '
 import { PACK_SCRIPT_NAMES } from './scripts';
 import {
   HubCategory,
-  HubDevice,
   HubPack,
   HubPackDetail,
   HubPublishOptions,
@@ -37,7 +36,6 @@ interface RemoteIndex {
   categories?: unknown;
   featured?: unknown;
   authors?: unknown;
-  devices?: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -80,10 +78,6 @@ function validCategory(value: unknown): value is HubCategory {
   return isRecord(value) && typeof value.id === 'string' && typeof value.label === 'string';
 }
 
-function validDevice(value: unknown): value is HubDevice {
-  return isRecord(value) && typeof value.id === 'string' && typeof value.label === 'string' && typeof value.current === 'boolean';
-}
-
 function normalisePack(value: HubPack): HubPack {
   return {
     ...value,
@@ -121,7 +115,6 @@ export class GithubHubRegistry implements HubRegistry {
       const index = JSON.parse(await this.fetchText(HUB_INDEX_URL)) as RemoteIndex;
       const packs = Array.isArray(index.packs) ? index.packs.filter(validPack).map(normalisePack) : [];
       const categories = Array.isArray(index.categories) ? index.categories.filter(validCategory) : [];
-      const devices = Array.isArray(index.devices) ? index.devices.filter(validDevice) : [];
       return {
         packs,
         categories,
@@ -129,7 +122,6 @@ export class GithubHubRegistry implements HubRegistry {
           ? index.featured.filter((id): id is string => typeof id === 'string' && packs.some(pack => pack.id === id))
           : [],
         authors: count(index.authors, new Set(packs.map(pack => pack.author)).size),
-        devices: devices.length ? devices : [{ id: 'desktop', label: 'Desktop', current: true }],
         fetchedAt: Date.now(),
       };
     } catch (error) {
@@ -138,7 +130,6 @@ export class GithubHubRegistry implements HubRegistry {
         categories: [],
         featured: [],
         authors: 0,
-        devices: [{ id: 'desktop', label: 'Desktop', current: true }],
         fetchedAt: Date.now(),
         error: error instanceof Error ? error.message : String(error),
       };

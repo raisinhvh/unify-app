@@ -74,7 +74,7 @@ async function world(t) {
     const root = join(base, name);
     const pc = {
       name, settings, state: new Map(), memory: join(root, 'memory'),
-      roots: { unifyHome: join(root, 'dsh'), agentsHome: join(root, 'agents'), toolpacks: join(root, 'toolpacks') },
+      roots: { unifyHome: join(root, 'dsh'), agentsHome: join(root, 'agents') },
     };
     await mkdir(pc.memory, { recursive: true });
     const context = {
@@ -84,7 +84,6 @@ async function world(t) {
     pc.sync = new ConfigSync(context, {
       roots: () => ({ ...pc.roots, memory: pc.settings['memory.enabled'] === false ? undefined : pc.memory }),
       accounts: () => [],
-      toolpacks: { list: () => [], add: async () => {}, remove: async () => {}, setEnabled: async () => {} },
       git: async () => 'git',
       log: () => {}, post: state => { pc.posted = state; }, applied: async () => {},
     });

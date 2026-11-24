@@ -33,6 +33,11 @@ export interface CodexTurn {
   /** Codex started another assistant message; text after this must not be joined to earlier text. */
   onMessageBreak?(): void;
   onTool(id: string, title: string, detail: string | undefined, state: 'running' | 'complete' | 'error'): void;
+  /**
+   * Live output of a running command: the new text of its `aggregated_output` since the last update, under the id that
+   * onTool reports. Codex only sends it when its item updates carry output. Errors thrown here are ignored.
+   */
+  onToolOutput?(event: { id: string; chunk: string }): void;
   /** Reports token usage once per completed Codex turn. Errors thrown here are ignored. */
   onUsage?(usage: TurnUsage): void;
   /**
@@ -273,6 +278,8 @@ export class CodexCliRuntime {
       const textById = new Map<string, string>();
       const startedMessages = new Set<string>();
       const toolRows = new Map<string, { state: ToolState; detail: string }>();
+      // Command id → output text already reported through onToolOutput.
+      const outputById = new Map<string, string>();
       const emitTool = (id: string, title: string, detail: string | undefined, state: ToolState): void => {
         const key = id || title;
         const previous = toolRows.get(key);
@@ -302,6 +309,14 @@ export class CodexCliRuntime {
           return;
         }
         if (item.type === 'reasoning') return;
+        if (item.type === 'command_execution' && typeof item.aggregated_output === 'string') {
+          const key = id || 'Command';
+          const output = item.aggregated_output;
+          const previous = outputById.get(key) ?? '';
+          const chunk = output.startsWith(previous) ? output.slice(previous.length) : output;
+          outputById.set(key, output);
+          if (chunk) { try { turn.onToolOutput?.({ id: key, chunk }); } catch { /* Callback errors must not interrupt the turn. */ } }
+        }
         const tool = itemTool(item);
         if (!tool) return;
         emitTool(id || tool.title, tool.title, tool.detail, itemToolState(item, completed));

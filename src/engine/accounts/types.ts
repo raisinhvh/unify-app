@@ -10,15 +10,14 @@ export interface AccountRecord {
   readonly updatedAt: number;
 }
 
-/** A model shown to the user and the provider route it resolves to. */
+/**
+ * A model shown to the user and the provider route it resolves to. Models belong to a provider, not an account:
+ * a chat on the model uses the provider's default account.
+ */
 export interface ModelEntry {
   readonly name: string;
   readonly provider: string;
   readonly backend: string;
-  /** `default` resolves to the provider's active account. */
-  readonly account?: string;
-  /** Label of the account, kept by Config Sync so another PC can match its own account with that label. */
-  readonly accountLabel?: string;
   readonly enabled: boolean;
   /** Speed presets. Codex and Claude CLI use native speed settings and keep the base backend. Other providers use backend routes. */
   readonly speedOptions?: { label: string; backend: string }[];

@@ -138,7 +138,7 @@ type SidebarWebviewPayload =
   | { type: 'selectModel'; modelId: string }
   | { type: 'selectSpeed'; value: string }
   | { type: 'selectEffort'; value: string }
-  | { type: 'saveModel'; originalName?: string; name: string; provider: string; backend: string; account: string; speedOptions: { label: string; backend: string }[]; effortOptions: string[] }
+  | { type: 'saveModel'; originalName?: string; name: string; provider: string; backend: string; /** Ignored: models belong to a provider. */ account?: string; speedOptions: { label: string; backend: string }[]; effortOptions: string[] }
   | { type: 'removeModel'; name: string }
   | { type: 'saveSubagent'; originalName?: string; profile: SidebarSubagentProfile }
   | { type: 'removeSubagent'; name: string }
@@ -206,6 +206,10 @@ type SidebarWebviewPayload =
   | { type: 'sendScheduledPromptNow'; id: string }
   /** Unify: stop a cancellable `progressNotice` task (fires the shim's withProgress cancellation token). */
   | { type: 'cancelProgress'; id: string }
+  /** Unify: stop one of a chat's background processes (only ones sent with `stoppable`). */
+  | { type: 'stopBackgroundProcess'; sessionId: string; id: string }
+  /** Unify: (re)install a toolpack from the source in its folder on this PC; replies with `toolpacksState`. */
+  | { type: 'reinstallToolpack'; id: string }
   /** Unify `@` mentions: fuzzy-search project files and folders; answered with `workspaceFileResults`. */
   | { type: 'searchWorkspaceFiles'; requestId: string; query: string; limit?: number };
 
@@ -244,6 +248,13 @@ export interface SidebarToolpack {
   error?: string;
   tools: { name: string; description: string }[];
   logs: string[];
+  /**
+   * Unify: the pack was installed from the Hub but is not working on this PC (no compiled pack, missing files, or
+   * the last install failed). The UI offers Install / Reinstall,
+   * which posts `reinstallToolpack`. `installError` is why the last attempt failed, when one did.
+   */
+  needsInstall?: boolean;
+  installError?: string;
 }
 
 export interface SidebarQuestion {
@@ -280,12 +291,20 @@ export interface SidebarMedia {
 }
 export type SidebarMediaStatus = 'pending' | 'failed';
 
+/**
+ * Unify: models belong to a PROVIDER, never to an account. Every account of the provider can run every model of
+ * that provider; a chat uses the provider's default account and falls back to the provider's next account when one
+ * hits its limit. `account` is legacy and no longer sent. `usable` is false when the provider has no signed-in
+ * account on this PC (the picker shows it disabled and the engine never auto-selects it).
+ */
 export interface SidebarModel {
   id: string;
   name: string;
   provider: string;
   backend: string;
+  /** @deprecated Models are provider-scoped; ignored by the engine and no longer sent. */
   account?: string;
+  usable?: boolean;
   enabled?: boolean;
   speedOptions?: { label: string; backend: string }[];
   effortOptions?: string[];
@@ -352,6 +371,43 @@ export interface SidebarToolEvent {
   media?: SidebarMedia[];
   /** Unify (spec "Live edit preview in chat"): the change an edit call makes, updated while its input streams in. */
   edit?: SidebarEditPreview;
+  /** Unify: progress of a long running call (builds, installs, tests), set by the engine on its own. See SidebarToolProgress. */
+  progress?: SidebarToolProgress;
+}
+
+/**
+ * Unify: progress for a running tool call. The engine attaches it automatically; agents do nothing to get it.
+ * - `fraction` (0-1): known progress, parsed from the call's live output ("42%", "[3/10]", "Step 3/7").
+ * - `expectedMs`: how long the same command took in this project before (median of recent runs). The renderer
+ *   animates the bar from `startedAt` towards ~95% of `expectedMs` on its own, so the engine does not push ticks.
+ * At least one of the two is set; `fraction` wins when both are. Omitted progress = no bar.
+ * Sent again (same tool id) whenever `fraction` changes by at least 1%; cleared when the call ends.
+ */
+export interface SidebarToolProgress {
+  startedAt: number;
+  fraction?: number;
+  expectedMs?: number;
+  /** Short text next to the bar, e.g. "3/10" or "42%". */
+  label?: string;
+}
+
+/**
+ * Unify: a process or task an agent left running in the background (a dev server, a watcher, a background shell
+ * command, a background subagent). Shown in the chat while it runs.
+ * kind: 'shell' = a background shell command; 'subagent' = a background subagent; 'task' = a provider's own task.
+ */
+export interface SidebarBackgroundProcess {
+  id: string;
+  kind: 'shell' | 'subagent' | 'task';
+  /** The command or description, e.g. "npm run dev" or "Sol: write tests". */
+  title: string;
+  detail?: string;
+  startedAt: number;
+  state: 'running' | 'done' | 'error' | 'stopped';
+  /** Set when it ended. Ended entries linger ~5 s, then the engine drops them from the list. */
+  endedAt?: number;
+  /** The engine can stop it: the UI shows Stop, which posts `stopBackgroundProcess`. */
+  stoppable?: boolean;
 }
 
 /** One line of a live edit preview. Context lines carry both numbers, removed lines only oldLine, added lines only newLine. */
@@ -458,7 +514,7 @@ type SidebarHostPayload =
   | { type: 'queueState'; sessionId: string; items: string[] }
   | { type: 'modelState'; models: SidebarModel[]; cursorBackends?: { value: string; name: string }[]; selectedModelId?: string; selectedSpeed?: string; selectedEffort?: string }
   | { type: 'accountState'; provider: string; label: string; connected: boolean }
-  | { type: 'accountsState'; accounts: SidebarAccount[]; cursor: CursorAccountState }
+  | { type: 'accountsState'; accounts: SidebarAccount[]; cursor: CursorAccountState; /** Provider id → model id new chats on it start with. */ providerDefaults?: Record<string, string> }
   | { type: 'providerModels'; accountId: string; models: string[]; error?: string }
   | { type: 'usageState'; usage: Record<string, SidebarAccountUsage> }
   | { type: 'accountSaved' }
@@ -499,6 +555,8 @@ type SidebarHostPayload =
   | { type: 'runState'; sessionId: string; state: 'idle' | 'thinking' | 'tool' | 'cancelling'; label?: string }
   | { type: 'toolEvent'; event: SidebarToolEvent; sessionId?: string; entryId?: string }
   | { type: 'toolState'; tools: SidebarToolEvent[] }
+  /** Unify: the full list of one chat's background processes, posted whenever it changes and on `ready`. */
+  | { type: 'backgroundProcesses'; sessionId: string; processes: SidebarBackgroundProcess[] }
   | { type: 'subagentEvent'; sessionId: string; agentId: string; title?: string; model?: string; prompt?: string; files?: string[]; state?: SidebarSubagent['state']; delegated?: boolean; text?: string; messageId?: string; role?: 'assistant' | 'tool' | 'user'; from?: string; tool?: SidebarSubagentTool; media?: SidebarMedia[]; sentToParent?: SidebarMedia[]; profile?: string; ranges?: SidebarExplorerRange[]; tokens?: number }
   | { type: 'diff'; diff: SidebarDiff }
   | { type: 'diffState'; diffs: SidebarDiff[] }
@@ -768,7 +826,7 @@ export function getSidebarHtml(
 </section>
 <section id="sync-page" class="page settings-page" hidden>
   <div class="page-heading"><button class="icon-button back" data-page="chat" title="Back to chat" aria-label="Back to chat"><span class="symbol">arrow_back</span></button><div><h1>Sync</h1></div></div>
-  <p class="helper">Keep your global rules, skills, toolpacks, models, subagents, MCP servers and Customize and Accessibility choices and your global memory in a private GitHub repository (unify-sync), so your other PCs share them. Every sync is a commit, so the history shows what changed. Git is needed; Unify offers to install it. API keys, account sign-ins and MCP env and header values stay on this PC.</p>
+  <p class="helper">Keep your global rules, skills, models, subagents, MCP servers and Customize and Accessibility choices and your global memory in a private GitHub repository (unify-sync), so your other PCs share them. Every sync is a commit, so the history shows what changed. Git is needed; Unify offers to install it. API keys, account sign-ins and MCP env and header values stay on this PC.</p>
   <div id="sync-list" class="scroll-content feature-list"></div>
 </section>
 <script nonce="${nonce}" type="application/json" id="boot-state">${boot}</script>

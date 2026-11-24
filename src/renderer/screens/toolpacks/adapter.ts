@@ -23,7 +23,6 @@ export interface ToolpackExtension {
   icon?: string;
   version?: string;
   source?: 'hub' | 'local';
-  syncedDevices?: number;
   permissions?: Partial<Record<ToolKind, ToolPolicy>>;
   tools: { name: string; description: string; kind?: ToolKind; enabled?: boolean }[];
 }
@@ -44,9 +43,14 @@ export interface InstalledPack {
   state: 'starting' | 'running' | 'stopped' | 'error';
   status: string;
   error?: string;
+  /** Configured locally but not installed and working on this PC: offers Install / Reinstall. */
+  needsInstall: boolean;
+  /** Why the last install attempt failed, when one did. */
+  installError?: string;
+  /** An install was requested and the engine has not answered with a new toolpacksState yet. */
+  installing: boolean;
   version?: string;
   source?: 'hub' | 'local';
-  syncedDevices?: number;
   tools: PackTool[];
   policies: Record<ToolKind, ToolPolicy>;
   logs: string[];
@@ -89,9 +93,11 @@ interface Overrides {
   packs: Record<string, boolean>;
   tools: Record<string, boolean>;
   policies: Record<string, ToolPolicy>;
+  /** Pack ids with a reinstall requested; cleared by the next toolpacksState. */
+  installing: Record<string, boolean>;
 }
 
-const emptyOverrides = (): Overrides => ({ packs: {}, tools: {}, policies: {} });
+const emptyOverrides = (): Overrides => ({ packs: {}, tools: {}, policies: {}, installing: {} });
 
 const [overrides, setOverrides] = createSignal<Overrides>(emptyOverrides());
 
@@ -128,9 +134,11 @@ export const installedPacks = createRoot(() =>
         state: pack.state,
         status: pack.status,
         error: pack.error,
+        needsInstall: pack.needsInstall === true,
+        installError: pack.installError,
+        installing: local.installing[pack.id] === true,
         version: pack.version,
         source: pack.source,
-        syncedDevices: pack.syncedDevices,
         tools,
         policies,
         logs: pack.logs || [],
@@ -162,6 +170,12 @@ export function setGroupPolicy(id: string, group: ToolKind, policy: ToolPolicy):
 
 export function packAction(id: string, action: 'reload' | 'remove'): void {
   post({ type: 'toolpackAction', id, action });
+}
+
+/** Install / Reinstall a pack that needs installing on this PC. Busy until the next toolpacksState. */
+export function reinstallPack(id: string): void {
+  setOverrides(current => ({ ...current, installing: { ...current.installing, [id]: true } }));
+  post({ type: 'reinstallToolpack', id });
 }
 
 /** Adds a toolpack from a folder on disk (the engine opens the picker). */

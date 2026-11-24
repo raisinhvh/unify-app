@@ -1,11 +1,10 @@
 /**
  * Toolpack Hub (Figma 23 · Toolpack Hub 306:3998). Reached from the Toolpacks side panel (Hub folder → category).
  *
- *   top        breadcrumb + Upload toolpack (GitHub sign-in gated), title, subtitle, search, Install to
+ *   top        breadcrumb + Upload toolpack (GitHub sign-in gated), title, subtitle, search
  *   Featured   three cards (All, no search)
  *   list       "All toolpacks" + Sort (Popular / New / Name); one row per pack with its install state
- *   detail     the picked pack: description, Install (+ inline confirmation of the target), where it
- *              installs, Version / Updated / Installs / License, Tools
+ *   detail     the picked pack: description, Install (+ inline confirmation), Version / Updated, Tools
  *   dialog     a pack that ships an install script shows it before anything runs (ScriptConsentDialog)
  *
  * Exports `HubContent` for the content card (the Shell draws `ToolpacksPanel` beside it), `HubScreen` as the
@@ -28,17 +27,13 @@ import {
   browseHub,
   dismissPublishStatus,
   formatAge,
-  formatCount,
   hubEnabled,
   hubState,
   installFromHub,
   installs,
-  installTarget,
   publishStatus,
   publishToHub,
-  setInstallTarget,
   type HubPack,
-  type HubInstallTarget,
 } from './hubAdapter';
 import { ScriptConsentDialog } from './ScriptConsentDialog';
 import { Segmented } from './Segmented';
@@ -54,21 +49,12 @@ const [sort, setSort] = createSignal<Sort>('popular');
 const [pickedId, setPickedId] = createSignal<string>();
 const [confirmId, setConfirmId] = createSignal<string>();
 
-const isInstalled = (id: string) => installedPacks().some(pack => pack.id === id);
+// A pack that needs installing on this PC is not installed here, so Install shows again.
+const isInstalled = (id: string) => installedPacks().some(pack => pack.id === id && !pack.needsInstall);
 
 function categoryLabel(id: string): string {
   if (id === 'all') return 'All';
   return hubState()?.categories.find(category => category.id === id)?.label ?? id;
-}
-
-function targetDevices(): string {
-  const devices = hubState()?.devices ?? [];
-  if (installTarget() === 'this' || devices.length < 2) {
-    const current = devices.find(device => device.current);
-    return current ? `Installs on ${current.label} only` : 'Installs on this device';
-  }
-  const labels = devices.map(device => device.label);
-  return `Installs on ${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
 }
 
 function askInstall(pack: HubPack): void {
@@ -85,7 +71,6 @@ function Meta(props: { pack: HubPack; author?: boolean }): JSX.Element {
       <Show when={props.author !== false}>
         <span>{props.pack.author}</span>
       </Show>
-      <span>{formatCount(props.pack.installs)} installs</span>
       <span>{props.pack.tools.length} tools</span>
     </span>
   );
@@ -234,7 +219,7 @@ function Detail(props: { pack: HubPack }): JSX.Element {
       </Switch>
       <ConfirmBar
         open={confirmId() === props.pack.id && !installed()}
-        message={<>Install <strong>{props.pack.name}</strong> on {installTarget() === 'all' ? 'each of your devices' : 'this device'}?</>}
+        message={<>Install <strong>{props.pack.name}</strong> on this device?</>}
         action="Install"
         onCancel={() => setConfirmId(undefined)}
         onConfirm={() => {
@@ -242,7 +227,6 @@ function Detail(props: { pack: HubPack }): JSX.Element {
           installFromHub(props.pack.id);
         }}
       />
-      <p class="hub-detail-target type-caption">{installed() ? 'Installed on this device' : targetDevices()}</p>
       <Show when={installed()}>
         <SetupChecklist id={props.pack.id} />
       </Show>
@@ -250,8 +234,6 @@ function Detail(props: { pack: HubPack }): JSX.Element {
       <div class="hub-facts">
         <div class="hub-fact"><span>Version</span><span>{props.pack.version}</span></div>
         <div class="hub-fact"><span>Updated</span><span>{formatAge(props.pack.updatedAt)}</span></div>
-        <div class="hub-fact"><span>Installs</span><span>{formatCount(props.pack.installs)}</span></div>
-        <div class="hub-fact"><span>License</span><span>{props.pack.license}</span></div>
       </div>
 
       <div class="hub-tools">
@@ -385,17 +367,6 @@ function Hub(): JSX.Element {
               }}
             />
           </label>
-          <span class="hub-install-to type-label">Install to</span>
-          <Segmented<HubInstallTarget>
-            label="Install to"
-            class="hub-target"
-            value={installTarget()}
-            onChange={setInstallTarget}
-            options={[
-              { value: 'this', label: 'This device' },
-              { value: 'all', label: 'Your devices' },
-            ]}
-          />
         </div>
         <Collapse open={showFeatured()}>
           <div class="hub-featured">

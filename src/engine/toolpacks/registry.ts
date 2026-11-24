@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { ChildProcess, fork } from 'node:child_process';
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import { basename, join } from 'node:path';
 import { HostToWorker, ToolDescriptor, ToolpackManifest, ToolpackSync, WorkerToHost, ToolpackResult } from './types';
 import { truncateToolpackResult } from './result';
+import { clearInstallError, readPackMeta } from './sync-state';
 
 export interface ToolpackInfo {
     id: string;
@@ -108,8 +109,11 @@ export class ToolpackRegistry {
             await fs.mkdir(folder, { recursive: true });
             await fs.writeFile(join(folder, 'pack.ts'), source);
             await fs.writeFile(join(folder, 'pack.js'), javascript);
-            const meta: Meta = { description: manifest.description, enabled: previous ? previous.info.enabled : true, ...(manifest.sync ? { sync: manifest.sync } : {}) };
+            // A reinstall keeps the pack's enabled flag, even when the pack was not loaded before.
+            const enabled = previous ? previous.info.enabled : readPackMeta(folder).enabled ?? true;
+            const meta: Meta = { description: manifest.description, enabled, ...(manifest.sync ? { sync: manifest.sync } : {}) };
             await fs.writeFile(join(folder, 'meta.json'), JSON.stringify(meta));
+            clearInstallError(this.options.dir, id);
             const entry = this.newEntry(id, meta);
             this.entries.set(id, entry);
             this.emit();
@@ -121,12 +125,14 @@ export class ToolpackRegistry {
     }
 
     public async remove(id: string): Promise<void> {
-        if (!this.entries.has(id)) return;
-        await this.halt(id);
-        this.entries.delete(id);
         const folder = join(this.options.dir, basename(id));
+        // A pack that never loaded here (its install failed) still has a folder to delete.
+        if (!this.entries.has(id) && !existsSync(folder)) { clearInstallError(this.options.dir, id); return; }
+        if (this.entries.has(id)) await this.halt(id);
+        this.entries.delete(id);
         await this.options.beforeRemove?.(id, folder).catch(() => undefined);
         await fs.rm(folder, { recursive: true, force: true });
+        clearInstallError(this.options.dir, id);
         this.emit();
     }
 

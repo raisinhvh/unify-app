@@ -9,9 +9,10 @@
  * registry.
  */
 import * as path from 'node:path';
-import { createHubRegistry, HubInstallTarget, HubRegistry, installHubPack } from '../../hub';
+import { createHubRegistry, HubRegistry, installHubPack } from '../../hub';
 import { toolpackIdFor } from '../../hub/ids';
 import type { GithubAuth } from '../github';
+import { clearInstallError, setInstallError } from '../../toolpacks/sync-state';
 import { recordHubInstall } from './toolpacks';
 import { RequestPaths } from './state';
 import { UnifyRequestContext } from './types';
@@ -44,7 +45,6 @@ export async function handleHubRequest(
 
   if (message.type === 'hubInstall') {
     const id = typeof message.id === 'string' ? message.id : '';
-    const target: HubInstallTarget = message.target === 'this' ? 'this' : 'all';
     if (!id) {
       send({ type: 'hubInstallProgress', id, percent: 100, state: 'error', error: 'Choose a pack first.' });
       send({ type: 'hubInstallResult', ok: false, id, error: 'Choose a pack first.' });
@@ -55,17 +55,25 @@ export async function handleHubRequest(
       id,
       toolpacksDir: paths.toolpacksDir,
       unifyHome: paths.unifyHome,
-      target,
       allowScript: message.allowScript === true,
       reply: send,
-      onInstalled: pack => recordHubInstall(paths, pack, target),
+      onInstalled: pack => recordHubInstall(paths, pack),
     });
-    send({ type: 'hubInstallResult', ...installed });
+    let result = installed;
     if (installed.ok) {
-      const sourcePath = path.join(paths.toolpacksDir, toolpackIdFor(installed.id), 'pack.ts');
-      await context.installToolpack?.(sourcePath);
+      const toolpackId = toolpackIdFor(installed.id);
+      try {
+        await context.installToolpack?.(path.join(paths.toolpacksDir, toolpackId, 'pack.ts'));
+        clearInstallError(paths.toolpacksDir, toolpackId);
+      } catch (error) {
+        // The files are there but the pack does not load: it stays listed with Install again, and the error is kept.
+        const text = error instanceof Error ? error.message : String(error);
+        setInstallError(paths.toolpacksDir, toolpackId, text);
+        result = { ...installed, ok: false, error: text };
+      }
       context.refreshToolpacks?.();
     }
+    send({ type: 'hubInstallResult', ...result });
     return true;
   }
 

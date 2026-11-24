@@ -286,7 +286,6 @@ test('happy path validates, confirms and executes the exact GitHub Git Data API 
     categories: [{ id: 'dev', label: 'Dev' }],
     featured: ['figma'],
     authors: 2,
-    devices: [{ id: 'desktop', label: 'Desktop', current: true }],
   };
 
   const calls = [];

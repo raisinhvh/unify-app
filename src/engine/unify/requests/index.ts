@@ -39,9 +39,10 @@ import {
   renameAccount,
   setAccountDefaultModel,
   setModelEnabled,
+  setProviderDefaultModel,
   signOutAccount,
 } from './providers';
-import { installedHubPacks, setToolpackPermission, setToolpackToolEnabled } from './toolpacks';
+import { handleToolpackInstallRequest, installedHubPacks, setToolpackPermission, setToolpackToolEnabled } from './toolpacks';
 import { installSetupPackages, openSetupTarget, readPackSetup, rerunPackSetupScript, setPackSetupStepDone } from '../../hub/setup';
 import { appInfoReply, updateInstallUnavailable } from './settings';
 import {
@@ -309,6 +310,7 @@ export async function handleUnifyRequest(
 
   /* Toolpacks --------------------------------------------------------------------------------------------- */
 
+  if (type === 'reinstallToolpack') return handleToolpackInstallRequest(message, paths, context);
   if (type === 'toolpackToolEnabled') {
     try {
       setToolpackToolEnabled(paths, stringField(message, 'id'), stringField(message, 'tool'), message.enabled === true);
@@ -417,16 +419,16 @@ export async function handleUnifyRequest(
     }));
     return true;
   }
-  if (type === 'renameAccount' || type === 'setAccountDefaultModel' || type === 'signOutAccount') {
+  if (type === 'renameAccount' || type === 'setAccountDefaultModel' || type === 'setProviderDefaultModel' || type === 'signOutAccount') {
     try {
       if (type === 'renameAccount') {
         send(renameAccount(paths, stringField(message, 'accountId'), stringField(message, 'label')));
       } else if (type === 'setAccountDefaultModel') {
         send(setAccountDefaultModel(paths, stringField(message, 'accountId'), stringField(message, 'modelId')));
+      } else if (type === 'setProviderDefaultModel') {
+        send(setProviderDefaultModel(paths, stringField(message, 'provider'), stringField(message, 'modelId')));
       } else {
-        const accountId = stringField(message, 'accountId');
-        send(await signOutAccount(paths, accountId));
-        context.refreshUsageState?.(accountId);
+        send(await signOutAccount(paths, stringField(message, 'accountId'), context.removeAccount));
       }
     } catch {
       send(accountsState(paths));

@@ -4,10 +4,14 @@
  *   header    grip (hold-drag to rearrange, see shell/PaneGrid) · title · working folder · model picker · pop out ·
  *             more · close
  *   job       JobBar.tsx: the chat's /job run (round, phase, criteria), only while it has one
+ *   background BackgroundBar.tsx: the chat's background shells and subagents, only while it has any
  *   timeline  Timeline.tsx
  *   status    what the agent is doing right now (loader + label) while it runs
  *   changes   files this chat edited, with review / keep / undo (DSH renderChanges); every pane shows its own chat's
  *   composer  Composer.tsx, bound to this chat
+ *
+ * Everything under the header follows the pane text-size rule (shell/paneScale.tsx): narrower than full size it
+ * scales down instead of wrapping, to 0.8× at most.
  *
  * Pop out (only where the bridge has `popOut`) moves the chat into its own window and closes this pane.
  * A standalone context (the pop-out window, Popout.tsx) hides the grip and the pop-out button.
@@ -21,13 +25,13 @@ import { markRead, viewState } from '../../store';
 import { ModelPicker } from '../../components/ModelPicker';
 import type { SidebarProject } from '../../protocol';
 import { openProjectInFiles } from '../../shell/fileLinks';
+import { paneFullWidth, ScaleToWidth } from '../../shell/paneScale';
 import { feature } from '../../store/features';
 import { shortPath } from './projects';
 import { Composer } from './Composer';
 import { JobBar } from './JobBar';
+import { BackgroundBar } from './BackgroundBar';
 import { ScheduleBar } from './ScheduleBar';
-import { ShutdownBar } from './ShutdownBar';
-import { NoQuestionsBar } from './NoQuestionsBar';
 import { Timeline } from './Timeline';
 import './chat-pane.css';
 
@@ -238,16 +242,18 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
           <IconButton icon="close" label="Close pane" size="small" onClick={() => props.context.close()} />
         </div>
       </header>
-      <JobBar chatId={chatId()} />
-      <Timeline chatId={chatId()} />
-      <div class="chat-pane-bottom">
-        <StatusLine chatId={chatId()} />
-        <ChangesBar chatId={chatId()} />
-        <ScheduleBar chatId={chatId()} />
-        <ShutdownBar />
-        <NoQuestionsBar />
-        <Composer chatId={chatId()} placeholder="Reply, @ to mention a file" />
-      </div>
+      {/* Narrower than full size, everything under the header shrinks instead of wrapping (shell/paneScale). */}
+      <ScaleToWidth fullWidth={paneFullWidth.chat} class="chat-pane-scale">
+        <JobBar chatId={chatId()} />
+        <BackgroundBar chatId={chatId()} />
+        <Timeline chatId={chatId()} />
+        <div class="chat-pane-bottom">
+          <StatusLine chatId={chatId()} />
+          <ChangesBar chatId={chatId()} />
+          <ScheduleBar chatId={chatId()} />
+          <Composer chatId={chatId()} placeholder="Reply, @ to mention a file" />
+        </div>
+      </ScaleToWidth>
       <Menu anchor={moreAnchor()} open={moreOpen()} onClose={() => setMoreOpen(false)} placement="bottom-end" items={moreItems()} onSelect={onMore} />
     </div>
   );

@@ -1,11 +1,15 @@
 /**
- * What the Providers side panel has selected (the Usage overview or one account), the closed provider
- * folders, and whether the Add provider dialog is open. Shared by the panel and the screen.
+ * What the Providers side panel has selected (the Usage overview, one provider's page, or one account), the closed
+ * provider folders, and whether the Add provider dialog is open. Shared by the panel and the screen.
+ * An account selection keeps its provider, so the page can fall back to the provider when the account disappears.
  */
 import { createSignal } from 'solid-js';
 import { readPersisted, writePersisted } from '../../persist';
 
-export type ProviderSelection = { kind: 'usage' } | { kind: 'account'; id: string };
+export type ProviderSelection =
+  | { kind: 'usage' }
+  | { kind: 'provider'; provider: string }
+  | { kind: 'account'; id: string; provider?: string };
 
 const [selection, setSelectionSignal] = createSignal<ProviderSelection>(
   readPersisted<ProviderSelection>('providerSelection', { kind: 'usage' }),

@@ -249,3 +249,7 @@ button.tp-setup-tick:focus-visible {
 .tree-trailing.tp-setup-needed {
   color: var(--warn);
 }
+
+.tree-trailing.tp-not-installed {
+  color: var(--text3);
+}

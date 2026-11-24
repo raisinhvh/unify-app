@@ -1,0 +1,36 @@
+{
+  "extends": "base",
+  "persisted": {
+    "route": "providers",
+    "panelOpen": true,
+    "providerSelection": { "kind": "provider", "provider": "cursor-acp" }
+  },
+  "messages": [
+    {
+      "type": "accountsState",
+      "cursor": { "connected": true, "label": "a.very.long.cursor.address1121@example.com" },
+      "accounts": [],
+      "providerDefaults": { "cursor-acp": "cursor-composer" }
+    },
+    {
+      "type": "modelState",
+      "cursorBackends": [
+        { "value": "composer-2.5", "name": "Composer 2.5" },
+        { "value": "claude-opus-5-thinking-high", "name": "Claude Opus 5 1M Thinking" },
+        { "value": "claude-sonnet-5-thinking-high", "name": "Claude Sonnet 5 1M Thinking" },
+        { "value": "claude-fable-5-thinking-high", "name": "Claude Fable 5 1M Thinking (NO ZDR)" },
+        { "value": "gpt-5.6-sol-high", "name": "GPT-5.6 Sol 1M High" },
+        { "value": "gpt-5.6-sol-xhigh-fast", "name": "GPT-5.6 Sol 1M Extra High Fast" },
+        { "value": "gpt-5.6-luna-high", "name": "GPT-5.6 Luna 1M High" },
+        { "value": "gpt-5.3-codex", "name": "Codex 5.3" },
+        { "value": "gpt-5.2", "name": "GPT-5.2" },
+        { "value": "grok-4.7-high", "name": "Grok 4.7 High" },
+        { "value": "cursor-grok-4.5-high", "name": "Grok 4.5" }
+      ],
+      "models": [
+        { "id": "cursor-composer", "name": "Composer 2.5", "provider": "cursor-acp", "backend": "composer-2.5", "usable": true, "enabled": true, "contextWindow": 200000 }
+      ]
+    },
+    { "type": "usageState", "usage": {} }
+  ]
+}

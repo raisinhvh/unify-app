@@ -2,9 +2,10 @@
   "extends": "chatpane",
   "messages": [
     {
-      "type": "diffState",
+      "type": "chatDiffState",
+      "sessionId": "s-header",
       "diffs": [
-        { "id": "d1", "path": "src/engine/extension.ts", "summary": "Register the pane commands", "additions": 12, "deletions": 3 }
+        { "id": "d1", "path": "src/engine/extension.ts", "summary": "Register the pane commands", "additions": 12, "deletions": 3, "state": "applied" }
       ]
     }
   ]

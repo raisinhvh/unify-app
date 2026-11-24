@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { AccountRegistry } from "./accountRegistry";
-import { accountForModel } from "../sync/configSync";
+import { accountForModel, normalizeModels, stripModelAccount } from "../sync/configSync";
 import { ModelEntry, ResolvedModel } from "./types";
 
 const MODELS_KEY = "unify.models.v1";
@@ -13,9 +13,14 @@ export const DEFAULT_MODEL: ModelEntry = {
   name: "DeepSeek V4 Flash",
   provider: "deepseek-official",
   backend: "deepseek-v4-flash",
-  account: "default",
   enabled: true,
 };
+
+/** Only entries with the three names a model needs; anything else in the setting is ignored. */
+function isModelLike(item: unknown): item is Record<string, unknown> {
+  const model = item as Record<string, unknown> | null;
+  return !!model && typeof model === 'object' && typeof model.name === 'string' && typeof model.provider === 'string' && typeof model.backend === 'string';
+}
 
 /** Friendly model names and their provider/backend routes. */
 export class ModelRegistry {
@@ -38,7 +43,7 @@ export class ModelRegistry {
     const provider = entry.provider.trim();
     const backend = entry.backend.trim();
     if (!name || !provider || !backend) throw new Error("Model name, provider, and backend are required");
-    const normalized = { ...entry, name, provider, backend, account: entry.account || "default" };
+    const normalized = { ...stripModelAccount({ ...entry }), name, provider, backend } as ModelEntry;
     const models = this.read().filter((model) => model.name !== name && model.name !== originalName);
     await modelSettings().update('models', [...models, normalized], vscode.ConfigurationTarget.Global);
   }
@@ -52,7 +57,7 @@ export class ModelRegistry {
     if (!model) throw new Error(`Unknown model '${name}'`);
     if (!model.enabled) throw new Error(`Model '${name}' is disabled`);
     const account = accountForModel(this.accounts, model);
-    if (!account) throw new Error(`No account configured for provider '${model.provider}'`);
+    if (!account) throw new Error(`No account for ${model.name} (${model.provider}). Sign in to a provider in Providers.`);
     if (account.provider !== model.provider) {
       throw new Error(`Account '${account.id}' does not belong to provider '${model.provider}'`);
     }
@@ -61,11 +66,19 @@ export class ModelRegistry {
     return { model, account, secret };
   }
 
-  /** Copies models saved in extension storage into the `unify.models` setting, which Config Sync carries. */
+  /**
+   * Copies models saved in extension storage into the `unify.models` setting, which Config Sync carries, then
+   * persists the cleaned list (no account fields, no duplicates) once.
+   */
   public async migrate(): Promise<void> {
-    if (modelSettings().inspect('models')?.globalValue !== undefined) return;
-    const stored = this.context.globalState.get<unknown>(MODELS_KEY, []);
-    if (Array.isArray(stored) && stored.length) await modelSettings().update('models', stored, vscode.ConfigurationTarget.Global);
+    if (modelSettings().inspect('models')?.globalValue === undefined) {
+      const stored = this.context.globalState.get<unknown>(MODELS_KEY, []);
+      if (Array.isArray(stored) && stored.length) await modelSettings().update('models', stored, vscode.ConfigurationTarget.Global);
+    }
+    const configured = modelSettings().inspect<unknown>('models')?.globalValue;
+    if (!Array.isArray(configured)) return;
+    const cleaned = normalizeModels(configured.filter(isModelLike));
+    if (cleaned.changed) await modelSettings().update('models', cleaned.models, vscode.ConfigurationTarget.Global);
   }
 
   public async pick(): Promise<ModelEntry | undefined> {
@@ -81,11 +94,9 @@ export class ModelRegistry {
 
   private read(): ModelEntry[] {
     const configured = modelSettings().get<unknown>('models');
-    if (Array.isArray(configured)) return configured.filter((item): item is ModelEntry =>
-      !!item && typeof item === 'object' && typeof item.name === 'string' && typeof item.provider === 'string' && typeof item.backend === 'string')
-      .map(item => ({ ...item, enabled: item.enabled !== false, account: item.account || 'default' }));
+    if (Array.isArray(configured)) return normalizeModels(configured.filter(isModelLike)).models as unknown as ModelEntry[];
     const value = this.context.globalState.get<unknown>(MODELS_KEY, []);
-    if (Array.isArray(value) && value.length) return value as ModelEntry[];
+    if (Array.isArray(value) && value.length) return normalizeModels(value.filter(isModelLike)).models as unknown as ModelEntry[];
     return [DEFAULT_MODEL];
   }
 }

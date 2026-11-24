@@ -246,11 +246,6 @@
   display: none;
 }
 
-.hub-install-to {
-  flex: none;
-  color: var(--text3);
-}
-
 .hub-featured {
   padding-top: 24px;
 }
@@ -564,11 +559,6 @@
 
 .hub-detail .confirm-bar .button-text {
   margin-left: auto;
-}
-
-.hub-detail-target {
-  margin: 8px 0 0;
-  color: var(--text3);
 }
 
 .hub-facts {

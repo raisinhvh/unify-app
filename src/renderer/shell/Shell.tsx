@@ -12,10 +12,11 @@
  * The workspace stays mounted while another screen is up so chats keep their scroll and drafts.
  * The layout menu (LayoutMenu) sits in the title strip of the content area, on the chats route only.
  *
- * Rail: Chats, then Files, Knowledge, Terminal and Source Control, which are panes (openPane) rather than routes. An entry is
+ * Rail: Chats, then Files, Terminal and Source Control, which are panes (openPane) rather than routes. An entry is
  * highlighted for the focused pane's kind on the chats route. Files hides with editor.enabled (and closes its pane
- * when turned off); Toolpacks, Agents and Providers are routes; Hub with toolpacks.hub (hubEnabled); the rail usage
- * meter with usage.railMeter. A persisted `files` or `knowledge` route opens that pane and moves to chats.
+ * when turned off). A divider, then Knowledge, Toolpacks, Agents and Providers, which are routes with their own
+ * screen; Hub with toolpacks.hub (hubEnabled); the rail usage meter with usage.railMeter. A persisted `files` route
+ * opens the Files pane and moves to chats; Knowledge panes from older layouts are closed (it is a screen now).
  * When the route on screen turns unavailable, the Shell goes back to chats.
  * Pop-outs: chats shown in their own window (bridge onPopoutsChanged) close their pane here and never open as
  * panes; opening one focuses its window instead (shell/layout.ts). A pop-out closing changes nothing here.
@@ -46,7 +47,7 @@ import './shell.css';
 
 const panelWidth = 280;
 
-type PaneEntry = 'files' | 'knowledge' | 'terminal' | 'git';
+type PaneEntry = 'files' | 'terminal' | 'git';
 
 /** Whether a route may show right now (its feature toggle is on). */
 function routeAvailable(id: RouteId): boolean {
@@ -54,14 +55,11 @@ function routeAvailable(id: RouteId): boolean {
   return true;
 }
 
-const isPaneEntry = (id: string): id is PaneEntry => id === 'files' || id === 'knowledge' || id === 'terminal' || id === 'git';
+const isPaneEntry = (id: string): id is PaneEntry => id === 'files' || id === 'terminal' || id === 'git';
 
 const paneEntries: NavRailItem[] = [
   { id: 'files', icon: 'files', label: 'Files', visible: () => feature('editor.enabled') },
-  { id: 'knowledge', icon: 'knowledge', label: 'Knowledge', visible: () => true },
-  // No terminal glyph in components/icons.ts yet; the prompt chevron is the closest.
-  { id: 'terminal', icon: 'chevronRight', label: 'Terminal', visible: () => true },
-  // No branch glyph in components/icons.ts yet; the toolpacks icon is the closest available.
+  { id: 'terminal', icon: 'terminal', label: 'Terminal', visible: () => true },
   { id: 'git', icon: 'branch', label: 'Source Control', visible: () => true },
 ];
 
@@ -69,7 +67,8 @@ const [chatsInfo, ...otherRoutes] = railRoutes;
 const navItems: NavRailItem[] = [
   { ...chatsInfo, visible: () => routeAvailable(chatsInfo.id) },
   ...paneEntries,
-  ...otherRoutes.map(info => ({ ...info, visible: () => routeAvailable(info.id) })),
+  // The divider separates the pane entries above from the full screens below.
+  ...otherRoutes.map((info, index) => ({ ...info, visible: () => routeAvailable(info.id), dividerBefore: index === 0 })),
 ];
 
 export function Shell(): JSX.Element {
@@ -89,8 +88,10 @@ export function Shell(): JSX.Element {
   // 0..1 while the notice row opens; the pane grid and screens move down with it.
   const [noticeProgress, setNoticeProgress] = createSignal(0);
   const isMac = () => bridge().platform === 'darwin';
-  // Right inset of the layout menu: clear of the window controls (or the power glyph while shutdown is armed).
-  const layoutMenuRight = () => (isMac() ? 10 : 128) + (viewState.shutdown?.armed ? 32 : 0);
+  // Right inset of the layout menu: clear of the window controls and the title-bar indicators (power glyph while
+  // shutdown is armed, the no-questions glyph while that feature is on), 32px each.
+  const layoutMenuRight = () =>
+    (isMac() ? 10 : 128) + (viewState.shutdown?.armed ? 32 : 0) + (feature('agents.noQuestions') ? 32 : 0);
 
   // A chat counts as seen only while it is in a pane on the chats route (drives unread "done").
   setChatVisibilityCheck(sessionId => onChats() && !showSetup() && isChatOnScreen(sessionId));
@@ -107,12 +108,18 @@ export function Shell(): JSX.Element {
   const stopPopouts = bridge().onPopoutsChanged?.(chatIds => setPoppedOutChats(chatIds));
   if (stopPopouts) onCleanup(stopPopouts);
 
-  // Files and Knowledge used to be routes: a persisted one opens its pane on the chats route instead.
+  // Files used to be a route: a persisted one opens its pane on the chats route instead.
   createEffect(() => {
-    const current = route();
-    if (current !== 'files' && current !== 'knowledge') return;
-    if (current === 'knowledge' || feature('editor.enabled')) openPane(current);
+    if (route() !== 'files') return;
+    if (feature('editor.enabled')) openPane('files');
     navigate('chats');
+  });
+
+  // Knowledge is a screen now: a Knowledge pane from an older saved layout closes.
+  createEffect(() => {
+    for (const pane of panes()) {
+      if (pane.kind === 'knowledge') closePane(pane.id);
+    }
   });
 
   // Turning the editor off takes its Files pane with it.

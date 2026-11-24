@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
+import { cp, mkdir, rm } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import * as vscode from 'vscode';
-import { loginCodex } from './codexAuth';
+import { loginCodex, readCodexTokens } from './codexAuth';
 
 export type OAuthCliProvider = 'codex-cli' | 'claude-cli';
 export interface OAuthCliAccount {
@@ -70,6 +70,43 @@ function execute(account: OAuthCliAccount, args: string[], timeoutMs: number): P
   });
 }
 
+/** Like `execute`, but resolves with the output whatever the exit code: `auth status` reports a sign-out with exit 1. */
+function capture(account: OAuthCliAccount, args: string[], timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let output = '';
+    const child = spawn(cliCommand('claude-cli'), args, { env: cliEnv(account), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const timer = setTimeout(() => { child.kill(); reject(new Error('Claude Code CLI timed out.')); }, timeoutMs);
+    child.stdout.on('data', data => { output = (output + data.toString('utf8')).slice(-32768); });
+    child.stderr.on('data', data => { output = (output + data.toString('utf8')).slice(-32768); });
+    child.on('error', error => { clearTimeout(timer); reject(error); });
+    child.on('close', () => { clearTimeout(timer); resolve(output); });
+  });
+}
+
+/**
+ * Whether an account's stored sign-in is confirmed gone: Claude Code says it is signed out, or the ChatGPT
+ * auth.json is missing or unusable. Anything that could be transient (a timeout, a network error) is `unknown`,
+ * so callers never remove an account on a bad moment.
+ */
+export async function checkOAuthAccount(account: OAuthCliAccount): Promise<'valid' | 'invalid' | 'unknown'> {
+  if (account.provider === 'codex-cli') {
+    try { await readCodexTokens(account.directory); return 'valid'; } catch { return 'invalid'; }
+  }
+  try {
+    const info = JSON.parse((await capture(account, ['auth', 'status', '--json'], 15000)).trim()) as { loggedIn?: unknown };
+    if (info.loggedIn === false) return 'invalid';
+    return info.loggedIn === true ? 'valid' : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** Same provider and email, compared without case. Accounts without an email never match. */
+function sameEmail(a: string | undefined, b: string | undefined): boolean {
+  const left = a?.trim().toLowerCase();
+  return !!left && left === b?.trim().toLowerCase();
+}
+
 /**
  * OAuth credentials live in one isolated directory per account: Claude Code's config directory, or the ChatGPT
  * (Codex) auth.json that Unify signs in to natively.
@@ -104,9 +141,52 @@ export class OAuthCliAccounts {
       await rm(account.directory, { recursive: true, force: true });
       throw error;
     }
+    // Signing in again with the same email refreshes the existing account's credentials, not a second record.
+    const existing = this.list(provider).find(item => sameEmail(item.email, account.email));
+    if (existing) {
+      await mkdir(existing.directory, { recursive: true });
+      await cp(account.directory, existing.directory, { recursive: true, force: true });
+      await rm(account.directory, { recursive: true, force: true });
+      return existing;
+    }
     await this.context.globalState.update(KEY, [...this.list(), account]);
     if (!this.getDefault(provider)) await this.setDefault(provider, account.id);
     return account;
+  }
+
+  /**
+   * One-time cleanup: keeps one record per provider + email (the provider's default, else the newest) and deletes
+   * the other directories. Returns how many records were removed.
+   */
+  async collapseDuplicates(): Promise<number> {
+    const groups = new Map<string, OAuthCliAccount[]>();
+    for (const account of this.list()) {
+      if (!account.email?.trim()) continue;
+      const key = `${account.provider}\n${account.email.trim().toLowerCase()}`;
+      groups.set(key, [...(groups.get(key) ?? []), account]);
+    }
+    const dropped = new Map<string, OAuthCliAccount>();
+    const explicit = this.context.globalState.get<Record<string, string>>(DEFAULTS, {});
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      // Only a default the user chose counts; otherwise the newest record (added last) is kept.
+      const keep = group.find(item => item.id === explicit[group[0].provider]) ?? group[group.length - 1];
+      for (const account of group) if (account.id !== keep.id) dropped.set(account.id, keep);
+    }
+    if (!dropped.size) return 0;
+    for (const account of this.list()) {
+      const keep = dropped.get(account.id);
+      if (keep) await rm(account.directory, { recursive: true, force: true });
+    }
+    await this.context.globalState.update(KEY, this.list().filter(item => !dropped.has(item.id)));
+    const defaults = this.context.globalState.get<Record<string, string>>(DEFAULTS, {});
+    const next = { ...defaults };
+    for (const [provider, id] of Object.entries(defaults)) {
+      const keep = dropped.get(id);
+      if (keep) next[provider] = keep.id;
+    }
+    await this.context.globalState.update(DEFAULTS, next);
+    return dropped.size;
   }
 
   async reauth(id: string): Promise<OAuthCliAccount> {

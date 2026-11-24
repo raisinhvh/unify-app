@@ -23,20 +23,17 @@ export interface SyncRoots {
   /** Unify's data home: the same folder as `unifyHome()`. */
   unifyHome?: string;
   agentsHome: string;
-  toolpacks: string;
   memory?: string;
 }
 export interface SyncFile { data: string; encoding?: 'base64' }
+/** Toolpacks are never part of it: each PC installs and configures its own. */
 export interface ConfigBundle {
   format: 'unify-config';
   version: 1;
   settings: Record<string, unknown>;
   /** Keyed by `unify/AGENTS.md`, `unify/skills/...`, `agents/skills/...` or `memory/...`. */
   files: Record<string, SyncFile>;
-  toolpacks: Record<string, ToolpackBundle>;
 }
-/** `settings` holds the pack's declared dataDir JSON files by name, without their secret keys. */
-export interface ToolpackBundle { enabled: boolean; source: string; settings?: Record<string, Record<string, unknown>> }
 export interface AccountRef { id: string; provider: string; label: string }
 
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -49,12 +46,6 @@ const MAX_MEMORY_BYTES = 50 * 1024 * 1024;
 const MAX_MEMORY_FILES = 5000;
 const MAX_MEMORY_DEPTH = 16;
 const SKIPPED_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.venv', 'venv', '__pycache__']);
-const PACK_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-/** Same rule as TOOLPACK_SYNC_FILE: a plain .json name directly in the pack's data folder. */
-const SETTINGS_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.json$/;
-const MAX_SETTINGS_BYTES = 256 * 1024;
-/** Values under keys like these never leave the PC, whether or not the pack lists them. */
-const SECRET_KEY = /key|token|secret|password|passwd|credential|auth|cookie|session/i;
 
 /** JSON with sorted keys and without undefined members, so equal configs hash equally. */
 export function stableJson(value: unknown): string {
@@ -86,27 +77,21 @@ export function validateBundle(value: unknown): ConfigBundle {
   if (!bundle || bundle.format !== 'unify-config') throw new Error('The GitHub config is not a Unify config.');
   if (bundle.version !== 1) throw new Error(`The GitHub config uses version ${String(bundle.version)}; update Unify to read it.`);
   const record = (item: unknown): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item);
-  if (!record(bundle.settings) || !record(bundle.files) || !record(bundle.toolpacks)) throw new Error('The GitHub config is incomplete.');
+  if (!record(bundle.settings) || !record(bundle.files)) throw new Error('The GitHub config is incomplete.');
   const files: Record<string, SyncFile> = {};
   for (const [path, file] of Object.entries(bundle.files)) {
     if (!record(file) || typeof file.data !== 'string' || (file.encoding !== undefined && file.encoding !== 'base64')) throw new Error(`The GitHub config has an invalid file: ${path}`);
-    syncPath({ unifyHome: '/d', agentsHome: '/a', toolpacks: '/t', memory: '/m' }, path);
+    syncPath({ unifyHome: '/d', agentsHome: '/a', memory: '/m' }, path);
     files[path] = file as SyncFile;
   }
-  bundle.files = files;
-  for (const [id, pack] of Object.entries(bundle.toolpacks)) {
-    if (!PACK_ID.test(id) || !record(pack) || typeof pack.source !== 'string' || typeof pack.enabled !== 'boolean') throw new Error(`The GitHub config has an invalid toolpack: ${id}`);
-    if (pack.settings !== undefined && (!record(pack.settings) || Object.entries(pack.settings).some(([file, value]) => !SETTINGS_FILE.test(file) || !record(value)))) {
-      throw new Error(`The GitHub config has invalid settings for toolpack: ${id}`);
-    }
-  }
-  return bundle as ConfigBundle;
+  // Configs from older builds also carried toolpacks; those stay on each PC now and are dropped here.
+  return { format: 'unify-config', version: 1, settings: bundle.settings, files };
 }
 
 /**
- * Three-way merge of two configs that both changed since `base`, the GitHub copy as of the last sync. Each setting,
- * file and toolpack is taken from whichever side changed it. Items both sides changed differently are conflicts and
- * come from `prefer`.
+ * Three-way merge of two configs that both changed since `base`, the GitHub copy as of the last sync. Each setting
+ * and file is taken from whichever side changed it. Items both sides changed differently are conflicts and come
+ * from `prefer`.
  */
 export function mergeBundles(base: ConfigBundle, local: ConfigBundle, remote: ConfigBundle, prefer: 'local' | 'remote' = 'remote'): { bundle: ConfigBundle; conflicts: string[] } {
   const conflicts: string[] = [];
@@ -135,7 +120,6 @@ export function mergeBundles(base: ConfigBundle, local: ConfigBundle, remote: Co
       format: 'unify-config', version: 1,
       settings: merge(key => `setting unify.${key}`, base.settings, local.settings, remote.settings),
       files: keepBothNotes(merge(key => key.replace(/^unify\//, '~/.unify/').replace(/^agents\//, '~/.agents/'), base.files, local.files, remote.files, true)),
-      toolpacks: merge(key => `toolpack ${key}`, base.toolpacks, local.toolpacks, remote.toolpacks),
     },
     conflicts,
   };
@@ -261,73 +245,6 @@ export async function applyFiles(roots: SyncRoots, files: Record<string, SyncFil
   }
 }
 
-interface PackSync { files: string[]; secrets: Set<string> }
-
-/** The settings files a pack declared (recorded in meta.json by the registry). */
-async function packSync(dir: string, id: string): Promise<{ enabled: boolean; sync?: PackSync }> {
-  let meta: { enabled?: unknown; sync?: { files?: unknown; secrets?: unknown } } = {};
-  try { meta = JSON.parse(await fs.readFile(join(dir, id, 'meta.json'), 'utf8')); }
-  catch { /* missing meta means enabled, as in the registry */ }
-  const names = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
-  const files = names(meta.sync?.files).filter(file => SETTINGS_FILE.test(file));
-  return { enabled: meta.enabled !== false, ...(files.length ? { sync: { files, secrets: new Set(names(meta.sync?.secrets)) } } : {}) };
-}
-
-const isSecret = (sync: PackSync, key: string): boolean => sync.secrets.has(key) || SECRET_KEY.test(key);
-
-async function readSettings(file: string): Promise<Record<string, unknown> | undefined> {
-  try {
-    const text = await fs.readFile(file, 'utf8');
-    if (Buffer.byteLength(text) > MAX_SETTINGS_BYTES) return undefined;
-    const value = JSON.parse(text) as unknown;
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-  } catch { return undefined; }
-}
-
-/** Uploaded toolpack sources, their on/off state and declared settings. Other `data` files stay local. */
-export async function collectToolpacks(dir: string): Promise<ConfigBundle['toolpacks']> {
-  const packs: ConfigBundle['toolpacks'] = {};
-  let entries;
-  try { entries = await fs.readdir(dir, { withFileTypes: true }); }
-  catch { return packs; }
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.') || !PACK_ID.test(entry.name)) continue;
-    try {
-      const source = await fs.readFile(join(dir, entry.name, 'pack.ts'), 'utf8');
-      const { enabled, sync } = await packSync(dir, entry.name);
-      const settings: Record<string, Record<string, unknown>> = {};
-      for (const file of sync?.files ?? []) {
-        const value = await readSettings(join(dir, entry.name, 'data', file));
-        // Secrets are left out rather than blanked, so PCs holding different secrets still hash the same.
-        if (value) settings[file] = Object.fromEntries(Object.entries(value).filter(([key]) => !isSecret(sync!, key)));
-      }
-      packs[entry.name] = { enabled, source, ...(Object.keys(settings).length ? { settings } : {}) };
-    } catch { /* not a complete toolpack */ }
-  }
-  return packs;
-}
-
-/**
- * Writes a pack's synced settings files. Non-secret values come from the bundle; secret keys keep this
- * PC's values (or stay unset). Only files the installed pack declares are written.
- */
-export async function applyToolpackSettings(dir: string, id: string, settings: Record<string, Record<string, unknown>>): Promise<void> {
-  const { sync } = await packSync(dir, id);
-  if (!sync) return;
-  for (const file of sync.files) {
-    const remote = settings[file];
-    if (!remote) continue;
-    const path = join(dir, id, 'data', file);
-    const local = await readSettings(path) ?? {};
-    const next: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(remote)) if (!isSecret(sync, key)) next[key] = value;
-    for (const [key, value] of Object.entries(local)) if (isSecret(sync, key)) next[key] = value;
-    if (stableJson(next) === stableJson(local)) continue;
-    await fs.mkdir(dirname(path), { recursive: true });
-    await fs.writeFile(path, JSON.stringify(next, null, 2) + '\n');
-  }
-}
-
 type Pair = { name?: unknown; value?: unknown };
 const pairs = (value: unknown): Pair[] | undefined => Array.isArray(value) ? value.filter((item): item is Pair => !!item && typeof item === 'object') : undefined;
 
@@ -377,33 +294,53 @@ export function restoreMcpSecrets(remote: unknown, local: unknown): unknown {
   });
 }
 
-/**
- * Account ids are per-PC, so models carry the account's label instead. A label this PC could not resolve
- * is passed on unchanged, so a PC without that account never strips the binding from the others.
- */
-export function portableModels(models: unknown, accounts: AccountRef[]): unknown {
-  if (!Array.isArray(models)) return models;
-  return models.map(model => {
-    if (!model || typeof model !== 'object') return model;
-    const { account, accountLabel, ...rest } = model as Record<string, unknown>;
-    const found = typeof account === 'string' && account !== 'default' ? accounts.find(item => item.id === account) : undefined;
-    const label = found?.label ?? (typeof accountLabel === 'string' && accountLabel ? accountLabel : undefined);
-    return label ? { ...rest, accountLabel: label } : model;
-  });
+/** Account fields older builds wrote on a model. Models are provider-scoped now, so they carry none. */
+const LEGACY_MODEL_ACCOUNT_KEYS = ['account', 'accountLabel'] as const;
+
+/** A model entry without `account` / `accountLabel`; the same object when it has neither. */
+export function stripModelAccount(model: Record<string, unknown>): Record<string, unknown> {
+  if (!LEGACY_MODEL_ACCOUNT_KEYS.some(key => key in model)) return model;
+  const rest = { ...model };
+  for (const key of LEGACY_MODEL_ACCOUNT_KEYS) delete rest[key];
+  return rest;
 }
 
 /**
- * Resolves `accountLabel` to an account on this PC with the same provider and label, else the provider
- * default. The label stays on the model so it can still be matched once that account is added here.
+ * Models are per provider, not per account: account ids and labels belong to one PC, so they never go to
+ * the synced settings. Old bundles from other PCs are cleaned the same way when they come back down.
  */
-export function localModels(models: unknown, accounts: AccountRef[]): unknown {
+export function portableModels(models: unknown, _accounts?: AccountRef[]): unknown {
   if (!Array.isArray(models)) return models;
-  return models.map(model => {
-    if (!model || typeof model !== 'object' || !('accountLabel' in model)) return model;
-    const { accountLabel, ...rest } = model as Record<string, unknown>;
-    const found = accounts.find(item => item.provider === rest.provider && item.label === accountLabel);
-    return { ...rest, account: found?.id || 'default', accountLabel };
-  });
+  return models.map(model => model && typeof model === 'object' ? stripModelAccount(model as Record<string, unknown>) : model);
+}
+
+/** Config Sync's download side: strips the same account fields as `portableModels`. */
+export function localModels(models: unknown, _accounts?: AccountRef[]): unknown {
+  return portableModels(models);
+}
+
+/**
+ * Model entries as Unify uses them: no account fields, and one entry per provider + backend + name. A duplicate
+ * folds into the first copy, which stays enabled if any copy was. `changed` says whether anything was dropped or
+ * rewritten, so the caller persists the cleaned list only then.
+ */
+export function normalizeModels(models: unknown[]): { models: Record<string, unknown>[]; changed: boolean } {
+  const seen = new Map<string, Record<string, unknown>>();
+  let changed = false;
+  for (const item of models) {
+    if (!item || typeof item !== 'object') { changed = true; continue; }
+    const model = stripModelAccount(item as Record<string, unknown>);
+    if (model !== item) changed = true;
+    const key = JSON.stringify([model.provider, model.backend, model.name]);
+    const first = seen.get(key);
+    if (!first) {
+      seen.set(key, { ...model, enabled: model.enabled !== false });
+      continue;
+    }
+    changed = true;
+    first.enabled = first.enabled !== false || model.enabled !== false;
+  }
+  return { models: [...seen.values()], changed };
 }
 
 /** Account lookups shared by API-key and OAuth registries. */
@@ -413,16 +350,11 @@ export interface AccountSource<T extends { id: string; provider: string; label: 
   getDefault(provider: string): T | undefined;
 }
 
-/** The account a model uses: its own account, else one with its synced label, else the provider default. */
+/** The account a model uses: its provider's default account. A model names a provider, never an account. */
 export function accountForModel<T extends { id: string; provider: string; label: string }>(
-  accounts: AccountSource<T>, model: { provider: string; account?: string; accountLabel?: string },
+  accounts: AccountSource<T>, model: { provider: string },
 ): T | undefined {
-  const bound = model.account && model.account !== 'default' ? model.account : undefined;
-  const byId = bound ? accounts.get(bound) : undefined;
-  if (byId) return byId;
-  const byLabel = model.accountLabel ? accounts.list().find(item => item.provider === model.provider && item.label === model.accountLabel) : undefined;
-  if (byLabel) return byLabel;
-  return bound ? undefined : accounts.getDefault(model.provider);
+  return accounts.getDefault(model.provider);
 }
 
 export interface GistInfo { id: string; url: string; updatedAt: string }
@@ -498,7 +430,6 @@ Unify keeps your config here so all your computers share it. API keys, account s
 
 - \`settings/\`: one file per \`unify.*\` setting
 - \`unify/\` and \`agents/\`: global rules and skills
-- \`toolpacks/\`: toolpacks you uploaded, with their settings and on/off state
 - \`memory/\`: your global memory (notes, conventions and scripts)
 
 Every sync is a commit, so the history shows what changed and when. Edits made here directly reach Unify on its next sync.
@@ -511,14 +442,13 @@ export function bundleToTree(bundle: ConfigBundle): Map<string, Buffer> {
   const tree = new Map<string, Buffer>([[MARKER, json({ format: 'unify-sync', version: 1 })], ['README.md', Buffer.from(README)]]);
   for (const [key, value] of Object.entries(bundle.settings)) tree.set(`settings/${key}.json`, json(value));
   for (const [path, file] of Object.entries(bundle.files)) tree.set(path, decode(file));
-  for (const [id, pack] of Object.entries(bundle.toolpacks)) {
-    tree.set(`toolpacks/${id}/source.ts`, Buffer.from(pack.source));
-    tree.set(`toolpacks/${id}/pack.json`, json({ enabled: pack.enabled, ...(pack.settings ? { settings: pack.settings } : {}) }));
-  }
   return tree;
 }
 
-/** Reads a config back from the repository's files. Undefined for an empty repository; files Unify does not know are ignored. */
+/**
+ * Reads a config back from the repository's files. Undefined for an empty repository; files Unify does not know are
+ * ignored, including the `toolpacks/` folder older builds wrote (the next sync removes it).
+ */
 export function treeToBundle(tree: Map<string, Buffer>): ConfigBundle | undefined {
   const marker = tree.get(MARKER);
   if (!marker) {
@@ -529,8 +459,7 @@ export function treeToBundle(tree: Map<string, Buffer>): ConfigBundle | undefine
   try { format = JSON.parse(marker.toString('utf8')); } catch { throw new Error(`${MARKER} in the sync repository is not valid JSON.`); }
   if (format.format !== 'unify-sync') throw new Error(`${MARKER} in the sync repository is not a Unify sync marker.`);
   if (format.version !== 1) throw new Error(`The sync repository uses version ${String(format.version)}; update Unify to read it.`);
-  const bundle: ConfigBundle = { format: 'unify-config', version: 1, settings: {}, files: {}, toolpacks: {} };
-  const packs = new Map<string, { source?: string; meta?: Record<string, unknown> }>();
+  const bundle: ConfigBundle = { format: 'unify-config', version: 1, settings: {}, files: {} };
   const parse = (path: string, data: Buffer): unknown => {
     try { return JSON.parse(data.toString('utf8')); } catch { throw new Error(`${path} in the sync repository is not valid JSON.`); }
   };
@@ -543,31 +472,20 @@ export function treeToBundle(tree: Map<string, Buffer>): ConfigBundle | undefine
       // Hidden files added on GitHub directly (an .obsidian folder, say) are skipped, as Unify skips them locally.
       if (parts.slice(1).some(part => part.startsWith('.'))) continue;
       bundle.files[path] = encode(data);
-    } else if (parts[0] === 'toolpacks' && parts.length === 3 && (parts[2] === 'source.ts' || parts[2] === 'pack.json')) {
-      const pack = packs.get(parts[1]) || {};
-      if (parts[2] === 'source.ts') pack.source = data.toString('utf8');
-      else pack.meta = parse(path, data) as Record<string, unknown>;
-      packs.set(parts[1], pack);
     }
-  }
-  for (const [id, pack] of packs) {
-    if (pack.source === undefined) continue;
-    const settings = pack.meta?.settings;
-    bundle.toolpacks[id] = { enabled: pack.meta?.enabled !== false, source: pack.source, ...(settings !== undefined ? { settings: settings as ToolpackBundle['settings'] } : {}) };
   }
   return validateBundle(bundle);
 }
 
 /** A commit message naming what changed between two configs. */
 export function describeChanges(before: ConfigBundle | undefined, after: ConfigBundle, from: string): string {
-  const empty: ConfigBundle = { format: 'unify-config', version: 1, settings: {}, files: {}, toolpacks: {} };
+  const empty: ConfigBundle = { format: 'unify-config', version: 1, settings: {}, files: {} };
   const was = before ?? empty;
   const changed = (label: (key: string) => string, b: Record<string, unknown>, a: Record<string, unknown>): string[] =>
     [...new Set([...Object.keys(b), ...Object.keys(a)])].sort().filter(key => stableJson(b[key]) !== stableJson(a[key])).map(label);
   const items = [
     ...changed(key => `unify.${key}`, was.settings, after.settings),
     ...changed(key => key, was.files, after.files),
-    ...changed(key => `toolpack ${key}`, was.toolpacks, after.toolpacks),
   ];
   const shown = items.slice(0, 3).join(', ');
   const summary = !items.length ? 'No changes' : items.length > 3 ? `${shown} and ${items.length - 3} more` : shown;
@@ -595,7 +513,7 @@ export async function findSyncRepo(token: string, owner: string, fetchImpl: Fetc
 export async function createSyncRepo(token: string, fetchImpl: Fetch = fetch): Promise<RepoInfo> {
   const body = JSON.stringify({
     name: SYNC_REPO, private: true, has_issues: false, has_projects: false, has_wiki: false, auto_init: false,
-    description: 'Unify settings, rules, skills, toolpacks and memory, synced between computers',
+    description: 'Unify settings, rules, skills and memory, synced between computers',
   });
   const response = await github(token, '/user/repos', { method: 'POST', body }, fetchImpl);
   if (!response.ok) throw await failure(response, 'repository creation');

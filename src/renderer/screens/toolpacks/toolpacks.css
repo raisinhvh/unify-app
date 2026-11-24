@@ -342,3 +342,24 @@
   gap: 8px;
   margin-top: 12px;
 }
+
+/* Install block: the not-installed state is muted; the error line wraps instead of clipping a long reason. */
+.tp-install {
+  display: grid;
+  gap: 0;
+}
+
+.tp-install-status {
+  color: var(--text3);
+}
+
+.tp-install .tp-notice.error {
+  min-height: 0;
+  padding: 6px 0 8px 2px;
+}
+
+.tp-install .tp-notice.error .tp-notice-text {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}

@@ -15,7 +15,7 @@ export interface ProviderRequestBase {
 export type ProviderRequest =
   | (ProviderRequestBase & { type: 'setModelEnabled'; modelId: string; enabled: boolean })
   | (ProviderRequestBase & { type: 'renameAccount'; accountId: string; label: string })
-  | (ProviderRequestBase & { type: 'setAccountDefaultModel'; accountId: string; modelId: string })
+  | (ProviderRequestBase & { type: 'setProviderDefaultModel'; provider: string; modelId: string })
   | (ProviderRequestBase & { type: 'signOutAccount'; accountId: string })
   | (ProviderRequestBase & { type: 'openProviderUsage'; accountId: string });
 
@@ -39,17 +39,18 @@ Turns one model on/off for this installation. The screen toggles optimistically;
 Sets the display label shown in the sidebar, breadcrumb and usage table. Trimmed, non-empty, max ~40 chars.
 `accountsState`'s `SidebarAccount.label` answers it. Keep provider-level defaults (`Claude account`) intact.
 
-## `setAccountDefaultModel`
+## `setProviderDefaultModel`
 
-The model new chats on this account start with (`SidebarAccount` has no such field today; add
-`defaultModel?: string` or persist it engine-side and include it in `accountsState`). The model must be served
-through that account; reject unknown ids.
+The model new chats on this provider start with. Models are provider-scoped: every account of the provider shares
+them, so the default is stored per provider and returned as `providerDefaults: Record<provider, modelId>` next to the
+per-account defaults in `accountsState`. The model must belong to that provider; reject unknown ids. Until the engine
+sends `providerDefaults`, the screen falls back to the default account's `defaultModel`.
 
 ## `signOutAccount`
 
-OAuth only. Clears the stored tokens for that account and leaves the account row in place with
-`usage.fix = 'signin'` until the user signs in again. API-key accounts use the existing `removeAccount`
-message. Cursor uses `cursorLogout`.
+OAuth only. Clears the stored tokens and removes the account. The screen drops signed-out accounts from the list, so
+there is no "Sign in" row; signing in again goes through Add provider. API-key accounts use the existing
+`removeAccount` message. Cursor uses `cursorLogout`.
 
 ## `openProviderUsage`
 
@@ -68,4 +69,3 @@ contract. Do not block the reply on the network fetch: answer `ok: true` once th
 | Account sign out (OAuth) | above `signOutAccount` request |
 | Account remove (API key) | `removeAccount { accountId }` |
 | Usage refresh | `refreshUsage { accountId? }` |
-| Account row “Sign in” | `reauthAccount { accountId }` (Cursor: `cursorLogin`) |

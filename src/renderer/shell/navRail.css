@@ -85,6 +85,18 @@
   transform-origin: center;
 }
 
+/* Hairline between groups (pane entries | screens); sits centered in the extra gap above its entry. */
+.nav-rail-divider {
+  position: absolute;
+  top: 0;
+  left: 10px;
+  width: 20px;
+  height: 1px;
+  border-radius: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
 .nav-rail-meter {
   display: flex;
   justify-content: center;

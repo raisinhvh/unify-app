@@ -51,6 +51,12 @@ export interface CliTurn {
    * Called with the tasks' descriptions when that wait starts, and with an empty list when Claude resumes. Errors thrown here are ignored.
    */
   onBackgroundWait?(tasks: string[]): void;
+  /**
+   * The background tasks Claude Code is running, reported whenever the list changes (not only while the turn waits),
+   * and once with an empty list when the CLI exits. `command` is set when the task is a Bash command run in the background.
+   * Claude Code exposes no way to stop a task over stdin that Unify can rely on, so these tasks cannot be stopped from Unify.
+   */
+  onBackgroundTasks?(tasks: { id: string; description: string; command?: string }[]): void;
   /** Reports the tool names Claude Code loaded for this run (its system init event). Errors thrown here are ignored. */
   onInit?(info: { tools: string[]; model?: string }): void;
   onText(text: string): void;
@@ -275,11 +281,19 @@ export class ClaudeCliRuntime {
   private cancelled = false;
   private cancelTurn?: () => void;
   private sayTurn?: (text: string) => boolean;
+  private waitTurn?: () => boolean;
 
   cancel(): void { this.cancelled = true; this.cancelTurn?.(); }
 
-  /** Adds a user message to the running turn; Claude Code reads it before its next request. False when no turn is running. */
+  /**
+   * Adds a user message to the running turn; Claude Code reads it before its next request. Also accepted after the
+   * reply while the process waits on background tasks, which starts a new reply in the same process. False when no
+   * turn can take it.
+   */
   say(text: string): boolean { return this.sayTurn?.(text) ?? false; }
+
+  /** True when the reply is finished and the process is only kept alive for background tasks. */
+  waitingOnBackground(): boolean { return this.waitTurn?.() ?? false; }
 
   async prompt(turn: CliTurn): Promise<string | undefined> {
     if (this.child) throw new Error('An account turn is already running.');
@@ -308,6 +322,25 @@ export class ClaudeCliRuntime {
       // with no background task left (older CLIs without session state: until the result, or 5 s of quiet).
       // Background task id → description.
       const backgroundTasks = new Map<string, string>();
+      // Background task id → the Bash command that started it; Bash tool_use id → command for background Bash calls.
+      const backgroundCommands = new Map<string, string>();
+      const backgroundToolCommands = new Map<string, string>();
+      let lastTaskReport = '[]';
+      const reportTasks = (): void => {
+        const tasks = [...backgroundTasks].map(([id, description]) => {
+          const command = backgroundCommands.get(id);
+          return { id, description, ...(command ? { command } : {}) };
+        });
+        const signature = JSON.stringify(tasks);
+        if (signature === lastTaskReport) return;
+        lastTaskReport = signature;
+        try { turn.onBackgroundTasks?.(tasks); } catch { /* Callback errors must not interrupt the turn. */ }
+      };
+      // The command of a background task: the event's own `command`, else the Bash call that started it.
+      const taskCommand = (task: Record<string, unknown>): string | undefined => {
+        if (typeof task.command === 'string' && task.command.trim()) return task.command;
+        return typeof task.tool_use_id === 'string' ? backgroundToolCommands.get(task.tool_use_id) : undefined;
+      };
       let turnOver = false;
       let waitingForTasks = false;
       let idleTimer: NodeJS.Timeout | undefined;
@@ -355,15 +388,29 @@ export class ClaudeCliRuntime {
         if (done) return;
         done = true;
         clearTimeout(idleTimer);
+        // The CLI is gone, so its background tasks are too (a lingering process tree is stopped soon after input ends).
+        backgroundTasks.clear();
+        reportTasks();
         this.child = undefined;
         this.cancelTurn = undefined;
         this.sayTurn = undefined;
+        this.waitTurn = undefined;
         if (error) reject(error); else resolve(sessionId);
       };
       this.cancelTurn = () => { terminateProcessTree(child); finish(); };
+      const open = (): boolean => !done && !this.cancelled && !child.stdin.writableEnded && !child.stdin.destroyed;
+      this.waitTurn = () => open() && turnOver && waitingForTasks;
       this.sayTurn = text => {
-        if (done || this.cancelled || turnOver || child.stdin.writableEnded || child.stdin.destroyed) return false;
+        // After the reply, only a process kept alive for background tasks takes a message; otherwise input is about to close.
+        if (!open() || (turnOver && !waitingForTasks)) return false;
         child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } }) + '\n');
+        if (turnOver) {
+          // A new reply starts; keep input open until it ends.
+          turnOver = false;
+          waitingForTasks = false;
+          clearTimeout(idleTimer);
+          reportWait([]);
+        }
         return true;
       };
       const emit = (value: string): void => {
@@ -395,9 +442,12 @@ export class ClaudeCliRuntime {
             const status = event.subtype === 'task_updated' ? (event.patch as Record<string, unknown> | undefined)?.status : event.status;
             if (event.subtype === 'task_started') {
               backgroundTasks.set(event.task_id, typeof event.description === 'string' ? event.description : 'Background task');
+              const command = taskCommand(event);
+              if (command) backgroundCommands.set(event.task_id, command);
             } else if (event.subtype === 'task_notification' || (event.subtype === 'task_updated' && typeof status === 'string')) {
               if (status !== 'running' && status !== 'pending') backgroundTasks.delete(event.task_id);
             }
+            reportTasks();
           }
           // The full list of running tasks, so a task whose end was reported some other way is not waited on forever.
           if (event.type === 'system' && event.subtype === 'background_tasks_changed' && Array.isArray(event.tasks)) {
@@ -408,8 +458,11 @@ export class ClaudeCliRuntime {
               if (typeof id !== 'string') continue;
               running.add(id);
               if (!backgroundTasks.has(id)) backgroundTasks.set(id, typeof description === 'string' ? description : 'Background task');
+              const command = taskCommand(task as Record<string, unknown>);
+              if (command) backgroundCommands.set(id, command);
             }
             for (const id of [...backgroundTasks.keys()]) if (!running.has(id)) backgroundTasks.delete(id);
+            reportTasks();
             if (waitingForTasks && backgroundTasks.size) reportWait([...backgroundTasks.values()]);
           }
           const stateChange = event.type === 'system' && event.subtype === 'session_state_changed' && typeof event.state === 'string' ? event.state : undefined;
@@ -515,6 +568,7 @@ export class ClaudeCliRuntime {
                 const title = String(block.name || 'Claude tool');
                 toolNames.set(id, title);
                 const input = block.input && typeof block.input === 'object' ? block.input as Record<string, unknown> : {};
+                if (/^Bash$/i.test(title) && input.run_in_background === true && typeof input.command === 'string') backgroundToolCommands.set(id, input.command);
                 if (/^(Agent|Task)$/i.test(title)) {
                   subagentTools.add(id);
                   turn.onSubagent?.({ id, title: String(input.description || input.name || 'Subagent'), prompt: typeof input.prompt === 'string' ? input.prompt : undefined,

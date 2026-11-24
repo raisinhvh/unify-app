@@ -1,0 +1,60 @@
+{
+  "extends": "base",
+  "persisted": {
+    "route": "providers",
+    "panelOpen": true,
+    "providerSelection": { "kind": "provider", "provider": "claude-cli" }
+  },
+  "messages": [
+    {
+      "type": "accountsState",
+      "cursor": { "connected": false, "label": "Not connected" },
+      "accounts": [
+        { "id": "acc-claude", "provider": "claude-cli", "label": "Claude Max", "email": "you@example.com", "isDefault": true, "authType": "oauth", "defaultModel": "claude-opus-5-5" },
+        { "id": "acc-claude-work", "provider": "claude-cli", "label": "Work", "email": "work@example.com", "isDefault": false, "authType": "oauth" },
+        { "id": "acc-codex", "provider": "codex-cli", "label": "ChatGPT Plus", "isDefault": true, "authType": "oauth", "defaultModel": "gpt-5-codex" }
+      ],
+      "providerDefaults": { "claude-cli": "claude-opus-5-5", "codex-cli": "gpt-5-codex" }
+    },
+    {
+      "type": "modelState",
+      "models": [
+        { "id": "claude-opus-5-5", "name": "Claude Opus 5.5", "provider": "claude-cli", "backend": "claude-opus-5-5", "usable": true, "enabled": true, "contextWindow": 200000 },
+        { "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5", "provider": "claude-cli", "backend": "claude-sonnet-5-5", "usable": true, "enabled": true, "contextWindow": 200000 },
+        { "id": "claude-haiku-5-5", "name": "Claude Haiku 5.5", "provider": "claude-cli", "backend": "claude-haiku-5-5", "usable": true, "enabled": false, "contextWindow": 200000 },
+        { "id": "gpt-5-codex", "name": "GPT-5 Codex", "provider": "codex-cli", "backend": "gpt-5-codex", "usable": true, "enabled": true, "contextWindow": 400000 }
+      ]
+    },
+    {
+      "type": "usageState",
+      "usage": {
+        "acc-claude": {
+          "status": "ready",
+          "fetchedAt": -1,
+          "plan": { "name": "Max", "monthlyUsd": 100 },
+          "metrics": [
+            { "label": "5-hour", "value": "38%", "usedPercent": 38, "resetsAt": 32 },
+            { "label": "Weekly", "value": "21%", "usedPercent": 21, "resetsAt": 2820 }
+          ]
+        },
+        "acc-claude-work": {
+          "status": "ready",
+          "fetchedAt": -1,
+          "plan": { "name": "Pro", "monthlyUsd": 20 },
+          "metrics": [
+            { "label": "5-hour", "value": "82%", "usedPercent": 82, "resetsAt": 140 },
+            { "label": "Weekly", "value": "47%", "usedPercent": 47, "resetsAt": 5000 }
+          ]
+        },
+        "acc-codex": {
+          "status": "ready",
+          "fetchedAt": -1,
+          "plan": { "name": "Plus", "monthlyUsd": 20 },
+          "metrics": [
+            { "label": "5-hour", "value": "14%", "usedPercent": 14, "resetsAt": -1 }
+          ]
+        }
+      }
+    }
+  ]
+}

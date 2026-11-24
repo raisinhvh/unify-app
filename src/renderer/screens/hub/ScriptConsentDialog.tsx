@@ -63,7 +63,7 @@ export function ScriptConsentDialog(): JSX.Element {
                 <Show when={packages().length}>
                   installs {packages().length === 1 ? 'this program' : 'these programs'}{' '}
                 </Show>
-                on {shown()?.target === 'all' ? 'each of your devices' : 'this device'}
+                on this device
                 <Show when={hasUninstall()}>
                   , and runs <span class="hub-script-name type-mono">{shown()?.uninstallScriptName}</span> when you remove it to clean up what it added
                 </Show>

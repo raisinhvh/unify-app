@@ -12,6 +12,8 @@ export interface TerminalViewProps {
   cwd?: string;
   /** When true, the xterm takes keyboard focus. */
   focused: boolean;
+  /** 0.8…1: the pane text-size rule (shell/paneScale.tsx) applied to the font, so a narrow pane keeps more columns. */
+  fontScale?: number;
   /** Called when the shell sets its title (OSC 0/2). */
   onTitle?: (title: string) => void;
   /** Called with the folder the shell actually started in. */
@@ -68,6 +70,8 @@ export function TerminalView(props: TerminalViewProps): JSX.Element {
   let starting = false;
   let unsubscribeData: (() => void) | undefined;
   let unsubscribeExit: (() => void) | undefined;
+  /** Whole-ish pixel sizes (quarter steps) so a drag doesn't refit the terminal on every frame. */
+  const fontSize = () => Math.round(13 * (props.fontScale ?? 1) * 4) / 4;
 
   const fitNow = () => {
     if (disposed || !term || !fit || !host) return;
@@ -111,7 +115,7 @@ export function TerminalView(props: TerminalViewProps): JSX.Element {
   onMount(() => {
     if (!api) return;
     term = new Terminal({
-      fontSize: 13,
+      fontSize: fontSize(),
       fontFamily: resolvedFontFamily(),
       cursorBlink: true,
       scrollback: 5000,
@@ -149,6 +153,19 @@ export function TerminalView(props: TerminalViewProps): JSX.Element {
 
     void start();
   });
+
+  // A narrower pane shrinks the font (to 0.8× at most); refit so the shell gets the new columns and rows.
+  createEffect(
+    on(
+      fontSize,
+      size => {
+        if (!term || term.options.fontSize === size) return;
+        term.options.fontSize = size;
+        scheduleFit();
+      },
+      { defer: true },
+    ),
+  );
 
   createEffect(
     on(

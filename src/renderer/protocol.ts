@@ -26,6 +26,7 @@ export type {
   ApprovalMode,
   CursorAccountState,
   SidebarAccount,
+  SidebarBackgroundProcess,
   SidebarDependency,
   SidebarDiff,
   SidebarEditLine,
@@ -44,6 +45,7 @@ export type {
   SidebarSubagentTool,
   SidebarTimelineItem,
   SidebarToolEvent,
+  SidebarToolProgress,
   SidebarUsageMetric,
 } from '@engine/sidebar/view';
 
@@ -109,7 +111,6 @@ export type RunState = SidebarViewState['runStates'][string];
 export interface HubInstallMessage {
   type: 'hubInstall';
   id: string;
-  target: 'this' | 'all';
   allowScript?: boolean;
   requestId?: string;
 }

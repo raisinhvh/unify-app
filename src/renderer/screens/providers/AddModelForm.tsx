@@ -1,26 +1,32 @@
 /**
- * Inline form for adding a model to an account (Providers › Account › Models).
+ * Inline form for adding a model to a provider (Providers › Provider › Models). Models belong to the provider,
+ * so the form takes no account; self-hosted server lists are read through the provider's default account.
+ *
+ * Cursor gets a catalog first: the account's models (loaded from `cursor-agent models` when the form opens),
+ * searchable, each with its own Add, so adding a model never means knowing its slug. Typing an ID stays below.
  *
  * Reveals under the Models heading with a critically-damped height + opacity spring (no bounce)
  * so the rows below slide down smoothly instead of jumping. Mirrors the engine's saveModel rules
  * and surfaces validation or engine errors inline until modelSaved closes the form.
  */
 import { createEffect, createSignal, createUniqueId, For, on, onCleanup, onMount, Show, type JSX } from 'solid-js';
-import { Button } from '../../components';
+import { Button, Icon } from '../../components';
 import { createSpring, prefersReducedMotion, useSpring } from '../../motion';
 import { onHostMessage } from '../../store';
-import type { AccountView, ModelView } from './adapter';
+import type { ModelSuggestion, ModelView } from './adapter';
 import {
+  defaultAccount,
   loadServerModels,
   modelIdPlaceholder,
   modelSuggestions,
+  providerModels,
   saveModel,
   serverModels,
   validateModelInput,
 } from './adapter';
 
 export interface AddModelFormProps {
-  account: AccountView;
+  provider: string;
   open: boolean;
   model?: ModelView;
   onClose: () => void;
@@ -35,6 +41,7 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
   let outer!: HTMLDivElement;
   let inner!: HTMLDivElement;
   let backendInput: HTMLInputElement | undefined;
+  let searchInput: HTMLInputElement | undefined;
 
   const backendId = createUniqueId();
   const nameId = createUniqueId();
@@ -51,10 +58,44 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
   const height = useSpring(0, openSpring, 100);
   const opacity = createSpring(() => (props.open ? 1 : 0), opacitySpring, { fadeOnly: true });
 
-  const isSelfHosted = () => props.account.provider === 'self-hosted';
-  const suggestions = () => modelSuggestions(props.account);
-  const serverState = () => serverModels()[props.account.id];
+  const isSelfHosted = () => props.provider === 'self-hosted';
+  const serverAccountId = () => defaultAccount(props.provider)?.id ?? '';
+  const suggestions = () => modelSuggestions(props.provider);
+  const serverState = () => serverModels()[serverAccountId()];
   const canSave = () => !saving() && backend().trim().length > 0;
+
+  // Cursor catalog: shown when adding (not when configuring an existing model).
+  const showCatalog = () => props.provider === 'cursor-acp' && !props.model;
+  const [query, setQuery] = createSignal('');
+  /** The slug being added from the catalog; the form stays open so several can be added in a row. */
+  const [quickAdding, setQuickAdding] = createSignal<string>();
+  const addedBackends = () => new Set(providerModels(props.provider).map(model => model.backend));
+  const catalog = () => {
+    const words = query().trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return suggestions().filter(item => {
+      const text = `${item.label ?? ''} ${item.value}`.toLowerCase();
+      return words.every(word => text.includes(word));
+    });
+  };
+  const busy = () => saving() || quickAdding() !== undefined;
+
+  const refreshCatalog = () => {
+    if (serverState()?.loading) return;
+    loadServerModels(serverAccountId());
+  };
+
+  const quickAdd = (item: ModelSuggestion) => {
+    if (busy() || addedBackends().has(item.value)) return;
+    const input = { provider: props.provider, backend: item.value, name: item.label ?? item.value, effortOptions: [] };
+    const issue = validateModelInput(input);
+    if (issue) {
+      setError(issue);
+      return;
+    }
+    setError(undefined);
+    setQuickAdding(item.value);
+    saveModel(input);
+  };
 
   const contentHeight = () => inner?.offsetHeight ?? 0;
 
@@ -86,6 +127,8 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
     setEffortText(props.model?.effortOptions?.join(', ') || '');
     setSaving(false);
     setError(undefined);
+    setQuery('');
+    setQuickAdding(undefined);
   };
 
   const animateOpen = () => {
@@ -102,7 +145,12 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
         if (!height.moving) height.jump(from);
         height.set(to, openSpring);
       }
-      backendInput?.focus();
+      if (showCatalog()) {
+        if (!serverState()?.loaded) refreshCatalog();
+        searchInput?.focus();
+      } else {
+        backendInput?.focus();
+      }
     });
   };
 
@@ -141,7 +189,7 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
 
   createEffect(
     on(
-      () => `${props.account.id}:${props.model?.name || ''}`,
+      () => `${props.provider}:${props.model?.name || ''}`,
       () => {
         // A rename's modelState lands before modelSaved and drops the old name; keep waiting for the ack.
         if (saving()) return;
@@ -153,6 +201,15 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
 
   onCleanup(
     onHostMessage(message => {
+      if (quickAdding() !== undefined) {
+        if (message.type === 'modelSaved') {
+          setQuickAdding(undefined);
+        } else if (message.type === 'error') {
+          setQuickAdding(undefined);
+          setError(message.message || 'Could not add model.');
+        }
+        return;
+      }
       if (!saving()) return;
       if (message.type === 'modelSaved') {
         setSaving(false);
@@ -166,7 +223,7 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
   );
 
   const cancel = () => {
-    if (saving()) return;
+    if (busy()) return;
     setError(undefined);
     props.onClose();
   };
@@ -175,7 +232,7 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
     event.preventDefault();
     if (saving()) return;
     const input = {
-      account: props.account,
+      provider: props.provider,
       backend: backend(),
       name: displayName(),
       originalName: props.model?.name,
@@ -219,6 +276,108 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
       <div ref={inner} style={{ opacity: String(Math.max(0, Math.min(1, opacity()))) }}>
         <Show when={mounted()}>
           <form class="pv-model-form" onSubmit={submit} onKeyDown={onKeyDown} novalidate>
+            <Show when={showCatalog()}>
+              <div class="pv-catalog">
+                <div class="pv-catalog-head">
+                  <span class="pv-catalog-search">
+                    <Icon name="search" size={12} class="pv-catalog-search-icon" />
+                    <input
+                      ref={element => {
+                        searchInput = element;
+                      }}
+                      class="pv-text-input pv-catalog-search-input"
+                      type="search"
+                      spellcheck={false}
+                      autocomplete="off"
+                      placeholder="Search Cursor models"
+                      aria-label="Search Cursor models"
+                      value={query()}
+                      onInput={event => setQuery(event.currentTarget.value)}
+                      onKeyDown={event => {
+                        if (event.key !== 'Enter') return;
+                        event.preventDefault();
+                        const first = catalog().find(item => !addedBackends().has(item.value));
+                        if (first) quickAdd(first);
+                      }}
+                    />
+                  </span>
+                  <Button
+                    variant="text"
+                    class="pv-load-models"
+                    disabled={!!serverState()?.loading}
+                    onClick={refreshCatalog}
+                  >
+                    <Show when={serverState()?.loading}>
+                      <span class="pv-spinner" aria-hidden="true" />
+                    </Show>
+                    {serverState()?.loading ? 'Loading…' : 'Refresh'}
+                  </Button>
+                </div>
+                <div class="pv-catalog-list" role="list" aria-label="Cursor models">
+                  <For each={catalog()}>
+                    {item => {
+                      const added = () => addedBackends().has(item.value);
+                      const adding = () => quickAdding() === item.value;
+                      return (
+                        <div
+                          class="pv-catalog-row"
+                          classList={{ added: added() }}
+                          role="listitem"
+                          onClick={() => quickAdd(item)}
+                        >
+                          <span class="pv-catalog-name" title={item.label ?? item.value}>{item.label ?? item.value}</span>
+                          <span class="pv-catalog-slug" title={item.value}>{item.value}</span>
+                          <span class="pv-catalog-action">
+                            <Show
+                              when={!added()}
+                              fallback={
+                                <span class="pv-catalog-added">
+                                  <Icon name="check" size={12} />
+                                  Added
+                                </span>
+                              }
+                            >
+                              <Button
+                                variant="text"
+                                class="pv-catalog-add"
+                                disabled={busy()}
+                                aria-label={`Add ${item.label ?? item.value}`}
+                                onClick={event => {
+                                  event.stopPropagation();
+                                  quickAdd(item);
+                                }}
+                              >
+                                <Show when={adding()} fallback="Add">
+                                  <span class="pv-spinner" aria-hidden="true" />
+                                </Show>
+                              </Button>
+                            </Show>
+                          </span>
+                        </div>
+                      );
+                    }}
+                  </For>
+                  <Show when={!catalog().length}>
+                    <p class="pv-catalog-empty">
+                      {serverState()?.loading
+                        ? 'Loading your Cursor models…'
+                        : query().trim()
+                          ? `No Cursor model matches "${query().trim()}".`
+                          : 'No models loaded yet. Refresh to load them from Cursor.'}
+                    </p>
+                  </Show>
+                </div>
+                <Show when={serverState()?.error}>
+                  {message => (
+                    <p class="pv-catalog-feedback error" role="alert">
+                      {message()}
+                    </p>
+                  )}
+                </Show>
+              </div>
+              <p class="pv-catalog-or">Or enter a model ID</p>
+            </Show>
+
             <div class="pv-setting-row">
               <label class="pv-setting-label" for={backendId}>Model ID</label>
               <span class="pv-setting-value">
@@ -233,7 +392,7 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
                   spellcheck={false}
                   autocomplete="off"
                   disabled={saving()}
-                  placeholder={modelIdPlaceholder(props.account.provider)}
+                  placeholder={modelIdPlaceholder(props.provider)}
                   value={backend()}
                   onInput={event => {
                     setBackend(event.currentTarget.value);
@@ -252,7 +411,7 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
                     variant="text"
                     class="pv-load-models"
                     disabled={saving() || !!serverState()?.loading}
-                    onClick={() => loadServerModels(props.account.id)}
+                    onClick={() => loadServerModels(serverAccountId())}
                   >
                     <Show when={serverState()?.loading}>
                       <span class="pv-spinner" aria-hidden="true" />
@@ -295,6 +454,7 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
               </span>
             </div>
 
+            <Show when={props.provider !== 'cursor-acp'}>
             <div class="pv-setting-row">
               <label class="pv-setting-label" for={effortId}>Effort levels</label>
               <span class="pv-setting-value">
@@ -315,6 +475,7 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
               </span>
             </div>
             <p id={`${effortId}-help`} class="pv-model-form-feedback">Comma-separated effort levels supported by this model. Leave blank for provider defaults.</p>
+            </Show>
 
             <Show when={error()}>
               {message => (

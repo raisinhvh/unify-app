@@ -78,7 +78,6 @@ interface RemoteIndexDocument {
   categories?: unknown;
   featured?: unknown;
   authors?: unknown;
-  devices?: unknown;
   [key: string]: unknown;
 }
 

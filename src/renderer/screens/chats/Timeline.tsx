@@ -18,11 +18,11 @@
  *
  * Rows are keyed by timeline id, so streaming text and state changes update in place instead of remounting.
  */
-import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, Show, Switch, type Accessor, type JSX } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, type Accessor, type JSX } from 'solid-js';
 import { Button, Icon, Loader, actionLoader, toolAction, tooltip, type IconName } from '../../components';
 import { isImage, mediaKey, openMediaViewer, thumbSource, uniqueMedia, type MediaItem } from '../../components/media';
 import { imageDragProps } from '../../shell/imageDrag';
-import { Collapse, Presence } from '../../motion';
+import { Collapse, Presence, createSpring, driveSpring, useSpring } from '../../motion';
 import { post } from '../../bridge';
 import type {
   SidebarEditPreview,
@@ -31,6 +31,7 @@ import type {
   SidebarSubagent,
   SidebarTimelineItem,
   SidebarToolEvent,
+  SidebarToolProgress,
 } from '../../protocol';
 import { isChatLoading, isRunning, requestChatHistory, userImages, viewState } from '../../store';
 import { feature } from '../../store/features';
@@ -44,9 +45,11 @@ import { handleMarkdownClick, handleMarkdownKeyDown, renderMarkdown } from './ma
 import './timeline.css';
 
 type ToolLike = Pick<SidebarToolEvent, 'title' | 'detail' | 'full' | 'kind'> & {
+  id?: string;
   state: SidebarToolEvent['state'];
   internal?: SidebarInternalTool;
   media?: SidebarMedia[];
+  progress?: SidebarToolProgress;
 };
 
 const explorerProfile = 'explorer';
@@ -152,10 +155,129 @@ function ToolGlyph(props: { tool: ToolLike }): JSX.Element {
   );
 }
 
+/* Progress on running tool rows */
+
+/**
+ * Where each call's bar was (by tool id). A row remounts on every tool event, so the bar starts from here and springs
+ * on, instead of restarting from zero; an entry is dropped once the bar has faded out.
+ */
+const progressMemory = new Map<string, number>();
+
+/** The share of `expectedMs` a call has reached: eases towards 95%, about 90% at expectedMs, never 100%. */
+function expectedFraction(progress: SidebarToolProgress, now: number): number {
+  const elapsed = Math.max(0, now - progress.startedAt);
+  return 0.95 * (1 - Math.exp((-3 * elapsed) / Math.max(1, progress.expectedMs ?? 1)));
+}
+
+/** The label beside the bar: the engine's own text, else the percentage, else the time left from expectedMs. */
+function progressLabel(progress: SidebarToolProgress, now: number): string {
+  if (progress.label) return progress.label;
+  if (progress.fraction !== undefined) return `${Math.round(progress.fraction * 100)}%`;
+  // First run of this command: no history to estimate from, so count up instead.
+  if (!progress.expectedMs) return `${Math.floor(Math.max(0, now - progress.startedAt) / 1000)}s`;
+  const remaining = (progress.expectedMs ?? 0) - (now - progress.startedAt);
+  if (remaining <= 0) return 'Longer than usual';
+  return `~${Math.ceil(remaining / 1000)}s left`;
+}
+
+/**
+ * The 2px bar along the bottom edge of a tool row, with a muted label after the row's text (the row keeps its height).
+ * A known fraction drives the bar with a spring; with only expectedMs the bar creeps on its own, animated by a
+ * requestAnimationFrame loop that runs only while the call is running and the row is on screen. When the call
+ * completes the bar fills to 100% and fades out; on error or cancel it fades out in its own tone.
+ */
+function ToolProgress(props: {
+  id?: string;
+  state: () => ToolLike['state'];
+  progress: () => SidebarToolProgress | undefined;
+}): JSX.Element {
+  let bar!: HTMLSpanElement;
+  const [now, setNow] = createSignal(Date.now());
+  const [onScreen, setOnScreen] = createSignal(true);
+  const [fill, setFill] = createSignal(0);
+  const running = () => props.state() === 'running';
+  const creeping = () => running() && !!props.progress() && props.progress()!.fraction === undefined;
+
+  const startValue = (props.id !== undefined && progressMemory.get(props.id)) || 0;
+  let high = startValue;
+  // Never moves back: a fresh estimate or fraction below the bar's current place is ignored.
+  const target = (): number => {
+    if (props.state() === 'complete') {
+      high = 1;
+      return 1;
+    }
+    const progress = props.progress();
+    if (running() && progress) {
+      const value = progress.fraction ?? (progress.expectedMs ? expectedFraction(progress, now()) : 0);
+      high = Math.max(high, Math.min(1, value));
+    }
+    return high;
+  };
+
+  const width = useSpring(startValue, 'panel');
+  const stopFill = width.onChange(value => setFill(value));
+  onCleanup(stopFill);
+  createEffect(() => {
+    const value = target();
+    if (props.id !== undefined) progressMemory.set(props.id, high);
+    driveSpring(width, value);
+  });
+
+  createEffect(() => {
+    if (!creeping() || !onScreen()) return;
+    let frame = 0;
+    const step = () => {
+      setNow(Date.now());
+      frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    onCleanup(() => cancelAnimationFrame(frame));
+  });
+
+  onMount(() => {
+    const observer = new IntersectionObserver(entries => setOnScreen(entries.some(entry => entry.isIntersecting)));
+    observer.observe(bar);
+    onCleanup(() => observer.disconnect());
+  });
+
+  const faded = () => props.state() !== 'running' && (props.state() !== 'complete' || fill() >= 0.995);
+  const opacity = createSpring(() => (faded() ? 0 : 1), 'control', { fadeOnly: true });
+  createEffect(on(faded, isFaded => {
+    if (isFaded && props.id !== undefined) progressMemory.delete(props.id);
+  }));
+
+  return (
+    <>
+      <Show when={running() && props.progress()}>
+        {current => <span class="tool-progress-label">{progressLabel(current(), now())}</span>}
+      </Show>
+      <span
+        ref={bar}
+        class="tool-progress"
+        classList={{
+          'tool-progress-error': props.state() === 'error',
+          'tool-progress-cancelled': props.state() === 'cancelled',
+          'tool-progress-indeterminate': creeping() && !props.progress()!.expectedMs,
+        }}
+        style={{ opacity: String(Math.max(0, Math.min(1, opacity()))) }}
+        role="progressbar"
+        aria-label="Progress of this call"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(fill() * 100)}
+      >
+        <span class="tool-progress-fill" style={{ transform: `scaleX(${fill()})` }} />
+      </span>
+    </>
+  );
+}
+
 /** One call on one line. An internal call shows what it really did; the raw call stays in the tooltip. */
 export function ToolRow(props: { tool: ToolLike; class?: string; trailing?: JSX.Element }): JSX.Element {
   const title = () => props.tool.internal?.label ?? props.tool.title;
   const detail = () => (props.tool.internal ? props.tool.internal.detail : props.tool.detail);
+  // A row that remounts after its call ended still shows the bar it had, so it can fill and fade out.
+  const hasBar = () => !!props.tool.progress || (props.tool.id !== undefined && progressMemory.has(props.tool.id));
   return (
     <div
       class={props.class ? `tool-row ${props.class}` : 'tool-row'}
@@ -169,6 +291,13 @@ export function ToolRow(props: { tool: ToolLike; class?: string; trailing?: JSX.
       <span class="tool-row-title">{title()}</span>
       <Show when={detail()}>
         {text => <span class="tool-row-detail">{text().replace(/\s+/g, ' ')}</span>}
+      </Show>
+      <Show when={hasBar()}>
+        <ToolProgress
+          id={props.tool.id}
+          state={() => props.tool.state}
+          progress={() => props.tool.progress}
+        />
       </Show>
       {props.trailing}
     </div>

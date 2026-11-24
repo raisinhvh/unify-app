@@ -20,8 +20,6 @@ import { openChat } from '../../shell/layout';
 import { Composer } from './Composer';
 import { openProjectFolder, ProjectPicker } from './ProjectPicker';
 import { ScheduleBar } from './ScheduleBar';
-import { ShutdownBar } from './ShutdownBar';
-import { NoQuestionsBar } from './NoQuestionsBar';
 import { isNoFolder, newSessionTarget, parentFolder, selectedProject } from './projects';
 import './home.css';
 
@@ -99,8 +97,6 @@ export function Home(props: { covered: boolean }): JSX.Element {
         <h1 class="home-title type-display">Unify</h1>
         <Composer class="home-composer" placeholder={placeholder()} onSubmit={start} autofocus={!props.covered} />
         <ScheduleBar />
-        <ShutdownBar />
-        <NoQuestionsBar />
         <div class="home-project">
           <Button
             ref={setChip}

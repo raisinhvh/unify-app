@@ -3,14 +3,12 @@
  * sign-out, and opening a provider's usage page.
  *
  * Unify keeps account metadata in the shim's globalState (`~/.unify/state.json`) and models in the
- * `unify.models` setting. Both are written here directly, in the same shapes the shim uses. Values the sidebar
- * protocol does not carry (labels, defaults) live in `~/.unify/providers.json`.
+ * `unify.models` setting. Labels and default models live in `~/.unify/providers.json`. Models belong to a
+ * provider; the default model is stored per provider (`providerDefaults`).
  *
- * `signOutAccount` forgets the account's OAuth credentials but keeps the account record. The caller refreshes
- * usage afterwards (`context.refreshUsageState`) so the screen shows "Signed out" from the next `usageState`.
+ * `signOutAccount` removes the account completely through the engine (`context.removeAccount`), so the record,
+ * its credentials, the default pointer and the in-memory state all change together.
  */
-import { promises as fs } from 'node:fs';
-import * as path from 'node:path';
 import { RequestPaths, isRecord, readJsonFile, writeJsonFile } from './state';
 
 /** Usage pages Unify already opens for `viewProviderUsage` (extension.ts). */
@@ -29,8 +27,8 @@ interface ProviderStore {
   modelEnabled: Record<string, boolean>;
   /** Account id -> display label. */
   accountLabels: Record<string, string>;
-  /** Account id -> the model new chats on it start with. */
-  accountDefaults: Record<string, string>;
+  /** Provider -> the model new chats on that provider start with. */
+  providerDefaults: Record<string, string>;
 }
 
 interface AccountRecord {
@@ -52,21 +50,38 @@ export interface AccountStateEntry {
   defaultModel?: string;
 }
 
+export interface AccountsStatePayload {
+  type: 'accountsState';
+  accounts: AccountStateEntry[];
+  /** Provider -> the model new chats on that provider start with. */
+  providerDefaults: Record<string, string>;
+}
+
 const OAUTH_KEY = 'unify.oauthCliAccounts.v1';
 const OAUTH_DEFAULTS_KEY = 'unify.oauthCliDefaults.v1';
 const ACCOUNTS_KEY = 'unify.accounts.v1';
 const ACCOUNTS_DEFAULTS_KEY = 'unify.accountDefaults.v1';
 const MODEL_SETTING = 'unify.models';
 
-const DEFAULT_STORE: ProviderStore = { modelEnabled: {}, accountLabels: {}, accountDefaults: {} };
-
 export function providerStore(paths: RequestPaths): ProviderStore {
-  const stored = readJsonFile<Partial<ProviderStore>>(paths.providersFile, {});
-  return {
+  const stored = readJsonFile<Partial<ProviderStore> & { accountDefaults?: unknown }>(paths.providersFile, {});
+  const store: ProviderStore = {
     modelEnabled: isRecord(stored.modelEnabled) ? stored.modelEnabled as Record<string, boolean> : {},
     accountLabels: isRecord(stored.accountLabels) ? stored.accountLabels as Record<string, string> : {},
-    accountDefaults: isRecord(stored.accountDefaults) ? stored.accountDefaults as Record<string, string> : {},
+    providerDefaults: isRecord(stored.providerDefaults) ? stored.providerDefaults as Record<string, string> : {},
   };
+  // Defaults used to be per account. Each one moves to its account's provider, unless that provider has one already.
+  if (isRecord(stored.accountDefaults)) {
+    const state = readState(paths);
+    const providerOf = new Map<string, string>();
+    for (const item of [...records(state, OAUTH_KEY), ...records(state, ACCOUNTS_KEY)]) providerOf.set(item.id, item.provider);
+    for (const [accountId, modelId] of Object.entries(stored.accountDefaults)) {
+      const provider = providerOf.get(accountId);
+      if (provider && typeof modelId === 'string' && modelId && !store.providerDefaults[provider]) store.providerDefaults[provider] = modelId;
+    }
+    saveProviderStore(paths, store);
+  }
+  return store;
 }
 
 function saveProviderStore(paths: RequestPaths, store: ProviderStore): void {
@@ -112,7 +127,7 @@ function patchAccount(state: ShimState, accountId: string, patch: Partial<Accoun
 }
 
 /** The accountsState payload the renderer expects, built from disk. Cursor's login is engine-owned and omitted. */
-export function accountsState(paths: RequestPaths): { type: 'accountsState'; accounts: AccountStateEntry[] } {
+export function accountsState(paths: RequestPaths): AccountsStatePayload {
   const state = readState(paths);
   const store = providerStore(paths);
   const oauthDefaults = defaults(state, OAUTH_DEFAULTS_KEY);
@@ -126,7 +141,7 @@ export function accountsState(paths: RequestPaths): { type: 'accountsState'; acc
       email: account.email,
       isDefault: (oauthDefaults[account.provider] ?? records(state, OAUTH_KEY).find(item => item.provider === account.provider)?.id) === account.id,
       authType: 'oauth',
-      ...(store.accountDefaults[account.id] ? { defaultModel: store.accountDefaults[account.id] } : {}),
+      ...(store.providerDefaults[account.provider] ? { defaultModel: store.providerDefaults[account.provider] } : {}),
     });
   }
   for (const account of records(state, ACCOUNTS_KEY)) {
@@ -138,10 +153,10 @@ export function accountsState(paths: RequestPaths): { type: 'accountsState'; acc
       isDefault: (apiDefaults[account.provider] ?? records(state, ACCOUNTS_KEY).find(item => item.provider === account.provider)?.id) === account.id,
       authType: 'api-key',
       ...(account.provider === 'self-hosted' && typeof account.metadata?.baseURL === 'string' ? { baseURL: account.metadata.baseURL } : {}),
-      ...(store.accountDefaults[account.id] ? { defaultModel: store.accountDefaults[account.id] } : {}),
+      ...(store.providerDefaults[account.provider] ? { defaultModel: store.providerDefaults[account.provider] } : {}),
     });
   }
-  return { type: 'accountsState', accounts };
+  return { type: 'accountsState', accounts, providerDefaults: store.providerDefaults };
 }
 
 /** Applies `enabled` to a stored `unify.models` entry; returns whether the setting held the model. */
@@ -170,7 +185,7 @@ export function setModelEnabled(paths: RequestPaths, modelId: string, enabled: b
 }
 
 /** Renames an account everywhere it is stored. Returns the fresh accounts state. */
-export function renameAccount(paths: RequestPaths, accountId: string, label: string): { type: 'accountsState'; accounts: AccountStateEntry[] } {
+export function renameAccount(paths: RequestPaths, accountId: string, label: string): AccountsStatePayload {
   const trimmed = String(label || '').trim();
   if (!trimmed) throw new Error('The account name is required.');
   const store = providerStore(paths);
@@ -183,40 +198,36 @@ export function renameAccount(paths: RequestPaths, accountId: string, label: str
   return accountsState(paths);
 }
 
-/** Remembers which model new chats on the account should start with. */
-export function setAccountDefaultModel(paths: RequestPaths, accountId: string, modelId: string): { type: 'accountsState'; accounts: AccountStateEntry[] } {
-  const state = readState(paths);
-  const found = patchAccount(state, accountId, {});
-  if (!found.oauth && !found.apiKey) throw new Error('Account not found.');
+/** Remembers which model new chats on this provider should start with. */
+export function setProviderDefaultModel(paths: RequestPaths, provider: string, modelId: string): AccountsStatePayload {
+  const name = String(provider || '').trim();
+  if (!name) throw new Error('Choose a provider first.');
   const store = providerStore(paths);
-  store.accountDefaults[accountId] = String(modelId || '');
+  if (modelId) store.providerDefaults[name] = String(modelId);
+  else delete store.providerDefaults[name];
   saveProviderStore(paths, store);
   return accountsState(paths);
 }
 
-/** Forgets OAuth tokens for an account while keeping the account record ("Signed out"). */
-export async function signOutAccount(paths: RequestPaths, accountId: string): Promise<{ type: 'accountsState'; accounts: AccountStateEntry[] }> {
-  const state = readState(paths);
-  const account = records(state, OAUTH_KEY).find(item => item.id === accountId);
-  if (!account) {
-    if (records(state, ACCOUNTS_KEY).some(item => item.id === accountId)) {
-      throw new Error('API-key accounts are removed, not signed out.');
-    }
-    throw new Error('Account not found.');
-  }
-  const directory = (account as AccountRecord & { directory?: unknown }).directory;
-  if (typeof directory !== 'string' || !directory) throw new Error('Account storage is missing.');
-  const resolved = path.resolve(directory);
-  const credentialFiles = account.provider === 'codex-cli'
-    ? ['auth.json']
-    : ['auth.json', '.credentials.json', 'credentials.json'];
-  for (const name of credentialFiles) {
-    const file = path.join(resolved, name);
-    if (!file.startsWith(resolved + path.sep)) continue;
-    await fs.rm(file, { force: true }).catch(() => undefined);
-  }
-  // OAuth accounts record their sign-in in these files; keep the account itself and its directory.
-  await fs.rm(path.join(resolved, '.claude.json'), { force: true }).catch(() => undefined);
+/** Alias kept for older screens: the account's provider gets the default. */
+export function setAccountDefaultModel(paths: RequestPaths, accountId: string, modelId: string): AccountsStatePayload {
+  const provider = providerOfAccount(paths, accountId);
+  if (!provider) throw new Error('Account not found.');
+  return setProviderDefaultModel(paths, provider, modelId);
+}
+
+/**
+ * Removes an account completely (record, credentials directory, default pointer), for OAuth and API-key
+ * accounts alike. The engine does the removal through `removeAccount`, which keeps its in-memory state in step.
+ */
+export async function signOutAccount(
+  paths: RequestPaths,
+  accountId: string,
+  removeAccount?: (accountId: string) => Promise<void>,
+): Promise<AccountsStatePayload> {
+  if (!providerOfAccount(paths, accountId)) throw new Error('Account not found.');
+  if (!removeAccount) throw new Error('Signing out needs the Unify engine. Restart Unify and try again.');
+  await removeAccount(accountId);
   return accountsState(paths);
 }
 
