@@ -36,6 +36,12 @@ export interface UnifyBridge {
    * for the capture and shown again. Resolves undefined when the OS refuses (e.g. macOS screen permission).
    */
   captureScreen?(): Promise<{ dataUrl: string; width: number; height: number } | undefined>;
+  /** Moves `relative` (inside the project folder `root`) to the OS trash / Recycle Bin. Missing outside Electron. */
+  trashItem?(root: string, relative: string): Promise<void>;
+  /** Shows `relative` (inside `root`) selected in the OS file manager. Missing outside Electron. */
+  revealItem?(root: string, relative: string): Promise<void>;
+  /** Absolute path of a file dropped from the OS ('' when it has none). Missing outside Electron. */
+  pathForFile?(file: File): string;
   /** Folder picker for "Folder as context" (any folder; defaults to the project). */
   pickContextFolder?(): Promise<string | undefined>;
   /** Absolute path of the open project folder (main process `projectPath`). */
@@ -114,6 +120,15 @@ export function bridge(): UnifyBridge {
   return activeBridge;
 }
 
+/**
+ * Messages often carry values read straight from the Solid store (e.g. a model's speedOptions), and store proxies
+ * can't be structured-cloned across IPC. Protocol messages are plain JSON, so a JSON copy is an exact fallback.
+ */
 export function post(message: SidebarWebviewMessage): void {
-  bridge().post(message);
+  try {
+    bridge().post(message);
+  } catch (error) {
+    if (!(error instanceof Error) || !/could not be cloned/i.test(error.message)) throw error;
+    bridge().post(JSON.parse(JSON.stringify(message)) as SidebarWebviewMessage);
+  }
 }

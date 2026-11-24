@@ -272,7 +272,7 @@ function ProvidersStep(): JSX.Element {
       <Show when={modelOptions().length > 0}>
         <SetupSection title="Default model">
           <SetupRow label="New chats start with" caption="Change it per chat from the composer.">
-            <ModelPicker variant="regular" effortSpeed={false} placeholder="Choose a model" placement="bottom-end" title="Default model" />
+            <ModelPicker variant="regular" placeholder="Choose a model" placement="bottom-end" title="Default model" />
           </SetupRow>
         </SetupSection>
       </Show>

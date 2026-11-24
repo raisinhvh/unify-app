@@ -308,6 +308,7 @@ export class WorkspaceMirror implements vscode.Disposable {
   public dispose(): void {
     this.watcher?.close();
     if (this.poll) clearInterval(this.poll);
+    if (this.eventTimer) clearTimeout(this.eventTimer);
   }
 
   private safeRelative(path: string, root = this.root.fsPath): string | undefined {
@@ -316,9 +317,32 @@ export class WorkspaceMirror implements vscode.Disposable {
     return rel;
   }
 
+  /**
+   * Rescans on file events, coalesced so a burst of writes costs one scan, plus a slow safety-net poll. Every scan
+   * reads and decodes the whole tree on the engine's main thread, so the poll runs every 2 s only where recursive
+   * watching is unavailable.
+   */
   private startWatching(): void {
-    try { this.watcher = watch(this.cwd, { recursive: true }, () => { void this.scheduleScan(); }); }
-    catch { /* Polling handles platforms without recursive watch. */ }
-    this.poll = setInterval(() => { void this.scheduleScan(); }, 2000);
+    let watching = false;
+    try {
+      this.watcher = watch(this.cwd, { recursive: true }, () => this.scanAfterEvents());
+      watching = true;
+    } catch { /* Polling handles platforms without recursive watch. */ }
+    this.watcher?.on('error', () => { /* The safety-net poll keeps scanning. */ });
+    this.poll = setInterval(() => { void this.scheduleScan(); }, watching ? 30_000 : 2000);
+  }
+
+  private eventTimer?: NodeJS.Timeout;
+
+  private scanAfterEvents(): void {
+    if (!this.tracking) return;
+    if (this.eventTimer) clearTimeout(this.eventTimer);
+    this.eventTimer = setTimeout(() => {
+      this.eventTimer = undefined;
+      // A scan already running may have read a file before this event changed it, so another one follows it.
+      const running = this.watchedScan;
+      if (running) void running.then(() => this.scheduleScan());
+      else void this.scheduleScan();
+    }, 150);
   }
 }

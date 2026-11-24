@@ -97,27 +97,32 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 32px;
-  border-radius: var(--radius-menu);
+  height: 28px;
+  border-radius: var(--radius-row);
   background: var(--hover);
   pointer-events: none;
 }
 
+/* Each section is a folder row, the same as a folder in the Files tree (28px, glyph, 6px gaps). */
 .settings-nav-row {
   position: relative;
   display: flex;
   align-items: center;
+  gap: 6px;
   width: 100%;
-  height: 32px;
+  height: 28px;
   margin-bottom: 2px;
-  padding: 0 10px;
-  border-radius: var(--radius-menu);
+  padding: 0 8px 0 6px;
+  border-radius: var(--radius-row);
   color: var(--text2);
   font-size: 13px;
   text-align: left;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  transition: color 140ms ease;
+}
+
+.settings-nav-row .tree-folder-icon {
+  color: var(--text3);
   transition: color 140ms ease;
 }
 
@@ -126,7 +131,13 @@
   color: var(--text);
 }
 
-.settings-nav-row.dim {
+.settings-nav-row:hover .tree-folder-icon,
+.settings-nav-row.active .tree-folder-icon {
+  color: var(--text2);
+}
+
+.settings-nav-row.dim,
+.settings-nav-row.dim .tree-folder-icon {
   color: var(--text3);
 }
 
@@ -321,7 +332,9 @@
   width: 100%;
   min-height: 61px;
   padding: 10px 0;
-  padding-left: calc(var(--depth, 0) * 20px);
+  /* One tree column per level: a 16px glyph plus a 10px gap, so a child's glyph sits under its parent's label. */
+  --tree-column: 26px;
+  padding-left: calc(var(--depth, 0) * var(--tree-column));
   border-bottom: 1px solid var(--border);
   text-align: left;
 }
@@ -330,15 +343,61 @@
   cursor: pointer;
 }
 
-/* Child rows hang off a guide line, like folders in the tree. */
-.setting-row.child::before {
+/* A group (folder and its files) reads as one unit: no hairline between its rows, only after the last.
+   The border stays (transparent) so rows keep their height and the tree lines run through the gap. */
+.setting-row.joined {
+  border-bottom-color: transparent;
+}
+
+.setting-row.child {
+  min-height: 52px;
+  padding: 8px 0;
+  padding-left: calc(var(--depth) * var(--tree-column));
+}
+
+/* Tree lines, like a `tree` listing. Drawn with borders, not backgrounds: Chromium snaps border edges to whole
+   pixels, so the 1px lines stay crisp even when a row's 50% lands on a half pixel. Each line's x is the centre
+   of a glyph column (column * 26px + 7px). */
+.setting-row-elbow,
+.setting-row-guide,
+.setting-row.open::after {
+  position: absolute;
+  border-left: 1px solid var(--border);
+  pointer-events: none;
+}
+
+/* └ from the parent's line into this row's glyph; ├ adds the line running on to the next sibling (::after). */
+.setting-row-elbow {
+  top: 0;
+  left: calc((var(--depth) - 1) * var(--tree-column) + 7px);
+  width: calc(var(--tree-column) - 10px);
+  height: 50%;
+  border-bottom: 1px solid var(--border);
+}
+
+.setting-row.child:not(.last-child)::before {
   content: '';
   position: absolute;
+  top: 50%;
+  bottom: -1px;
+  left: calc((var(--depth) - 1) * var(--tree-column) + 7px);
+  border-left: 1px solid var(--border);
+  pointer-events: none;
+}
+
+/* An ancestor's line passing this row on its way to a later sibling. */
+.setting-row-guide {
   top: 0;
   bottom: -1px;
-  left: calc(var(--depth) * 20px - 12px);
-  width: 1px;
-  background: var(--border);
+  left: calc(var(--level) * var(--tree-column) + 7px);
+}
+
+/* An open folder drops its line from under the glyph to its first child. */
+.setting-row.open::after {
+  content: '';
+  top: calc(50% + 10px);
+  bottom: -1px;
+  left: calc(var(--depth) * var(--tree-column) + 7px);
 }
 
 .setting-row-leading {
@@ -348,9 +407,19 @@
   width: 16px;
 }
 
+/* The row's 16px gap is for the control; glyph to label is the tree's 10px. */
+.setting-row-glyph {
+  margin-right: -6px;
+}
+
 .setting-row-text {
   flex: 1;
   min-width: 0;
+}
+
+/* A child without a glyph: the elbow ends 3px short of the text, so push the label clear of the line. */
+.setting-row-elbow + .setting-row-text {
+  margin-left: 8px;
 }
 
 .setting-row-label {

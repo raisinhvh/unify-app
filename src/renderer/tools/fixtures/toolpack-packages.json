@@ -1,0 +1,50 @@
+{
+  "extends": "base",
+  "persisted": {
+    "route": "toolpacks",
+    "panelOpen": true,
+    "toolpackSelected": "imaging",
+    "toolpackTreeOpen": ["installed"]
+  },
+  "messages": [
+    {
+      "type": "toolpacksState",
+      "packs": [
+        {
+          "id": "imaging",
+          "name": "Imaging",
+          "icon": "image",
+          "description": "Headless image editing with ImageMagick: trim, resize, pad, outline, drop shadow and PNG optimization.",
+          "version": "1.0.0",
+          "source": "hub",
+          "enabled": true,
+          "state": "running",
+          "status": "ImageMagick not found",
+          "tools": [
+            { "name": "imaging_trim", "description": "Trim transparent edges" },
+            { "name": "imaging_resize", "description": "Resize an image" }
+          ],
+          "logs": []
+        }
+      ]
+    },
+    {
+      "type": "toolpackSetupList",
+      "packs": [
+        {
+          "id": "imaging",
+          "name": "Imaging",
+          "pending": 4,
+          "canRerunScript": true,
+          "steps": [
+            { "id": "imagemagick", "title": "Install ImageMagick 7", "detail": "Required. Unify installs it for you; Windows may ask for permission once. If that fails, run the Windows x64 installer from the download page and keep \"Add application directory to your system path\" checked.", "kind": "auto", "open": "https://imagemagick.org/script/download.php#windows", "status": "failed", "error": "Installer failed with exit code: 1602 (cancelled by the user)", "install": "winget install --id ImageMagick.ImageMagick --exact" },
+            { "id": "oxipng", "title": "Add oxipng (optional)", "detail": "Makes PNGs smaller without losing quality.", "kind": "auto", "optional": true, "status": "done", "install": "winget install --id Shssoichiro.Oxipng --exact" },
+            { "id": "pngquant", "title": "Add pngquant (optional)", "detail": "Makes PNGs much smaller by reducing colours. On Windows, put pngquant.exe in a folder on your PATH.", "kind": "manual", "optional": true, "open": "https://pngquant.org/", "status": "todo" },
+            { "id": "rembg", "title": "Add rembg for background removal (optional)", "detail": "Needs Python 3. It downloads its model the first time it runs.", "kind": "auto", "optional": true, "status": "todo", "install": "python -m pip install --user \"rembg[cli]\"" },
+            { "id": "realesrgan", "title": "Add Real-ESRGAN for upscaling (optional)", "detail": "Unzip realesrgan-ncnn-vulkan from the releases page and set the DSH_REALESRGAN_PATH environment variable to its .exe.", "kind": "manual", "optional": true, "open": "https://github.com/xinntao/Real-ESRGAN/releases", "status": "todo" }
+          ]
+        }
+      ]
+    }
+  ]
+}

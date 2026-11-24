@@ -12,7 +12,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, Show, Switch, type JSX } from 'solid-js';
 import { Button, Icon, IconButton, Menu, type MenuEntry } from '../../components';
 import { feature } from '../../store/features';
-import { viewState } from '../../store';
+import { setEngineError, viewState } from '../../store';
 import { ConfirmBar } from '../toolpacks/ConfirmBar';
 import {
   frontmatter,
@@ -448,7 +448,7 @@ function Document(props: { item: KnowledgeItem; file?: string }): JSX.Element {
             onConfirm={() => {
               setConfirmRemove(false);
               // The tree row plays its select-all sweep before it collapses (KnowledgePanel's OrganicList).
-              void removeKnowledge(props.item.id);
+              removeKnowledge(props.item.id).catch(error => setEngineError(`Could not remove ${props.item.name}: ${error instanceof Error ? error.message : String(error)}`));
               select(undefined);
             }}
           />

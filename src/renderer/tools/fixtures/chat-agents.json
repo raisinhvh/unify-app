@@ -31,7 +31,12 @@
           "model": "Sonnet 5.5",
           "prompt": "Split the header controls",
           "state": "running",
-          "messages": []
+          "messages": [
+            { "id": "m1", "role": "assistant", "text": "Reading the pane header to see how the controls are laid out." },
+            { "id": "agentMessage:1", "role": "user", "text": "Keep the model pill visible down to 360px; truncate the title first." },
+            { "id": "m2", "role": "assistant", "text": "Got it. I'll give the title `min-width: 0` and let the pill keep its width." },
+            { "id": "agentMessage:2", "role": "user", "from": "Fable", "text": "Heads up: I'm editing chat-pane.css too, stick to ChatPane.tsx." }
+          ]
         }
       },
       "timeline": [

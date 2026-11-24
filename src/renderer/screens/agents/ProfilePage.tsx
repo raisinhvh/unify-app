@@ -12,7 +12,9 @@ import { createEffect, createSignal, on, Show, type JSX } from 'solid-js';
 import { post } from '../../bridge';
 import { Button, IconButton, Menu, ModelPicker, Select, Toggle, type SelectOption } from '../../components';
 import { engineError, viewState } from '../../store';
-import { AgentRow, EffortSpeedRows, modelName, withModel } from './rows';
+import type { SettingRow } from '../settings/catalog';
+import { SettingRows } from '../settings/SettingControls';
+import { agentRow, effortSpeedRows, modelName, withModel } from './rows';
 import { select, selection } from './selection';
 
 export type SubagentProfile = (typeof viewState.subagentProfiles)[number];
@@ -76,9 +78,15 @@ function ProfileRows(props: {
   nameCaption: string;
 }): JSX.Element {
   const profile = () => props.profile;
-  return (
-    <div class="ag-rows">
-      <AgentRow label={<label for="ag-profile-name">Name</label>} caption={props.nameCaption}>
+  const rows: SettingRow[] = [
+    agentRow({
+      key: 'profile:name',
+      label: 'Name',
+      labelFor: 'ag-profile-name',
+      get description() {
+        return props.nameCaption;
+      },
+      control: () => (
         <TextField
           id="ag-profile-name"
           value={profile().name}
@@ -86,11 +94,14 @@ function ProfileRows(props: {
           onInput={props.onNameInput}
           onCommit={name => props.onChange({ ...profile(), name: name.trim() })}
         />
-      </AgentRow>
-      <AgentRow
-        label={<label for="ag-profile-description">Description</label>}
-        caption="Tells the main agent when to pick this subagent."
-      >
+      ),
+    }),
+    agentRow({
+      key: 'profile:description',
+      label: 'Description',
+      labelFor: 'ag-profile-description',
+      description: 'Tells the main agent when to pick this subagent.',
+      control: () => (
         <TextField
           id="ag-profile-description"
           wide
@@ -98,11 +109,15 @@ function ProfileRows(props: {
           placeholder="Reviews a diff for bugs"
           onCommit={description => props.onChange({ ...profile(), description: description.trim() || undefined })}
         />
-      </AgentRow>
-      <AgentRow
-        label="Model"
-        caption={profile().model ? 'Runs every task given to this subagent.' : 'Pick the model this subagent runs on.'}
-      >
+      ),
+    }),
+    agentRow({
+      key: 'profile:model',
+      label: 'Model',
+      get description() {
+        return profile().model ? 'Runs every task given to this subagent.' : 'Pick the model this subagent runs on.';
+      },
+      control: () => (
         <ModelPicker
           variant="regular"
           smartAuto={false}
@@ -112,19 +127,23 @@ function ProfileRows(props: {
           title="Subagent model"
           onChange={model => props.onChange({ ...withModel(profile(), model), model })}
         />
-      </AgentRow>
-      <EffortSpeedRows
-        model={profile().model || undefined}
-        effort={profile().effort}
-        speed={profile().speed}
-        depth={1}
-        onEffort={effort => props.onChange({ ...profile(), effort })}
-        onSpeed={speed => props.onChange({ ...profile(), speed })}
-      />
-      <AgentRow
-        label="Access"
-        caption={profile().mode === 'edit' ? 'Can change files in the working copy.' : 'Reads and searches, but never changes files.'}
-      >
+      ),
+    }),
+    ...effortSpeedRows({
+      parent: 'profile:model',
+      model: () => profile().model || undefined,
+      effort: () => profile().effort,
+      speed: () => profile().speed,
+      onEffort: effort => props.onChange({ ...profile(), effort }),
+      onSpeed: speed => props.onChange({ ...profile(), speed }),
+    }),
+    agentRow({
+      key: 'profile:access',
+      label: 'Access',
+      get description() {
+        return profile().mode === 'edit' ? 'Can change files in the working copy.' : 'Reads and searches, but never changes files.';
+      },
+      control: () => (
         <Select
           value={profile().mode}
           options={accessOptions}
@@ -132,14 +151,24 @@ function ProfileRows(props: {
           title="Access"
           onChange={mode => props.onChange({ ...profile(), mode: mode === 'edit' ? 'edit' : 'read-only' })}
         />
-      </AgentRow>
-      <AgentRow label="Toolpack tools" caption="Tools from your installed toolpacks, such as Blender or Roblox Studio.">
+      ),
+    }),
+    agentRow({
+      key: 'profile:tools',
+      label: 'Toolpack tools',
+      description: 'Tools from your installed toolpacks, such as Blender or Roblox Studio.',
+      control: () => (
         <Toggle
           label="Toolpack tools"
           checked={profile().tools !== false}
           onChange={tools => props.onChange({ ...profile(), tools })}
         />
-      </AgentRow>
+      ),
+    }),
+  ];
+  return (
+    <div class="ag-rows">
+      <SettingRows rows={rows} />
     </div>
   );
 }

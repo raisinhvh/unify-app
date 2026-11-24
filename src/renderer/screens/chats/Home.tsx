@@ -20,11 +20,12 @@ import { openChat } from '../../shell/layout';
 import { Composer } from './Composer';
 import { openProjectFolder, ProjectPicker } from './ProjectPicker';
 import { ScheduleBar } from './ScheduleBar';
-import { parentFolder, selectedProject } from './projects';
+import { ShutdownBar } from './ShutdownBar';
+import { isNoFolder, newSessionTarget, parentFolder, selectedProject } from './projects';
 import './home.css';
 
-/** Waits for the session Home just asked for, then opens it in a pane. */
-function openNextNewSession(images: SidebarImage[]): void {
+/** Waits for the session just asked for with `newSession`, then opens it in a pane. */
+export function openNextNewSession(images: SidebarImage[] = []): void {
   const known = new Set(viewState.sessions.map(session => session.id));
   const stop = onHostMessage(message => {
     if (message.type !== 'sessionState') return;
@@ -56,13 +57,18 @@ export function Home(props: { covered: boolean }): JSX.Element {
 
   const placeholder = () => {
     const project = selectedProject();
+    if (isNoFolder(project)) return 'Ask anything';
     return project ? `Ask anything in ${project.name}, @ to mention a file` : 'Ask anything, @ to mention a file';
   };
 
   const start = (prompt: string, images: SidebarImage[]) => {
+    // `/shutdown` only arms the shutdown; it needs no chat.
+    if (/^\s*\/shutdown\s*$/i.test(prompt)) {
+      post({ type: 'sendPrompt', prompt, images: [] });
+      return;
+    }
     openNextNewSession(images);
-    const project = selectedProject();
-    post({ type: 'newSession', ...(project ? { project } : {}) });
+    post({ type: 'newSession', ...newSessionTarget(selectedProject()) });
     post({ type: 'sendPrompt', prompt, images });
   };
 
@@ -92,6 +98,7 @@ export function Home(props: { covered: boolean }): JSX.Element {
         <h1 class="home-title type-display">Unify</h1>
         <Composer class="home-composer" placeholder={placeholder()} onSubmit={start} autofocus={!props.covered} />
         <ScheduleBar />
+        <ShutdownBar />
         <div class="home-project">
           <Button
             ref={setChip}

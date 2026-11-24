@@ -25,5 +25,6 @@ export { TreeFolder, TreeItem, type TreeFolderProps, type TreeItemProps } from '
 export { UsageMeter } from './UsageMeter';
 export { ProviderGlyph, providerGlyph, providerGlyphs, type ProviderGlyphName, type ProviderGlyphProps } from './ProviderGlyph';
 export { ModelPicker, type ModelPickerProps, type ModelPickerVariant } from './ModelPicker';
+export { EffortPicker, type EffortPickerProps } from './EffortPicker';
 export { TitleBar } from './TitleBar';
 export * from './loaders';

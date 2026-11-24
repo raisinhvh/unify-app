@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { build } from 'esbuild';
 
 // The bus reads its scope from Unify's feature settings. Substitute an in-memory settings module so
-// the test never touches the user's real ~/.dsh/unify/settings.json.
+// the test never touches the user's real ~/.unify/settings.json.
 globalThis.__unifyFeatures = { 'agents.messaging': true, 'agents.messaging.scope': 'everyone' };
 
 const bundled = await build({

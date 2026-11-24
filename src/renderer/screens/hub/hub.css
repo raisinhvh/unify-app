@@ -745,6 +745,37 @@
   border-radius: var(--radius-control);
 }
 
+.hub-packages {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hub-package {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.hub-package-title {
+  color: var(--text);
+}
+
+.hub-package-command {
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
 .hub-dialog-footer {
   display: flex;
   flex: none;

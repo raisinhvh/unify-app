@@ -78,9 +78,19 @@ test('audio and video keep their real content type inline', async () => {
   assert.equal((await serve(video.hash)).type, 'video/mp4');
 });
 
-test('svg, html and unknown types are forced to a download', async () => {
+test('svg shows inline under a CSP that blocks script and outside loads', async () => {
+  const svg = await store.put(Buffer.from('<svg onload="alert(1)"></svg>'), 'image/svg+xml', 'chat');
+  const response = await serve(svg.hash);
+  assert.equal(response.status, 200);
+  assert.equal(response.type, 'image/svg+xml');
+  assert.equal(response.disposition, null);
+  assert.equal(response.nosniff, 'nosniff');
+  assert.match(response.csp, /^sandbox; default-src 'none'/);
+  assert.doesNotMatch(response.csp, /script-src/);
+});
+
+test('html and unknown types are forced to a download', async () => {
   for (const [mimeType, bytes] of [
-    ['image/svg+xml', '<svg onload="alert(1)"></svg>'],
     ['text/html', '<script>alert(1)</script>'],
     ['application/octet-stream', 'whatever'],
   ]) {
@@ -122,10 +132,10 @@ test('thumbnails respect SAFE_IMAGE_TYPES, refresh store index, and fall back to
   assert.equal(secondThumb.type, 'image/png');
   assert.equal(secondThumb.body.toString(), 'second invalid png');
 
-  // SVG must never be rendered through sharp even when ?thumb=1 is requested.
+  // SVG must never be rendered through sharp even when ?thumb=1 is requested: the locked-down original is served.
   const svg = await store.put(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'), 'image/svg+xml', 'chat');
   const svgThumb = await serve(svg.hash, '?thumb=1');
   assert.equal(svgThumb.status, 200);
-  assert.equal(svgThumb.type, 'application/octet-stream');
-  assert.equal(svgThumb.disposition, 'attachment');
+  assert.equal(svgThumb.type, 'image/svg+xml');
+  assert.equal(svgThumb.body.toString(), '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
 });

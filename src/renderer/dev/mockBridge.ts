@@ -195,6 +195,13 @@ export async function installMockBridge(): Promise<void> {
         emit({ type: 'timelineState', sessionId: id, timeline: [], subagents: {} });
         break;
       }
+      case 'loadChat': {
+        // ?loadDelay=ms holds the reply to preview a pane's "Loading history" state.
+        const delay = Number(params.get('loadDelay')) || 0;
+        const chatId = message.sessionId;
+        window.setTimeout(() => emit({ type: 'chatLoaded', sessionId: chatId }), delay);
+        break;
+      }
       case 'selectSession':
         activeSessionId = message.sessionId;
         sendSessions();

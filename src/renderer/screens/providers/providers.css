@@ -52,48 +52,25 @@
   height: 28px;
 }
 
+/* The list is the shared Tree (components/Tree.tsx): folders, guide lines and rows match Files and Chats. */
 .providers-panel-list {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 6px;
   min-height: 0;
   padding: 4px 8px 16px;
   overflow-y: auto;
 }
 
-.pv-panel-row {
+.pv-panel-usage {
+  margin-bottom: 4px;
+}
+
+.pv-provider-label {
   display: flex;
-  flex: none;
   align-items: center;
   gap: 6px;
-  width: 100%;
-  height: 28px;
-  padding: 0 8px 0 6px;
-  border-radius: var(--radius-row);
-  color: var(--text);
-  font-size: 12px;
-  line-height: 16px;
-  text-align: left;
-  white-space: nowrap;
-  background-color: rgb(from var(--hover) r g b / 0);
-  transition: background-color 120ms ease, color 120ms ease;
-}
-
-.pv-panel-row:hover,
-.pv-panel-row.selected {
-  background: var(--hover);
-}
-
-.pv-row-chevron-slot {
-  flex: none;
-  width: 12px;
-  height: 12px;
-}
-
-.pv-row-icon {
-  flex: none;
-  color: var(--text2);
+  min-width: 0;
 }
 
 .pv-row-label {
@@ -103,30 +80,9 @@
   text-overflow: ellipsis;
 }
 
-.pv-row-meta {
-  flex: none;
-  color: var(--text3);
-  font-size: 11px;
-  line-height: 14px;
-}
-
-.pv-provider-chevron {
-  flex: none;
-  color: var(--text3);
-}
-
 .pv-provider-glyph {
   flex: none;
   color: var(--text2);
-}
-
-.pv-folder-warn {
-  flex: none;
-  width: 5px;
-  height: 5px;
-  margin-left: auto;
-  border-radius: 50%;
-  background: var(--warn);
 }
 
 .pv-panel-empty {
@@ -134,49 +90,10 @@
   color: var(--text3);
 }
 
-.pv-panel-usage .pv-row-chevron-slot {
-  opacity: 0;
-}
-
-/* Account rows start at the folder's left edge (absolute x64); guide and status sit inside. */
-.pv-account-children {
-  position: relative;
-}
-
-.pv-account-list {
-  position: relative;
-  padding: 0;
-}
-
-.pv-account-list::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 13.5px;
-  width: 1px;
-  background: var(--border);
-  pointer-events: none;
-}
-
+/* An account row is a tree item that also holds a meter or a "Sign in" link (so it is a div, not a button). */
 .pv-account-row {
-  display: flex;
-  align-items: center;
   gap: 8px;
-  width: 100%;
-  height: 28px;
-  margin-left: 0;
-  padding: 0 8px 0 28px;
-  border-radius: var(--radius-row);
-  color: var(--text);
   cursor: pointer;
-  background-color: rgb(from var(--hover) r g b / 0);
-  transition: background-color 120ms ease;
-}
-
-.pv-account-row:hover,
-.pv-account-row.selected {
-  background: var(--hover);
 }
 
 .pv-account-row.signedOut {

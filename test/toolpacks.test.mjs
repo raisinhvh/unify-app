@@ -1,5 +1,6 @@
 import { test, after } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -9,11 +10,17 @@ import { answersByQuestion, formatAnswers, parseQuestions } from '../dist/sideba
 
 
 const dir = await mkdtemp(join(tmpdir(), 'dsh-toolpacks-'));
+/** Every beforeRemove call, with whether the pack folder still existed when it ran. */
+const removals = [];
 const registry = new ToolpackRegistry({
   dir: join(dir, 'packs'),
   workerPath: resolve('dist/toolpack-worker.js'),
   compile: async source => (await transform(source, { loader: 'ts', format: 'cjs', target: 'node20' })).code,
   callTimeoutMs: 5000,
+  beforeRemove: async (id, folder) => {
+    removals.push({ id, folder, existed: existsSync(join(folder, 'pack.js')) });
+    if (id === 'conf') throw new Error('uninstall failed');
+  },
 });
 await registry.start();
 after(async () => { await registry.dispose(); await rm(dir, { recursive: true, force: true }); });
@@ -61,6 +68,9 @@ test('runs a multi-tool pack in a child process and namespaces its tools', async
   assert.equal((await registry.call('echo_say', { text: 'x' })).isError, true);
   await registry.remove('echo');
   assert.equal(registry.list().length, 0);
+  // The uninstall hook runs before the folder is deleted, then the folder goes.
+  assert.deepEqual(removals.at(-1), { id: 'echo', folder: join(dir, 'packs', 'echo'), existed: true });
+  assert.equal(existsSync(join(dir, 'packs', 'echo')), false);
 });
 
 test('records a pack\'s synced settings files in meta.json and rejects bad declarations', async () => {
@@ -72,6 +82,8 @@ test('records a pack\'s synced settings files in meta.json and rejects bad decla
   await registry.setEnabled('conf', false);
   assert.deepEqual(JSON.parse(await readFile(join(dir, 'packs', 'conf', 'meta.json'), 'utf8')).sync, meta.sync, 'toggling keeps the declaration');
   await registry.remove('conf');
+  // A failing uninstall hook does not keep the pack.
+  assert.equal(existsSync(join(dir, 'packs', 'conf')), false);
   await writeFile(file, "export default { name: 'conf', description: 'Config', sync: { files: ['../up.json'] }, tools: [{ name: 'get', description: 'Get', run: () => 'ok' }] };");
   await assert.rejects(() => registry.add(file), /sync\.files/);
 });

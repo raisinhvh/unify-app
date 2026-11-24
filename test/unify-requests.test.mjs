@@ -319,6 +319,106 @@ test('knowledge: skill ids are validated for open/remove and undo only restores 
   assert.match(await readFile(skillFile, 'utf8'), /Bar restored/);
 });
 
+test('files: a request can name another project folder', async () => {
+  const other = join(home, 'files-other');
+  await mkdir(other, { recursive: true });
+  await writeFile(join(other, 'only-here.txt'), 'hi\n', 'utf8');
+
+  const listed = await send({ type: 'listDir', requestId: 'fp1', path: '', project: other });
+  const workspaceState = ofType(listed.replies, 'workspaceState')[0];
+  assert.equal(workspaceState.root, resolve(other));
+  assert.deepEqual(ofType(listed.replies, 'dirListing')[0].entries.map(entry => entry.name), ['only-here.txt']);
+
+  const read = await send({ type: 'readFile', requestId: 'fp2', path: 'only-here.txt', project: other });
+  assert.equal(ofType(read.replies, 'fileContent')[0].file.content, 'hi\n');
+
+  // A top-level listing re-announces the root, so a reloaded screen learns which folder it shows.
+  const back = await send({ type: 'listDir', requestId: 'fp3', path: '' });
+  assert.equal(ofType(back.replies, 'workspaceState')[0].root, resolve(workspace));
+});
+
+test('files: create, rename and delete entries inside the project only', async () => {
+  const created = await send({ type: 'createEntry', requestId: 'e1', path: 'made/deep/new.txt', kind: 'file' });
+  assert.equal(ofType(created.replies, 'entryDone')[0].path, 'made/deep/new.txt');
+  assert.equal(await readFile(join(workspace, 'made/deep/new.txt'), 'utf8'), '');
+
+  const again = await send({ type: 'createEntry', requestId: 'e2', path: 'made/deep/new.txt', kind: 'file' });
+  assert.match(ofType(again.replies, 'filesError')[0].message, /already exists/);
+
+  const folder = await send({ type: 'createEntry', requestId: 'e3', path: 'made/empty', kind: 'dir' });
+  assert.equal(ofType(folder.replies, 'entryDone')[0].path, 'made/empty');
+
+  const renamed = await send({ type: 'renameEntry', requestId: 'e4', from: 'made/deep', to: 'made/moved' });
+  assert.equal(ofType(renamed.replies, 'entryDone')[0].path, 'made/moved');
+  assert.equal(await readFile(join(workspace, 'made/moved/new.txt'), 'utf8'), '');
+
+  const into = await send({ type: 'renameEntry', requestId: 'e5', from: 'made', to: 'made/moved/inside' });
+  assert.match(ofType(into.replies, 'filesError')[0].message, /inside itself/);
+
+  for (const [id, body] of [
+    ['e6', { type: 'deleteEntry', path: '' }],
+    ['e7', { type: 'deleteEntry', path: '../outside' }],
+    ['e8', { type: 'createEntry', path: '../escape.txt', kind: 'file' }],
+    ['e9', { type: 'renameEntry', from: 'README.md', to: '../README.md' }],
+  ]) {
+    const refused = await send({ ...body, requestId: id });
+    assert.equal(ofType(refused.replies, 'filesError').length, 1, `${id} should be refused`);
+  }
+
+  const deleted = await send({ type: 'deleteEntry', requestId: 'e10', path: 'made' });
+  assert.equal(ofType(deleted.replies, 'entryDone')[0].path, 'made');
+  const listing = ofType((await send({ type: 'listDir', requestId: 'e11', path: '' })).replies, 'dirListing')[0];
+  assert.ok(!listing.entries.some(entry => entry.name === 'made'));
+});
+
+test('files: copy entries (taken names get " copy") and import files from disk', async () => {
+  await mkdir(join(workspace, 'cp/sub'), { recursive: true });
+  await writeFile(join(workspace, 'cp/a.txt'), 'A', 'utf8');
+  await writeFile(join(workspace, 'cp/sub/b.txt'), 'B', 'utf8');
+
+  const first = await send({ type: 'copyEntry', requestId: 'c1', from: 'cp/a.txt', toFolder: 'cp' });
+  assert.equal(ofType(first.replies, 'entryDone')[0].path, 'cp/a copy.txt');
+  const second = await send({ type: 'copyEntry', requestId: 'c2', from: 'cp/a.txt', toFolder: 'cp' });
+  assert.equal(ofType(second.replies, 'entryDone')[0].path, 'cp/a copy 2.txt');
+
+  const folder = await send({ type: 'copyEntry', requestId: 'c3', from: 'cp/sub', toFolder: '' });
+  assert.equal(ofType(folder.replies, 'entryDone')[0].path, 'sub');
+  assert.equal(await readFile(join(workspace, 'sub/b.txt'), 'utf8'), 'B');
+
+  const into = await send({ type: 'copyEntry', requestId: 'c4', from: 'cp', toFolder: 'cp/sub' });
+  assert.match(ofType(into.replies, 'filesError')[0].message, /into itself/);
+  const outside = await send({ type: 'copyEntry', requestId: 'c5', from: 'cp/a.txt', toFolder: '../' });
+  assert.equal(ofType(outside.replies, 'filesError').length, 1);
+
+  const external = join(home, 'dropped.txt');
+  await writeFile(external, 'from disk', 'utf8');
+  const imported = await send({ type: 'importEntries', requestId: 'c6', sources: [external], toFolder: 'cp/sub' });
+  assert.deepEqual(ofType(imported.replies, 'entryDone')[0].paths, ['cp/sub/dropped.txt']);
+  assert.equal(await readFile(join(workspace, 'cp/sub/dropped.txt'), 'utf8'), 'from disk');
+  const relative = await send({ type: 'importEntries', requestId: 'c7', sources: ['dropped.txt'], toFolder: '' });
+  assert.equal(ofType(relative.replies, 'filesError').length, 1);
+});
+
+test('knowledge: a request can name another project folder for project scope', async () => {
+  const other = join(home, 'other-project');
+  await mkdir(join(other, '.unify/memory'), { recursive: true });
+  await writeFile(join(other, '.unify/memory/elsewhere.md'), '# Elsewhere note\n', 'utf8');
+
+  const picked = ofType((await send({ type: 'knowledgeList', project: other })).replies, 'knowledgeState')[0];
+  assert.equal(picked.project, resolve(other));
+  assert.ok(picked.items.some(item => item.scope === 'project' && item.name === 'Elsewhere note'));
+
+  const saved = await send({ type: 'saveKnowledge', requestId: 'p1', project: other, item: { kind: 'rule', scope: 'project', name: 'Other rule', audiences: ['everyone'] }, content: 'Only here.' });
+  assert.equal(ofType(saved.replies, 'knowledgeSaved').length, 1);
+  assert.match(await readFile(join(other, 'AGENTS.md'), 'utf8'), /## Other rule/);
+  assert.ok(!existsSync(join(workspace, 'AGENTS.md')) || !/Other rule/.test(await readFile(join(workspace, 'AGENTS.md'), 'utf8')));
+
+  // Without a project (or with a folder that does not exist) it is the open workspace.
+  const fallback = ofType((await send({ type: 'knowledgeList', project: join(home, 'missing') })).replies, 'knowledgeState')[0];
+  assert.equal(fallback.project, resolve(workspace));
+  assert.ok(!fallback.items.some(item => item.name === 'Elsewhere note'));
+});
+
 test('providers: labels, default model, model toggle and OAuth sign-out', async () => {
   const rename = await send({ type: 'renameAccount', accountId: 'acc1', label: 'Work' });
   const renamed = ofType(rename.replies, 'accountsState')[0].accounts.find(account => account.id === 'acc1');

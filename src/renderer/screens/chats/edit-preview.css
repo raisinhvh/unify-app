@@ -1,0 +1,327 @@
+/* Live edit preview (EditPreview.tsx). Colours only through theme variables: --add / --del and their tints. */
+
+.edit-entry {
+  min-width: 0;
+}
+
+.edit-head {
+  gap: 8px;
+}
+
+.edit-label {
+  color: var(--text2);
+}
+
+/* The file name keeps its place (up to 45%); the error text gives way first. */
+.edit-file {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text3);
+  font: inherit;
+  text-align: left;
+}
+
+.edit-file-button {
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.edit-file-button:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.edit-counts {
+  display: inline-flex;
+  flex: none;
+  align-items: baseline;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.edit-additions {
+  color: var(--add);
+}
+
+.edit-deletions {
+  color: var(--del);
+}
+
+.edit-error {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--del);
+}
+
+.edit-error-tip {
+  display: block;
+  max-width: 420px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.edit-spacer {
+  flex: 1 1 0;
+  min-width: 8px;
+}
+
+.edit-elapsed {
+  flex: none;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The diff hangs off the glyph on a guide line, like nested tool calls. Padding, not margin (Collapse measures). */
+.edit-body-slot {
+  padding: 2px 0 2px 0;
+}
+
+.edit-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding-left: 20px;
+  transition: opacity 220ms ease;
+}
+
+.edit-body::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 0;
+  bottom: 2px;
+  width: 1px;
+  background: var(--border);
+}
+
+.edit-body-failed {
+  opacity: 0.45;
+}
+
+.edit-viewport {
+  position: relative;
+  align-self: stretch;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.edit-viewport.edit-fade-top {
+  mask-image: linear-gradient(to bottom, transparent, #000 14px);
+}
+
+.edit-viewport.edit-fade-bottom {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
+}
+
+.edit-viewport.edit-fade-top.edit-fade-bottom {
+  mask-image: linear-gradient(to bottom, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+}
+
+.edit-lines-content {
+  position: relative;
+  will-change: transform;
+}
+
+.edit-line {
+  height: 17px;
+  min-height: 17px;
+  line-height: 17px;
+  overflow: hidden;
+  border-radius: 3px;
+}
+
+.edit-line:has(.edit-line-removed) {
+  background: var(--del-tint);
+}
+
+.edit-line:has(.edit-line-added) {
+  background: var(--add-tint);
+}
+
+.edit-line .organic-line-tint,
+.edit-line .organic-line-sweep {
+  border-radius: inherit;
+}
+
+/* A removed line arriving flashes red, not the default add tint. */
+.edit-line:has(.edit-line-removed) .organic-line-tint {
+  background: var(--del-tint);
+}
+
+.edit-line-inner {
+  display: inline-flex;
+  align-items: baseline;
+  white-space: pre;
+}
+
+.edit-number {
+  flex: none;
+  box-sizing: content-box;
+  width: var(--edit-gutter, 2ch);
+  padding: 0 8px 0 6px;
+  text-align: right;
+  color: var(--text3);
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+.edit-marker {
+  flex: none;
+  width: 1ch;
+  margin-right: 8px;
+  color: var(--text3);
+}
+
+.edit-code {
+  color: var(--text3);
+  white-space: pre;
+}
+
+.edit-line-removed .edit-marker {
+  color: var(--del);
+}
+
+.edit-line-added .edit-marker {
+  color: var(--add);
+}
+
+.edit-line-removed .edit-code,
+.edit-line-added .edit-code {
+  color: var(--text);
+}
+
+.edit-gap {
+  padding-left: 6px;
+  color: var(--text3);
+  letter-spacing: 1px;
+}
+
+.edit-more {
+  padding: 0 2px;
+  margin-left: -2px;
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 16px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.edit-more:hover {
+  color: var(--text);
+}
+
+.edit-truncated {
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/*
+ * A subagent row's detail (LiveEditDetail): the text and the inline code chips share one grid cell, right
+ * aligned, so they crossfade in place.
+ */
+.subagent-detail.edit-live {
+  display: grid;
+  align-items: center;
+  justify-items: end;
+  /* The layers clip their own text; the row must not clip a chip mid-shift. */
+  overflow: visible;
+}
+
+.edit-live-layer {
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  will-change: opacity, transform;
+}
+
+.edit-live-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The file name keeps its width (up to 40%); the code chip gives way first. */
+.edit-live-file {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text3);
+}
+
+/* The outgoing and incoming chips share one cell, right aligned. */
+.edit-live-chips {
+  display: grid;
+  flex: 0 1 auto;
+  justify-items: end;
+  align-items: center;
+  min-width: 0;
+}
+
+/* Inline code, as in chat markdown, tinted by the kind of change. */
+.edit-live-chip {
+  grid-area: 1 / 1;
+  max-width: 100%;
+  box-sizing: border-box;
+  will-change: opacity, transform;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--text);
+  background: var(--raised);
+  border-radius: 4px;
+}
+
+.edit-live-chip.edit-live-added {
+  background: var(--add-tint);
+}
+
+.edit-live-chip.edit-live-removed {
+  background: var(--del-tint);
+}
+
+.edit-live-marker {
+  flex: none;
+}
+
+.edit-live-added .edit-live-marker {
+  color: var(--add);
+}
+
+.edit-live-removed .edit-live-marker {
+  color: var(--del);
+}
+
+.edit-live-code {
+  min-width: 0;
+  /* Room for the caret at the end of the line. */
+  padding-right: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  text-align: left;
+}

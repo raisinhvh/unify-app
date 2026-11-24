@@ -23,6 +23,14 @@ export interface TreeFolderProps {
   onToggle: (open: boolean) => void;
   children: JSX.Element;
   class?: string;
+  /** Extra classes on the folder's own row (not its children). */
+  rowClass?: string;
+  rowRef?: (element: HTMLButtonElement) => void;
+  onContextMenu?: (event: MouseEvent) => void;
+  onPointerLeave?: (event: PointerEvent) => void;
+  title?: string;
+  /** Extra attributes for the folder's row (drag and drop handlers, draggable). */
+  rowProps?: JSX.ButtonHTMLAttributes<HTMLButtonElement>;
 }
 
 export function TreeFolder(props: TreeFolderProps): JSX.Element {
@@ -30,11 +38,18 @@ export function TreeFolder(props: TreeFolderProps): JSX.Element {
   return (
     <div class={props.class ? `tree-folder ${props.class}` : 'tree-folder'}>
       <button
+        {...props.rowProps}
         type="button"
-        class="tree-row tree-folder-row"
+        class={props.rowClass ? `tree-row tree-folder-row ${props.rowClass}` : 'tree-row tree-folder-row'}
         aria-expanded={props.open}
-        ref={element => pressable(element, 0.98)}
+        title={props.title}
+        ref={element => {
+          pressable(element, 0.98);
+          props.rowRef?.(element);
+        }}
         onClick={() => props.onToggle(!props.open)}
+        onContextMenu={event => props.onContextMenu?.(event)}
+        onPointerLeave={event => props.onPointerLeave?.(event)}
       >
         <Icon name="chevron" size={12} class="tree-chevron" style={{ rotate: `${rotation()}deg` }} />
         <Show when={props.icon}>

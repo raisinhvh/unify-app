@@ -1,0 +1,36 @@
+{
+  "extends": "base",
+  "persisted": {
+    "route": "hub",
+    "panelOpen": true
+  },
+  "messages": [
+    {
+      "type": "hubState",
+      "hub": {
+        "packs": [
+          { "id": "imaging", "name": "Imaging", "author": "unify", "category": "design", "description": "Headless image editing with ImageMagick.", "icon": "image", "installs": 320, "tools": ["imaging_trim", "imaging_resize"], "version": "1.0.0", "updatedAt": 1795000000000, "publishedAt": 1780000000000, "license": "MIT" },
+          { "id": "sound", "name": "Sound", "author": "unify", "category": "games", "description": "Find, create, shape and export game sound effects.", "icon": "music_note", "installs": 140, "tools": ["sound_setup"], "version": "1.0.0", "updatedAt": 1795000000000, "publishedAt": 1780000000000, "license": "MIT" }
+        ],
+        "categories": [
+          { "id": "design", "label": "Design" },
+          { "id": "games", "label": "Games" }
+        ],
+        "featured": [],
+        "authors": 1,
+        "devices": [{ "id": "this", "label": "This PC", "current": true }],
+        "fetchedAt": 1795800000000
+      }
+    },
+    {
+      "type": "hubInstallResult",
+      "ok": false,
+      "id": "sound",
+      "needsScriptConsent": true,
+      "packages": [
+        { "title": "Install Python 3.12", "command": "winget install --id Python.Python.3.12 --exact" },
+        { "title": "Install ffmpeg", "command": "winget install --id Gyan.FFmpeg --exact" }
+      ]
+    }
+  ]
+}

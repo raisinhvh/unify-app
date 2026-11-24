@@ -5,7 +5,8 @@
  *   setupFor(id)                       the pack's PackSetupState, once the engine sent it
  *   requestSetup(id)                   asks for one pack's checklist (toolpackSetup → toolpackSetupState)
  *   requestSetupList()                 asks for every pack with pending steps (→ toolpackSetupList)
- *   runSetupAction(id, action, step?)  markDone / markTodo / recheck / open / rerunScript
+ *   runSetupAction(id, action, step?)  markDone / markTodo / recheck / open / rerunScript / install
+ *   setupInstalling(id)                the step whose package is installing, if any
  *   applySetup(setup)                  a checklist from elsewhere (a Hub install result)
  *
  * Ticking a manual step shows at once; the engine's reply replaces it. Replies to an action clear its busy flag;
@@ -16,7 +17,7 @@ import { post } from '../../bridge';
 import type { PackSetupState, PackSetupStepStatus, SidebarWebviewMessage } from '../../protocol';
 import { onHostMessage } from '../../store';
 
-export type SetupAction = 'markDone' | 'markTodo' | 'recheck' | 'open' | 'rerunScript';
+export type SetupAction = 'markDone' | 'markTodo' | 'recheck' | 'open' | 'rerunScript' | 'install';
 
 /** UI -> engine (engine/unify/requests/types.ts › ToolpackSetupRequest). */
 type SetupRequest =
@@ -32,8 +33,10 @@ type SetupReply =
 
 const [setups, setSetups] = createSignal<Record<string, PackSetupState>>({});
 const [errors, setErrors] = createSignal<Record<string, string>>({});
-/** The long action in flight per pack ('recheck' or 'rerunScript'), for the footer buttons. */
+/** The long action in flight per pack ('recheck', 'rerunScript' or 'install'), for the footer buttons. */
 const [busy, setBusy] = createSignal<Record<string, SetupAction>>({});
+/** The step whose package is installing, per pack. */
+const [installing, setInstalling] = createSignal<Record<string, string>>({});
 
 /** Which pack each request was about, so a `setup: null` reply (no checklist) can clear the right entry. */
 const requestPacks = new Map<string, string>();
@@ -68,6 +71,15 @@ export function setupBusy(id: string): SetupAction | undefined {
   return busy()[id];
 }
 
+export function setupInstalling(id: string): string | undefined {
+  return installing()[id];
+}
+
+function clearBusy(id: string): void {
+  setBusy(current => withEntry(current, id, undefined));
+  setInstalling(current => withEntry(current, id, undefined));
+}
+
 /** Steps still to do on a pack, 0 when it has no checklist. */
 export function pendingSetup(id: string): number {
   return setups()[id]?.pending ?? 0;
@@ -98,7 +110,8 @@ export function runSetupAction(id: string, action: SetupAction, stepId?: string)
       return withEntry(current, id, { ...setup, steps, pending });
     });
   }
-  if (action === 'recheck' || action === 'rerunScript') setBusy(current => withEntry(current, id, action));
+  if (action === 'recheck' || action === 'rerunScript' || action === 'install') setBusy(current => withEntry(current, id, action));
+  if (action === 'install') setInstalling(current => withEntry(current, id, stepId));
   send({ type: 'toolpackSetupAction', id, action, ...(stepId ? { stepId } : {}) }, id);
 }
 
@@ -119,11 +132,11 @@ onHostMessage(message => {
   }
   if (reply.type === 'toolpackSetupError') {
     setErrors(current => withEntry(current, reply.id, reply.message));
-    setBusy(current => withEntry(current, reply.id, undefined));
+    clearBusy(reply.id);
     return;
   }
   const id = reply.setup?.id ?? askedAbout;
   if (!id) return;
   setSetups(current => withEntry(current, id, reply.setup ?? undefined));
-  setBusy(current => withEntry(current, id, undefined));
+  clearBusy(id);
 });

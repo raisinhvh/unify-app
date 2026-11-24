@@ -374,8 +374,10 @@ test('deleting a draft during initialization disposes it without restoring the c
   const record = { id: 'local', mirrorId: 'private-copy', pendingMirror: true, modelName: 'Model', provider: 'cursor-acp', backend: 'auto' };
   const { host } = navigationHost([record]);
   const gate = deferred();
+  const creating = deferred();
   const calls = [];
   t.mock.method(WorkspaceMirror, 'create', async () => {
+    creating.resolve();
     await gate.promise;
     return { id: record.mirrorId, cwd: '/private', dispose() { calls.push('dispose mirror'); } };
   });
@@ -386,6 +388,8 @@ test('deleting a draft during initialization disposes it without restoring the c
   });
   const loading = host.loadChat(record);
   const failed = assert.rejects(loading, /deleted/);
+  // Delete while the private copy is being made (loading awaits the chat root first).
+  await creating.promise;
   const deleting = host.deleteSession(record.id);
   gate.resolve();
   await failed; await deleting;

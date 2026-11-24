@@ -6,6 +6,12 @@
  *   node tools/shot.mjs home shell2x2        just these
  *   node tools/shot.mjs home --size 1440x900 --theme walnutLight --wait 2500
  *   node tools/shot.mjs "home?open=picker"   extra query params reach the page (and the file name)
+ *   node tools/shot.mjs chat --eval "document.querySelector('.x').click()"
+ *                                            runs JS in the page after the wait, prints its (awaited) result,
+ *                                            then waits --after ms (default 800) before the capture
+ *   node tools/shot.mjs chat --click ".subagent-back"
+ *                                            a real (trusted) mouse click at the element's centre, after the
+ *                                            wait and before --eval; also followed by --after
  *
  * Captures through the Chrome DevTools Protocol after a real-time wait (needs Node 22+ for WebSocket).
  * Starts vite on 5173 itself (or reuses one already running there) and stops what it started.
@@ -23,12 +29,15 @@ const outDir = join(toolsDir, 'out');
 const port = 5173;
 
 function parseArgs(argv) {
-  const options = { fixtures: [], size: '1440x900', theme: '', wait: 2500 };
+  const options = { fixtures: [], size: '1440x900', theme: '', wait: 2500, eval: '', click: '', after: 800 };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--size') options.size = argv[++index];
     else if (arg === '--theme') options.theme = argv[++index];
     else if (arg === '--wait') options.wait = Number(argv[++index]);
+    else if (arg === '--eval') options.eval = argv[++index];
+    else if (arg === '--click') options.click = argv[++index];
+    else if (arg === '--after') options.after = Number(argv[++index]);
     else options.fixtures.push(arg);
   }
   if (!options.fixtures.length) {
@@ -143,11 +152,34 @@ function connectCdp(socketUrl) {
   });
 }
 
-async function screenshot(cdp, url, file, size, wait) {
+async function clickElement(cdp, selector) {
+  const expression = `(() => { const element = document.querySelector(${JSON.stringify(selector)}); if (!element) return null; const rect = element.getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }; })()`;
+  const { result } = await cdp.send('Runtime.evaluate', { expression, returnByValue: true });
+  if (!result.value) {
+    console.log(`click: ${selector} not found`);
+    return;
+  }
+  const { x, y } = result.value;
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 });
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 });
+  console.log(`click: ${selector} at ${Math.round(x)},${Math.round(y)}`);
+}
+
+async function screenshot(cdp, url, file, size, wait, script, after, click) {
   const [width, height] = size.split('x').map(Number);
   await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
   await cdp.send('Page.navigate', { url });
   await delay(wait);
+  if (click) {
+    await clickElement(cdp, click);
+    await delay(after);
+  }
+  if (script) {
+    const result = await cdp.send('Runtime.evaluate', { expression: script, awaitPromise: true, returnByValue: true });
+    console.log('eval:', result.exceptionDetails ? result.exceptionDetails.exception?.description : JSON.stringify(result.result.value));
+    await delay(after);
+  }
   const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' });
   writeFileSync(file, Buffer.from(data, 'base64'));
 }
@@ -171,7 +203,7 @@ async function main() {
         .join('-');
       const name = suffix ? `${fixtureName}-${suffix}` : fixtureName;
       const file = join(outDir, `${name}.png`);
-      await screenshot(cdp, `http://127.0.0.1:${port}/?${query}`, file, options.size, options.wait);
+      await screenshot(cdp, `http://127.0.0.1:${port}/?${query}`, file, options.size, options.wait, options.eval, options.after, options.click);
       console.log(existsSync(file) ? `wrote ${file}` : `FAILED ${file}`);
     }
   } finally {

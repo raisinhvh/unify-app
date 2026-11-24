@@ -2,7 +2,8 @@
  * The Knowledge side panel (Figma 21 · Knowledge 306:2710, left column).
  *
  *   header     "Knowledge" + search + New (Rule / Skill / Memory note / Import skill folder)
- *   scope      Global | This project
+ *   scope      Global | Project
+ *   project    (Project scope) which project folder: name + path, opens the recent-projects picker
  *   Rules      one file per rule
  *   Skills     one folder per skill with its files; "Drop a skill folder" row (click to pick, or drag in)
  *   Memory     topic folders with notes
@@ -18,7 +19,19 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, 
 import { Icon, IconButton, Menu, TreeFolder, TreeItem, type MenuEntry } from '../../components';
 import { AnimatedList, Collapse, createSpring } from '../../motion';
 import { OrganicList, RetypeText, type OrganicRow } from '../../motion/organic';
-import { importSkillFolder, knowledgeItems, saveKnowledge, type ImportedFile, type KnowledgeItem, type KnowledgeKind } from './adapter';
+import { ProjectSwitch } from '../chats/ProjectSwitch';
+import {
+  importSkillFolder,
+  knowledgeItems,
+  knowledgeProject,
+  listedProject,
+  refreshKnowledge,
+  saveKnowledge,
+  setKnowledgeProject,
+  type ImportedFile,
+  type KnowledgeItem,
+  type KnowledgeKind,
+} from './adapter';
 import { Segmented } from './Segmented';
 import { openFolders, scope, select, selection, setFocusTitle, setFolderOpen, setMode, setScope } from './state';
 import './knowledge.css';
@@ -199,6 +212,18 @@ function DropRow(props: { dragging: boolean; busy: boolean; message?: string; on
   );
 }
 
+/** The project the "Project" scope is about: the picked one, else the folder the app has open. */
+function ProjectRow(): JSX.Element {
+  return (
+    <ProjectSwitch
+      class="knowledge-project"
+      path={knowledgeProject()?.path ?? listedProject()}
+      name={knowledgeProject()?.name}
+      onSelect={setKnowledgeProject}
+    />
+  );
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Panel
 
@@ -235,6 +260,8 @@ export function KnowledgePanel(): JSX.Element {
 
   // Primed once the first items are in (or shortly after mount when there are none yet).
   onMount(() => {
+    // Notes and rules agents wrote since the list was last sent.
+    refreshKnowledge();
     const timer = window.setTimeout(() => setKnowledgePrimed(true), 1500);
     onCleanup(() => window.clearTimeout(timer));
   });
@@ -403,9 +430,12 @@ export function KnowledgePanel(): JSX.Element {
         onChange={setScope}
         options={[
           { value: 'global', label: 'Global' },
-          { value: 'project', label: 'This project' },
+          { value: 'project', label: 'Project' },
         ]}
       />
+      <Collapse open={scope() === 'project'}>
+        <ProjectRow />
+      </Collapse>
       <div class="knowledge-tree">
         <TreeFolder
           class="knowledge-section"

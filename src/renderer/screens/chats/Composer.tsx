@@ -13,8 +13,7 @@
  * picked file stays plain "@path" text. Only one menu is open at a time; the input keeps focus and the open menu
  * reads the text and caret and gets first look at each keydown.
  *
- * Attach menu: Image, File, and (when the bridge offers them) Folder as context ("@folder/ " at the caret) and
- * Screenshot (a captured image attachment).
+ * Attach: the paperclip opens the system file picker directly (any file type).
  *
  * Dev screenshots: a fixture may persist `devComposer: { target: '<chatId>' | 'home', text }`; that composer
  * starts with the text typed (and its menus open), since tools/shot.mjs cannot type.
@@ -22,8 +21,9 @@
 import { batch, createSignal, For, onMount, Show, type JSX } from 'solid-js';
 import { Button, Icon, IconButton, Menu, type MenuEntry } from '../../components';
 import { ModelPicker } from '../../components/ModelPicker';
+import { EffortPicker } from '../../components/EffortPicker';
 import { Collapse, Presence } from '../../motion';
-import { bridge, post } from '../../bridge';
+import { post } from '../../bridge';
 import { readPersisted } from '../../persist';
 import type { SidebarImage } from '../../protocol';
 import { rememberSentImages, setEngineError, viewState } from '../../store';
@@ -54,22 +54,6 @@ export interface ComposerProps {
   class?: string;
 }
 
-/** A path for "@" mentions: project-relative inside the open project, else absolute, always with "/". */
-function mentionPath(folder: string, projectPath: string | undefined): string {
-  const path = folder.replace(/\\/g, '/').replace(/\/+$/, '');
-  const project = projectPath?.replace(/\\/g, '/').replace(/\/+$/, '');
-  if (!project) return path;
-  if (path.toLowerCase() === project.toLowerCase()) return '.';
-  if (path.toLowerCase().startsWith(`${project.toLowerCase()}/`)) return path.slice(project.length + 1);
-  return path;
-}
-
-/** "data:image/png;base64,…" → its mime type and base64 payload. */
-function parseDataUrl(dataUrl: string): { mimeType: string; data: string } | undefined {
-  const match = /^data:([^;,]+);base64,(.*)$/s.exec(dataUrl);
-  return match ? { mimeType: match[1], data: match[2] } : undefined;
-}
-
 function readFileBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -87,10 +71,8 @@ export function Composer(props: ComposerProps): JSX.Element {
   const [attachments, setAttachments] = createSignal<Attachment[]>([]);
   const [reading, setReading] = createSignal(0);
   const [sendMenuOpen, setSendMenuOpen] = createSignal(false);
-  const [attachMenuOpen, setAttachMenuOpen] = createSignal(false);
   const [dragOver, setDragOver] = createSignal(false);
   const [sendButton, setSendButton] = createSignal<HTMLButtonElement>();
-  const [attachButton, setAttachButton] = createSignal<HTMLButtonElement>();
   const [form, setForm] = createSignal<HTMLFormElement>();
   const [caret, setCaret] = createSignal(0);
   composerCount += 1;
@@ -194,47 +176,6 @@ export function Composer(props: ComposerProps): JSX.Element {
     resize();
   }
 
-  /** Inserts at the caret, with a space before it when the caret follows a word. */
-  function insertAtCaret(value: string): void {
-    const current = text();
-    const at = input ? input.selectionStart ?? current.length : current.length;
-    const needsSpace = at > 0 && !/\s/.test(current[at - 1]);
-    replaceRange(at, input ? input.selectionEnd ?? at : at, (needsSpace ? ' ' : '') + value);
-  }
-
-  async function addFolderContext(): Promise<void> {
-    const host = bridge();
-    const folder = await host.pickContextFolder?.();
-    if (!folder) return;
-    insertAtCaret(`@${mentionPath(folder, host.projectPath)}/ `);
-  }
-
-  async function addScreenshot(): Promise<void> {
-    setEngineError(undefined);
-    try {
-      const shot = await bridge().captureScreen?.();
-      if (!shot) return;
-      const parsed = parseDataUrl(shot.dataUrl);
-      if (!parsed) throw new Error('unreadable capture');
-      const size = Math.floor((parsed.data.length * 3) / 4);
-      const current = attachments();
-      if (current.length >= maxAttachments) {
-        setEngineError(`Attach up to ${maxAttachments} files.`);
-        return;
-      }
-      if (current.reduce((sum, item) => sum + item.size, 0) + size > maxTotalBytes) {
-        setEngineError('Total attachments must stay under 20 MB.');
-        return;
-      }
-      const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '');
-      const extension = parsed.mimeType.split('/')[1] || 'png';
-      setAttachments([...current, { name: `screenshot-${stamp}.${extension}`, ...parsed, size }]);
-      input?.focus();
-    } catch (error) {
-      setEngineError(`Could not capture the screen: ${String(error)}`);
-    }
-  }
-
   onMount(() => {
     if (!import.meta.env.DEV) return;
     const preset = readPersisted<{ target?: string; text?: string } | undefined>('devComposer', undefined);
@@ -274,23 +215,6 @@ export function Composer(props: ComposerProps): JSX.Element {
     { id: 'interrupt', label: 'Send now', hint: 'stops this turn' },
     { id: 'queue', label: 'Queue', hint: 'after this turn' },
   ];
-
-  /** Folder and Screenshot only when the host can do them. */
-  const attachMenuItems = (): MenuEntry[] => {
-    const host = bridge();
-    return [
-      { id: 'image', label: 'Image' },
-      { id: 'file', label: 'File' },
-      ...(host.pickContextFolder ? [{ id: 'folder', label: 'Folder as context' }] : []),
-      ...(host.captureScreen ? [{ id: 'screenshot', label: 'Screenshot' }] : []),
-    ];
-  };
-
-  const openPicker = (accept: string) => {
-    if (!fileInput) return;
-    fileInput.accept = accept;
-    fileInput.click();
-  };
 
   return (
     <div class={props.class ? `composer-stack ${props.class}` : 'composer-stack'}>
@@ -401,11 +325,9 @@ export function Composer(props: ComposerProps): JSX.Element {
         />
         <div class="composer-bar">
           <IconButton
-            ref={setAttachButton}
             icon="paperclip"
-            label="Attach"
-            active={attachMenuOpen()}
-            onClick={() => setAttachMenuOpen(!attachMenuOpen())}
+            label="Attach files"
+            onClick={() => fileInput?.click()}
           />
           <ModelPicker
             class="composer-choice"
@@ -413,6 +335,11 @@ export function Composer(props: ComposerProps): JSX.Element {
             variant="compact"
             placement="top-start"
             title="Model"
+          />
+          <EffortPicker
+            class="composer-choice"
+            chatId={props.chatId}
+            placement="top-start"
           />
           <span class="composer-spacer" />
           <Presence when={running()}>
@@ -477,19 +404,6 @@ export function Composer(props: ComposerProps): JSX.Element {
         onSelect={id => {
           setSendMenuOpen(false);
           send(id as 'interrupt' | 'queue');
-        }}
-      />
-      <Menu
-        anchor={attachButton()}
-        open={attachMenuOpen()}
-        onClose={() => setAttachMenuOpen(false)}
-        placement="top-start"
-        items={attachMenuItems()}
-        onSelect={id => {
-          setAttachMenuOpen(false);
-          if (id === 'folder') void addFolderContext();
-          else if (id === 'screenshot') void addScreenshot();
-          else openPicker(id === 'image' ? 'image/png,image/jpeg,image/gif,image/webp' : '');
         }}
       />
     </div>

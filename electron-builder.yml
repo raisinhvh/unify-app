@@ -4,12 +4,12 @@ copyright: Copyright © 2026 raisinhvh
 asar: false
 npmRebuild: false
 
-# electron-updater reads GitHub Releases from this repository. It is private
-# until release, so update errors are logged and never shown to the user.
+# electron-updater reads GitHub Releases from this repository (published with
+# `npm run release -- VX.Y`). Update errors are logged, never shown.
 publish:
   provider: github
   owner: raisinhvh
-  repo: unify
+  repo: unify-app
 
 directories:
   output: release

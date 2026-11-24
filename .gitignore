@@ -8,3 +8,12 @@ npm-debug.log*
 Thumbs.db
 
 hub-staging/
+
+# Local agent data and scratch folders; never published.
+.unify/
+.dsh/
+build/node-compile-cache/
+agent_team/
+subagent-output/
+subagent-test/
+tictactoe/

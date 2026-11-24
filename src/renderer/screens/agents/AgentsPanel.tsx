@@ -44,7 +44,7 @@ export function AgentsPanel(): JSX.Element {
         />
         <TreeFolder
           label="Subagents"
-          icon="bot"
+          icon="folder"
           trailing={String(profiles().length)}
           open={subagentsOpen()}
           onToggle={setSubagentsOpen}

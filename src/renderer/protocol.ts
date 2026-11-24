@@ -18,7 +18,7 @@ import type {
   SidebarViewState as EngineViewState,
   SidebarWebviewMessage as EngineWebviewMessage,
 } from '@engine/sidebar/view';
-import type { PackSetupState } from '@engine/hub/types';
+import type { HubInstallPackage, PackSetupState } from '@engine/hub/types';
 
 export type { AgentInfo, AgentMessage } from '@engine/unify/agentBus';
 
@@ -28,6 +28,8 @@ export type {
   SidebarAccount,
   SidebarDependency,
   SidebarDiff,
+  SidebarEditLine,
+  SidebarEditPreview,
   SidebarExplorerRange,
   SidebarFeatures,
   SidebarInternalTool,
@@ -63,9 +65,10 @@ export type SidebarSession = EngineSession & { project?: SidebarProject };
 
 /**
  * Every UI -> engine message may name the chat it is for when several chats are on screen.
- * `project` is only read on `newSession`: Home starts the chat in the folder picked under its composer.
+ * `project` and `noFolder` are only read on `newSession`: Home starts the chat in the folder picked under its
+ * composer, or with no folder (its own empty scratch folder).
  */
-export type SidebarWebviewMessage = EngineWebviewMessage & { chatId?: string; project?: SidebarProject };
+export type SidebarWebviewMessage = EngineWebviewMessage & { chatId?: string; project?: SidebarProject; noFolder?: boolean };
 
 /** A model the engine offers; `contextWindow` is its context size in tokens, when the provider reports it. */
 export type SidebarModel = EngineModel & { contextWindow?: number };
@@ -118,10 +121,15 @@ export interface HubInstallResultMessage {
   needsScriptConsent?: boolean;
   scriptName?: string;
   scriptText?: string;
+  /** The script that runs when the pack is removed (undoes what the install script put outside the pack). */
+  uninstallScriptName?: string;
+  uninstallScriptText?: string;
+  /** Programs the pack's setup installs (winget/brew/pip), shown with the script before anything runs. */
+  packages?: HubInstallPackage[];
   error?: string;
   requestId?: string;
   /** On success: the pack's setup checklist when it ships a `setup.json` (see engine/hub/types.ts). */
   setup?: PackSetupState | null;
 }
 
-export type { PackSetupState, PackSetupStep, PackSetupStepStatus } from '@engine/hub/types';
+export type { HubInstallPackage, PackSetupState, PackSetupStep, PackSetupStepStatus } from '@engine/hub/types';

@@ -43,7 +43,7 @@ export interface RetypeTextProps {
   /** Which feature toggle governs value changes (default 'rename'; type-in and sweep use 'createDelete'). */
   effect?: OrganicEffect;
   class?: string;
-  /** Name for .dsh/tools/motion-audit.mjs. */
+  /** Name for .unify/tools/motion-audit.mjs. */
   'data-motion'?: string;
 }
 

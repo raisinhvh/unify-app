@@ -35,10 +35,10 @@ function ensureFolder(path: string): void {
 }
 
 /** Writes a small JSON file atomically enough that a crash cannot truncate it. */
-export function writeJson(path: string, value: unknown): void {
+export function writeJson(path: string, value: unknown, pretty = true): void {
   ensureFolder(join(path, '..'));
   const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  writeFileSync(temporary, `${pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value)}\n`, 'utf8');
   renameSync(temporary, path);
 }
 
@@ -89,23 +89,35 @@ export class JsonMemento {
       clearTimeout(this.writeTimer);
       this.writeTimer = undefined;
     }
+    const soon = this.soon;
+    this.soon = undefined;
     if (!this.pending) {
       this.pending = Promise.resolve().then(() => {
         this.pending = undefined;
-        writeJson(this.path, this.values);
+        // Compact: chat timelines make this file large, and indenting it costs main-thread time on every write.
+        writeJson(this.path, this.values, false);
       });
     }
+    if (soon) this.pending.then(soon.resolve, soon.reject);
     return this.pending;
   }
 
+  private soon?: { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void };
+
+  /**
+   * Coalesces updates into at most one write per 250 ms. The write is synchronous on the engine's (Electron main)
+   * thread, so writing on every update stalled the UI while an agent streamed.
+   */
   private flushSoon(): Promise<void> {
-    if (!this.writeTimer) {
-      this.writeTimer = setTimeout(() => {
-        this.writeTimer = undefined;
-        void this.flush();
-      }, 80);
+    if (!this.soon) {
+      let resolve!: () => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<void>((done, fail) => { resolve = done; reject = fail; });
+      this.soon = { promise, resolve, reject };
     }
-    return this.flush();
+    // A fixed window, not a sliding one, so a steady stream of updates still writes every 250 ms.
+    this.writeTimer ??= setTimeout(() => { this.writeTimer = undefined; void this.flush(); }, 250);
+    return this.soon.promise;
   }
 }
 

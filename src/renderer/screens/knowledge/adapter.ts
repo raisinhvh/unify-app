@@ -15,8 +15,9 @@
 import { createSignal } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
 import { hasHostBridge, post } from '../../bridge';
+import { readPersisted, writePersisted } from '../../persist';
 import { onHostMessage, viewState } from '../../store';
-import type { SidebarWebviewMessage } from '../../protocol';
+import type { SidebarProject, SidebarWebviewMessage } from '../../protocol';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Contract (mirrors protocol-requests.md)
@@ -66,6 +67,7 @@ export interface ImportedFile {
   encoding?: 'utf8' | 'base64';
 }
 
+/** Every request may also carry `project`: the project folder its "project" scope means (default: the open workspace). */
 export type KnowledgeRequest =
   | { type: 'knowledgeList' }
   | { type: 'readKnowledge'; requestId: string; id: string; file?: string }
@@ -76,7 +78,8 @@ export type KnowledgeRequest =
   | { type: 'openKnowledge'; id: string; file?: string };
 
 export type KnowledgeReply =
-  | { type: 'knowledgeState'; items: KnowledgeItem[] }
+  /** `project`: the folder the project-scope items were read from (none when no project is open). */
+  | { type: 'knowledgeState'; project?: string; items: KnowledgeItem[] }
   | { type: 'knowledgeContent'; requestId: string; id: string; file?: string; content: string }
   | { type: 'knowledgeSaved'; requestId: string; item: KnowledgeItem }
   | { type: 'knowledgeRemoved'; requestId: string; id: string }
@@ -92,9 +95,48 @@ const [mockItems, setMockItems] = createStore<KnowledgeItem[]>(useMock ? initial
 const pending = new Map<string, (reply: KnowledgeReply) => void>();
 let nextId = 0;
 
+// ---------------------------------------------------------------------------------------------------------------
+// Which project "Project" scope means
+
+/** The project folder picked on the Knowledge screen; undefined means the folder the app has open. */
+const [knowledgeProject, setKnowledgeProjectSignal] = createSignal<SidebarProject | undefined>(
+  readPersisted<SidebarProject | undefined>('knowledge.project', undefined),
+);
+/** The folder the engine last listed project items from (it answers with the open folder when none was picked). */
+const [listedProject, setListedProject] = createSignal<string | undefined>();
+export { knowledgeProject, listedProject };
+
+export function setKnowledgeProject(project: SidebarProject | undefined): void {
+  setKnowledgeProjectSignal(project);
+  writePersisted('knowledge.project', project);
+  refreshKnowledge();
+}
+
+function samePath(first: string | undefined, second: string | undefined): boolean {
+  const normal = (value: string | undefined) => (value ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  return normal(first) === normal(second);
+}
+
+/** Adds the picked project to a knowledge message. */
+function withProject<T extends object>(body: T): T & { project?: string } {
+  const project = knowledgeProject()?.path;
+  return project ? { ...body, project } : body;
+}
+
+/** Set between asking for a list and receiving one, so a list for the wrong folder is re-asked only once. */
+let listRequested = false;
+
 onHostMessage(raw => {
   const message = raw as unknown as KnowledgeReply;
   if (message.type === 'knowledgeState') {
+    // The engine also pushes lists on its own (file watchers) for the open folder; those are for another project.
+    const wanted = knowledgeProject()?.path;
+    if (wanted && !samePath(message.project, wanted) && !listRequested) {
+      refreshKnowledge();
+      return;
+    }
+    listRequested = false;
+    setListedProject(message.project);
     setEngineItems(message.items);
     return;
   }
@@ -104,7 +146,14 @@ onHostMessage(raw => {
   }
 });
 
-if (!useMock) post({ type: 'knowledgeList' } as unknown as SidebarWebviewMessage);
+/** Asks the engine for a fresh list (the screen calls this when it opens; the engine also pushes on changes). */
+export function refreshKnowledge(): void {
+  if (useMock) return;
+  listRequested = true;
+  post(withProject({ type: 'knowledgeList' }) as unknown as SidebarWebviewMessage);
+}
+
+refreshKnowledge();
 
 type Source = 'engine' | 'instructions' | 'mock';
 
@@ -127,7 +176,7 @@ function request(body: WithoutId<Extract<KnowledgeRequest, { requestId: string }
       window.clearTimeout(timer);
       resolve(reply);
     });
-    post({ ...body, requestId } as unknown as SidebarWebviewMessage);
+    post(withProject({ ...body, requestId }) as unknown as SidebarWebviewMessage);
   });
 }
 
@@ -209,7 +258,10 @@ export async function saveKnowledge(draft: KnowledgeDraft, content: string, file
 export async function removeKnowledge(id: string): Promise<void> {
   const current = source();
   if (current === 'engine') {
-    await request({ type: 'removeKnowledge', id });
+    const reply = await request({ type: 'removeKnowledge', id });
+    if (reply?.type === 'knowledgeError') throw new Error(reply.message);
+    // The engine also sends a fresh knowledgeState; drop the item now so it leaves the list at once.
+    setEngineItems(items => items?.filter(item => item.id !== id));
     return;
   }
   if (current === 'instructions') {
@@ -223,7 +275,7 @@ export function setAudiences(id: string, audiences: Audience[]): void {
   if (source() !== 'mock') {
     // Optimistic: the engine answers with a fresh knowledgeState.
     setEngineItems(items => items?.map(item => (item.id === id ? { ...item, audiences } : item)));
-    post({ type: 'setKnowledgeAudience', id, audiences } as unknown as SidebarWebviewMessage);
+    post(withProject({ type: 'setKnowledgeAudience', id, audiences }) as unknown as SidebarWebviewMessage);
     return;
   }
   const index = mockItems.findIndex(item => item.id === id);
@@ -251,7 +303,7 @@ export async function importSkillFolder(scope: KnowledgeScope, name: string, fil
  */
 export function undoKnowledgeChange(item: KnowledgeItem): void {
   if (source() !== 'mock') {
-    post({ type: 'undoKnowledgeChange', id: item.id } as unknown as SidebarWebviewMessage);
+    post(withProject({ type: 'undoKnowledgeChange', id: item.id }) as unknown as SidebarWebviewMessage);
     return;
   }
   const index = mockItems.findIndex(entry => entry.id === item.id);
@@ -265,7 +317,7 @@ export function undoKnowledgeChange(item: KnowledgeItem): void {
 
 export function openKnowledgeExternally(item: KnowledgeItem, file?: string): void {
   if (source() === 'engine') {
-    post({ type: 'openKnowledge', id: item.id, file } as unknown as SidebarWebviewMessage);
+    post(withProject({ type: 'openKnowledge', id: item.id, file }) as unknown as SidebarWebviewMessage);
     return;
   }
   if (source() === 'instructions') {

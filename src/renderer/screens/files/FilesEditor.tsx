@@ -19,7 +19,7 @@ import { pressable, Presence, flipList } from '../../motion';
 import { EditedLines, RetypeText } from '../../motion/organic';
 import { feature, setFeature } from '../../store/features';
 import { currentTheme } from '../../theme';
-import { baseName, openExternally, writeFile, type FileLineChanges } from './adapter';
+import { baseName, languageFor, openExternally, writeFile, type FileLineChanges } from './adapter';
 import { FileDelta } from './FilesPanel';
 import {
   activateTab,
@@ -27,12 +27,16 @@ import {
   closeTab,
   createdRecently,
   deletingTabs,
+  diffTabs,
   documents,
   editFor,
+  isDiffKey,
   listingEdit,
   loadDocument,
+  reveal,
   setDocuments,
   setDraft,
+  setReveal,
   tabs,
   type OpenDocument,
 } from './state';
@@ -43,10 +47,17 @@ import './files.css';
 // ---------------------------------------------------------------------------------------------------------------
 // Tabs
 
+/** The file a tab is about: its own key for a file tab, the diffed file for a diff tab. */
+function tabFilePath(key: string): string {
+  return isDiffKey(key) ? (diffTabs[key]?.path ?? key.slice('diff:'.length)) : key;
+}
+
+/** `path` is the tab key: a file path, or `diff:<path>` for a review diff. */
 function Tab(props: { path: string; closing: boolean; onClose: () => void; onExited: () => void }): JSX.Element {
   const active = () => activePath() === props.path;
+  const diff = () => isDiffKey(props.path);
   const dirty = () => documents[props.path]?.draft !== undefined;
-  const typeIn = untrack(() => createdRecently(props.path));
+  const typeIn = untrack(() => !isDiffKey(props.path) && createdRecently(props.path));
   return (
     <div class="files-tab-slot" data-flip={props.path}>
       <Presence when={!props.closing} from={0.9} origin="center left" onExited={props.onExited}>
@@ -55,30 +66,33 @@ function Tab(props: { path: string; closing: boolean; onClose: () => void; onExi
           classList={{ active: active() }}
           role="tab"
           aria-selected={active()}
-          title={props.path}
+          title={diff() ? (diffTabs[props.path]?.title ?? tabFilePath(props.path)) : props.path}
           ref={element => pressable(element, 0.97)}
           onClick={() => activateTab(props.path)}
           onAuxClick={event => {
             if (event.button === 1) props.onClose();
           }}
         >
-          <Icon name="file" size={14} class="files-tab-icon" />
+          <Icon name={diff() ? 'edit' : 'file'} size={14} class="files-tab-icon" />
           <span class="files-tab-name">
             <RetypeText
-              value={baseName(props.path)}
+              value={baseName(tabFilePath(props.path))}
               typeOnMount={typeIn}
-              deleting={deletingTabs().includes(props.path)}
+              deleting={!diff() && deletingTabs().includes(props.path)}
               onDeleted={props.onClose}
               data-motion="files-tab-name"
             />
           </span>
+          <Show when={diff()}>
+            <span class="files-tab-badge type-mono">diff</span>
+          </Show>
           <Show when={dirty()}>
             <span class="files-tab-dirty" aria-label="Unsaved" />
           </Show>
           <button
             type="button"
             class="files-tab-close"
-            aria-label={`Close ${baseName(props.path)}`}
+            aria-label={`Close ${baseName(tabFilePath(props.path))}${diff() ? ' diff' : ''}`}
             onClick={event => {
               event.stopPropagation();
               props.onClose();
@@ -372,6 +386,24 @@ function MonacoCode(props: { path: string; onSave: () => void }): JSX.Element {
         }
         show(path);
       });
+      // A range the engine asked for (editorOpen): select and centre it once this file is shown, then clear it.
+      createEffect(() => {
+        const request = reveal();
+        if (!request || request.path !== props.path || !editor || !monaco) return;
+        const document = documents[request.path];
+        if (!document || document.error) return;
+        show(request.path);
+        const model = editor.getModel();
+        if (shownPath !== request.path || !model) return;
+        const last = model.getLineCount();
+        const start = Math.min(request.startLine, last);
+        const end = Math.min(request.endLine, last);
+        const range = new monaco.Range(start, 1, end, model.getLineMaxColumn(end));
+        editor.setSelection(range);
+        editor.revealRangeInCenter(range, monaco.editor.ScrollType.Smooth);
+        editor.focus();
+        setReveal(undefined);
+      });
       createEffect(() => editor?.updateOptions({ minimap: { enabled: feature<boolean>('editor.minimap') } }));
       createEffect(on(currentTheme, () => module.defineUnifyTheme(), { defer: true }));
       // Drop models of closed tabs.
@@ -406,6 +438,124 @@ function MonacoCode(props: { path: string; onSave: () => void }): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Review diff (editorDiff)
+
+/** Below this card width the diff is drawn inline instead of side by side (px). */
+const sideBySideBreakpoint = 720;
+
+/**
+ * A read-only Monaco diff editor for diff tabs: base (left) against the agent's edit (right). One editor serves
+ * every diff tab; each tab keeps its own pair of models (and scroll), disposed when the tab closes.
+ */
+function DiffCode(props: { tabKey: string }): JSX.Element {
+  const [ready, setReady] = createSignal(false);
+  const owner = getOwner();
+  let host!: HTMLDivElement;
+  let editor: MonacoApi.editor.IStandaloneDiffEditor | undefined;
+  let disposed = false;
+  const models = new Map<string, MonacoApi.editor.IDiffEditorModel>();
+  const viewStates = new Map<string, MonacoApi.editor.IDiffEditorViewState | null>();
+  let shownKey: string | undefined;
+
+  onMount(async () => {
+    const module = await import('./monaco');
+    if (disposed) return;
+    const monaco = module.prepareMonaco();
+    const diffEditor = monaco.editor.createDiffEditor(host, {
+      ...module.editorFont(),
+      theme: 'unify',
+      automaticLayout: true,
+      readOnly: true,
+      originalEditable: false,
+      renderSideBySide: true,
+      useInlineViewWhenSpaceIsLimited: true,
+      renderSideBySideInlineBreakpoint: sideBySideBreakpoint,
+      enableSplitViewResizing: true,
+      renderMarginRevertIcon: false,
+      renderGutterMenu: false,
+      renderOverviewRuler: false,
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      lineNumbersMinChars: 4,
+      glyphMargin: false,
+      folding: false,
+      renderLineHighlight: 'none',
+      stickyScroll: { enabled: false },
+      scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10, useShadows: false },
+      guides: { indentation: false },
+      smoothScrolling: true,
+      fixedOverflowWidgets: true,
+    });
+    editor = diffEditor;
+
+    const createModel = (text: string, language: string) => {
+      const model = monaco.editor.createModel(text, language);
+      model.updateOptions({ bracketColorizationOptions: { enabled: false, independentColorPoolPerBracketType: false } });
+      return model;
+    };
+
+    runWithOwner(owner, () => {
+      createEffect(() => {
+        const key = props.tabKey;
+        const diff = diffTabs[key];
+        if (!diff) return;
+        const leftText = diff.leftText;
+        const rightText = diff.rightText;
+        let pair = models.get(key);
+        if (!pair) {
+          const language = languageFor(diff.path);
+          pair = { original: createModel(leftText, language), modified: createModel(rightText, language) };
+          models.set(key, pair);
+        } else {
+          // Re-opened with newer content: replace both sides in place.
+          if (pair.original.getValue() !== leftText) pair.original.setValue(leftText);
+          if (pair.modified.getValue() !== rightText) pair.modified.setValue(rightText);
+        }
+        if (shownKey !== key) {
+          if (shownKey) viewStates.set(shownKey, diffEditor.saveViewState());
+          diffEditor.setModel(pair);
+          const saved = viewStates.get(key);
+          if (saved) diffEditor.restoreViewState(saved);
+          shownKey = key;
+        }
+      });
+      createEffect(on(currentTheme, () => module.defineUnifyTheme(), { defer: true }));
+      // Drop models of closed diff tabs (detach first when it is the one on screen).
+      createEffect(() => {
+        const open = new Set(tabs());
+        for (const [key, pair] of models) {
+          if (open.has(key)) continue;
+          if (shownKey === key) {
+            diffEditor.setModel(null);
+            shownKey = undefined;
+          }
+          pair.original.dispose();
+          pair.modified.dispose();
+          models.delete(key);
+          viewStates.delete(key);
+        }
+      });
+    });
+    setReady(true);
+  });
+
+  onCleanup(() => {
+    disposed = true;
+    editor?.dispose();
+    for (const pair of models.values()) {
+      pair.original.dispose();
+      pair.modified.dispose();
+    }
+  });
+
+  return (
+    <div class="files-code">
+      <div ref={host} class="files-monaco" classList={{ ready: ready() }} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Editor card
 
 export function FilesEditor(): JSX.Element {
@@ -415,8 +565,17 @@ export function FilesEditor(): JSX.Element {
   let moreButton: HTMLButtonElement | undefined;
 
   const current = () => (activePath() ? documents[activePath()!] : undefined);
-  const segments = () => (activePath() ?? '').split('/').filter(Boolean);
-  const activeEdit = () => (activePath() ? editFor(activePath()!, listingEdit(activePath()!) ?? documentEdit(current())) : undefined);
+  /** The active diff tab, when the active tab is one. */
+  const currentDiff = () => (isDiffKey(activePath()) ? diffTabs[activePath()!] : undefined);
+  /** The file the active tab shows (a diff tab's diffed file). */
+  const activeFile = () => (activePath() ? tabFilePath(activePath()!) : undefined);
+  const segments = () => (activeFile() ?? '').split('/').filter(Boolean);
+  const activeEdit = () => (activeFile() ? editFor(activeFile()!, listingEdit(activeFile()!) ?? documentEdit(current())) : undefined);
+  const diffStatus = () => {
+    const diff = currentDiff();
+    if (!diff) return '';
+    return diff.leftLabel && diff.rightLabel ? `${diff.leftLabel} ↔ ${diff.rightLabel}` : 'Review';
+  };
 
   createEffect(() => {
     const path = activePath();
@@ -462,7 +621,7 @@ export function FilesEditor(): JSX.Element {
     { id: 'save', label: 'Save', hint: 'Ctrl S', disabled: current()?.draft === undefined },
     { id: 'revert', label: 'Revert changes', disabled: current()?.draft === undefined },
     { kind: 'separator' },
-    { id: 'external', label: 'Open in system editor', icon: 'pop', disabled: !activePath() },
+    { id: 'external', label: 'Open in system editor', icon: 'pop', disabled: !activeFile() },
     { kind: 'separator' },
     { id: 'close-others', label: 'Close other tabs', disabled: tabs().length < 2 },
     { id: 'close-all', label: 'Close all tabs', disabled: !tabs().length },
@@ -470,9 +629,10 @@ export function FilesEditor(): JSX.Element {
 
   const onMenu = (id: string) => {
     const path = activePath();
+    const file = activeFile();
     if (id === 'save') void save();
     if (id === 'revert') revert();
-    if (id === 'external' && path) openExternally(path);
+    if (id === 'external' && file) openExternally(file);
     if (id === 'close-others') for (const tab of tabs()) if (tab !== path) requestClose(tab);
     if (id === 'close-all') for (const tab of tabs()) requestClose(tab);
   };
@@ -529,21 +689,31 @@ export function FilesEditor(): JSX.Element {
                   )}
                 </Index>
               </span>
-              <Show when={status() || current()?.draft !== undefined}>
-                <span class="files-status">{status() || 'Edited'}</span>
+              <Show when={status() || diffStatus() || current()?.draft !== undefined}>
+                <span class="files-status">{status() || diffStatus() || 'Edited'}</span>
               </Show>
               <FileDelta edit={activeEdit()} />
             </div>
+            {/* Diff tabs always use Monaco's diff editor (read-only); `editor.enabled` only affects file tabs. */}
             <Show
-              when={current() && !current()!.error}
+              when={!isDiffKey(path())}
               fallback={
-                <Show when={current()?.error}>
-                  <p class="files-error type-label">{current()!.error}</p>
+                <Show when={currentDiff()}>
+                  <DiffCode tabKey={path()} />
                 </Show>
               }
             >
-              <Show when={feature<boolean>('editor.enabled')} fallback={<div class="files-code"><PlainCode document={current()!} /></div>}>
-                <MonacoCode path={path()} onSave={() => void save()} />
+              <Show
+                when={current() && !current()!.error}
+                fallback={
+                  <Show when={current()?.error}>
+                    <p class="files-error type-label">{current()!.error}</p>
+                  </Show>
+                }
+              >
+                <Show when={feature<boolean>('editor.enabled')} fallback={<div class="files-code"><PlainCode document={current()!} /></div>}>
+                  <MonacoCode path={path()} onSave={() => void save()} />
+                </Show>
               </Show>
             </Show>
           </>

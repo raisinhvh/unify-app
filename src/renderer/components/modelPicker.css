@@ -39,19 +39,6 @@
   color: var(--text3);
 }
 
-/* Effort and speed: separate muted cells, spaced, never dotted. In a tight spot they hide whole (fitMeta). */
-.model-picker-metas {
-  display: flex;
-  flex: none;
-  gap: 8px;
-  margin-left: 2px;
-}
-
-.model-picker-meta {
-  flex: none;
-  color: var(--text3);
-}
-
 .model-picker .button-trailing {
   flex: none;
   color: var(--text3);
@@ -204,64 +191,6 @@
   margin: 0;
   padding: 10px 8px;
   color: var(--text3);
-}
-
-/* Footer: effort and speed for the picked model, label and segmented choice per row. */
-
-.model-picker-footer {
-  display: grid;
-  flex: none;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 6px 12px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-}
-
-.model-picker-footer-label {
-  color: var(--text3);
-}
-
-.model-picker-footer .segmented {
-  position: relative;
-  display: flex;
-  justify-self: end;
-  align-items: stretch;
-  max-width: 100%;
-  overflow-x: auto;
-  scrollbar-width: none;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-}
-
-.model-picker-footer .segmented-fill {
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  left: 0;
-  background: var(--hover);
-  border-radius: calc(var(--radius-control) - 2px);
-  pointer-events: none;
-}
-
-.model-picker-footer .segmented-option {
-  position: relative;
-  flex: none;
-  height: 22px;
-  padding: 0 5px;
-  color: var(--text3);
-  font-size: 11px;
-  white-space: nowrap;
-  transition: color 140ms ease;
-}
-
-.model-picker-footer .segmented-option:hover {
-  color: var(--text2);
-}
-
-.model-picker-footer .segmented-option.selected {
-  color: var(--text);
 }
 
 /* Press: darkens instantly on pointer-down (the picker closes on click). */

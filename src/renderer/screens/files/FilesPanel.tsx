@@ -1,7 +1,12 @@
 /**
  * The Files side panel (Figma 20 · Files + Editor 306:1623, left column).
  *
- *   header   "Files" + search + more
+ *   header   "Files" + new (file / folder at the root) + search + more
+ *   actions  hover a row for its delete button; right-click for New file / New folder / Cut / Copy / Paste /
+ *            Duplicate / Copy path / Reveal / Rename / Delete; keys Ctrl+C/X/V/D, Delete, F2 on the focused row;
+ *            drag rows into folders to move them (Ctrl to copy), drop files from the OS to copy them in
+ *            (entryActions.tsx; deletes go to the OS trash when the bridge can)
+ *   project  which project folder the tree is (name + path); opens the recent-projects picker to switch
  *   search   folds open under the header; matches file paths across the workspace (adapter.findFiles)
  *   tree     the workspace as folders and files with guide lines; folders load when first opened
  *
@@ -16,8 +21,13 @@ import { createEffect, createMemo, createSignal, on, onMount, Show, untrack, typ
 import { Icon, IconButton, Menu, TreeFolder, TreeItem, type MenuEntry } from '../../components';
 import { AnimatedList, Collapse } from '../../motion';
 import { OrganicList, RetypeText, RollingNumber, type OrganicRow } from '../../motion/organic';
-import { findFiles, openExternally, type FileEdit, type FileEntry } from './adapter';
-import { activePath, collapseAllDirs, editFor, listings, loadDir, openDirs, openFile, refreshTree, setDirOpen } from './state';
+import { ProjectSwitch } from '../chats/ProjectSwitch';
+import { filesProject, findFiles, openExternally, workspace, type FileEdit, type FileEntry } from './adapter';
+import { activePath, collapseAllDirs, editFor, isCut, listings, loadDir, openDirs, openFile, refreshTree, setDirOpen, switchFilesProject } from './state';
+import {
+  actionError, createDeleteButton, dropFolder, editing, EntryMenu, isRenaming, NewEntryRow, onTreeKeyDown, openEntryMenu, registerRow,
+  RenameInput, rowDragProps, startNewEntry, treeDropProps,
+} from './entryActions';
 import './files.css';
 
 /** "+18 −4" in add/del colours. Shared with tabs and the breadcrumb. */
@@ -58,30 +68,76 @@ function EntryName(props: { name: string; row: OrganicRow; typeIn: boolean }): J
   );
 }
 
+/** A row's trailing cell: its +N −M (if any) and the hover delete button sharing one spot. */
+function RowTrailing(props: { edit?: FileEdit; button: JSX.Element }): JSX.Element {
+  return (
+    <span class="files-row-trailing">
+      <span class="files-row-info">
+        <FileDelta edit={props.edit} />
+      </span>
+      {props.button}
+    </span>
+  );
+}
+
+/** Row classes shared by file and folder rows: hover-delete armed, dimmed while cut. */
+function entryClass(base: string, path: string, armed: boolean): string {
+  return `${base} files-entry${armed ? ' delete-armed' : ''}${isCut(path) ? ' cut' : ''}`;
+}
+
 function FileRow(props: { entry: FileEntry; row: OrganicRow; typeIn: boolean }): JSX.Element {
   const edit = () => editFor(props.entry.path, props.entry.edited);
+  const remove = createDeleteButton(() => props.entry);
+  let element: HTMLButtonElement | undefined;
   return (
     <TreeItem
-      class="files-file"
+      {...rowDragProps(() => props.entry)}
+      ref={node => {
+        element = node;
+        registerRow(node, () => props.entry);
+      }}
+      class={entryClass('files-file', props.entry.path, remove.armed())}
       leading={<Icon name="file" size={14} />}
-      label={<EntryName name={props.entry.name} row={props.row} typeIn={props.typeIn} />}
-      trailing={edit() ? <FileDelta edit={edit()} /> : undefined}
+      label={
+        <Show when={!isRenaming(props.entry.path)} fallback={<RenameInput entry={props.entry} />}>
+          <EntryName name={props.entry.name} row={props.row} typeIn={props.typeIn} />
+        </Show>
+      }
+      trailing={<RowTrailing edit={edit()} button={remove.button} />}
       selected={activePath() === props.entry.path}
       title={props.entry.path}
       onClick={() => openFile(props.entry.path)}
+      onContextMenu={event => openEntryMenu(event, element, props.entry)}
+      onPointerLeave={remove.disarm}
     />
   );
 }
 
 function DirRow(props: { entry: FileEntry; row: OrganicRow; typeIn: boolean }): JSX.Element {
   const open = () => openDirs().includes(props.entry.path);
+  const remove = createDeleteButton(() => props.entry);
+  let element: HTMLButtonElement | undefined;
   return (
     <TreeFolder
-      class="files-dir"
+      class={dropFolder() === props.entry.path ? 'files-dir drop-target' : 'files-dir'}
+      rowClass={entryClass('', props.entry.path, remove.armed()).trim()}
+      rowRef={node => {
+        element = node;
+        registerRow(node, () => props.entry);
+      }}
+      rowProps={rowDragProps(() => props.entry)}
       icon="folder"
-      label={<EntryName name={props.entry.name} row={props.row} typeIn={props.typeIn} />}
+      label={
+        <Show when={!isRenaming(props.entry.path)} fallback={<RenameInput entry={props.entry} />}>
+          <EntryName name={props.entry.name} row={props.row} typeIn={props.typeIn} />
+        </Show>
+      }
+      trailing={<RowTrailing button={remove.button} />}
+      title={props.entry.path}
       open={open()}
       onToggle={next => setDirOpen(props.entry.path, next)}
+      onContextMenu={event => openEntryMenu(event, element, props.entry)}
+      onPointerLeave={remove.disarm}
     >
       <DirChildren path={props.entry.path} />
     </TreeFolder>
@@ -107,7 +163,8 @@ function stableEntries(entries: Accessor<readonly FileEntry[]>): Accessor<KeyedE
     const present = new Set(list.map(entry => entry.path));
     const known = new Set(previous.map(entry => entry.path));
     const removed = previous.filter(entry => !present.has(entry.path));
-    const added = list.filter(entry => !known.has(entry.path));    if (previous.length && removed.length === 1 && added.length === 1 && removed[0].kind === added[0].kind) {
+    const added = list.filter(entry => !known.has(entry.path));
+    if (previous.length && removed.length === 1 && added.length === 1 && removed[0].kind === added[0].kind) {
       const inherited = idByPath.get(removed[0].path);
       if (inherited) idByPath.set(added[0].path, inherited);
     }
@@ -132,10 +189,19 @@ function DirChildren(props: { path: string }): JSX.Element {
   createEffect(() => {
     if (listings[props.path] && !untrack(primed)) queueMicrotask(() => setPrimed(true));
   });
+  const adding = () => {
+    const current = editing();
+    return current?.mode === 'new' && current.folder === props.path ? current : undefined;
+  };
   return (
+    <>
+    <Show when={adding()}>
+      {current => <NewEntryRow folder={props.path} kind={current().kind} />}
+    </Show>
     <OrganicList each={entries()} key={item => item.id}>
       {(item, row) => {
-        const typeIn = row.created && untrack(primed);        return (
+        const typeIn = row.created && untrack(primed);
+        return (
           <Show
             when={item().entry.kind === 'dir'}
             fallback={<FileRow entry={item().entry} row={row} typeIn={typeIn} />}
@@ -145,6 +211,7 @@ function DirChildren(props: { path: string }): JSX.Element {
         );
       }}
     </OrganicList>
+    </>
   );
 }
 
@@ -185,7 +252,22 @@ export function FilesPanel(): JSX.Element {
   const [searching, setSearching] = createSignal(false);
   const [query, setQuery] = createSignal('');
   const [menuOpen, setMenuOpen] = createSignal(false);
+  const [newOpen, setNewOpen] = createSignal(false);
   let moreButton: HTMLButtonElement | undefined;
+  let newButton: HTMLButtonElement | undefined;
+  let tree: HTMLDivElement | undefined;
+
+  const newItems: MenuEntry[] = [
+    { id: 'file', label: 'New file', icon: 'file' },
+    { id: 'dir', label: 'New folder', icon: 'folder' },
+  ];
+  const onNew = (id: string) => {
+    setNewOpen(false);
+    // Searching hides the tree, where the name is typed.
+    if (searching()) toggleSearch();
+    startNewEntry('', id === 'dir' ? 'dir' : 'file');
+    tree?.scrollTo({ top: 0 });
+  };
   let searchInput: HTMLInputElement | undefined;
 
   onMount(() => {
@@ -218,11 +300,23 @@ export function FilesPanel(): JSX.Element {
       <header class="files-panel-header">
         <h2 class="type-heading">Files</h2>
         <div class="files-panel-actions">
+          <IconButton ref={newButton} icon="plus" label="New file or folder" active={newOpen()} onClick={() => setNewOpen(!newOpen())} />
           <IconButton icon="search" label="Find a file" active={searching()} onClick={toggleSearch} />
           <IconButton ref={moreButton} icon="more" label="More" active={menuOpen()} onClick={() => setMenuOpen(!menuOpen())} />
         </div>
       </header>
+      <ProjectSwitch
+        class="files-project"
+        path={filesProject()?.path ?? (workspace().root || undefined)}
+        name={filesProject()?.name ?? (workspace().name || undefined)}
+        onSelect={project => void switchFilesProject(project)}
+      />
       <Menu anchor={moreButton} open={menuOpen()} onClose={() => setMenuOpen(false)} onSelect={onMenu} items={menuItems()} placement="bottom-end" />
+      <Menu anchor={newButton} open={newOpen()} onClose={() => setNewOpen(false)} onSelect={onNew} items={newItems} placement="bottom-end" />
+      <EntryMenu />
+      <Collapse open={!!actionError()}>
+        <p class="files-action-error type-caption" role="alert">{actionError()}</p>
+      </Collapse>
       <Collapse open={searching()}>
         <label class="files-search">
           <Icon name="search" size={14} />
@@ -238,7 +332,17 @@ export function FilesPanel(): JSX.Element {
           />
         </label>
       </Collapse>
-      <div class="files-tree">
+      <div
+        {...treeDropProps}
+        class="files-tree"
+        classList={{ 'drop-root': dropFolder() === '' }}
+        ref={tree}
+        onKeyDown={onTreeKeyDown}
+        // Right-click on empty space: new file or folder at the project root.
+        onContextMenu={event => {
+          if (event.target === event.currentTarget) openEntryMenu(event, newButton);
+        }}
+      >
         <Show
           when={!query().trim()}
           fallback={<SearchResults query={query()} />}

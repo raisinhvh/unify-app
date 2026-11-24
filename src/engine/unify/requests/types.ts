@@ -99,9 +99,19 @@ export type FilesRequest =
   | { type: 'listDir'; requestId: string; path: string }
   | { type: 'readFile'; requestId: string; path: string }
   | { type: 'writeFile'; requestId: string; path: string; content: string; version: string }
-  | { type: 'findFiles'; requestId: string; query: string; limit?: number };
+  | { type: 'findFiles'; requestId: string; query: string; limit?: number }
+  | { type: 'createEntry'; requestId: string; path: string; kind: 'file' | 'dir' }
+  | { type: 'renameEntry'; requestId: string; from: string; to: string }
+  /** Copies into a folder ('' = root); a taken name becomes "name copy.ext". */
+  | { type: 'copyEntry'; requestId: string; from: string; toFolder: string }
+  /** Copies absolute paths from outside the project (dropped from the OS) into a folder. */
+  | { type: 'importEntries'; requestId: string; sources: string[]; toFolder: string }
+  /** Permanent delete; the screen moves entries to the OS trash instead whenever the bridge can. */
+  | { type: 'deleteEntry'; requestId: string; path: string };
 
 export type FilesReply =
+  /** createEntry / renameEntry / deleteEntry succeeded; `path` is the new (or deleted) project-relative path. */
+  | { type: 'entryDone'; requestId: string; path: string; /** importEntries: every copied path. */ paths?: string[] }
   | { type: 'workspaceState'; root: string; name: string }
   | { type: 'dirListing'; requestId: string; path: string; entries: FileEntry[] }
   | { type: 'fileContent'; requestId: string; file: FileDocument }
@@ -109,7 +119,7 @@ export type FilesReply =
   | { type: 'fileConflict'; requestId: string; current: FileDocument }
   | { type: 'fileMatches'; requestId: string; query: string; paths: string[] }
   | { type: 'filesError'; requestId: string; message: string }
-  | { type: 'fileChanged'; path: string; kind: 'changed' | 'created' | 'deleted'; edited?: FileEdit };
+  | { type: 'fileChanged'; /** The watched project folder the path is relative to. */ root?: string; path: string; kind: 'changed' | 'created' | 'deleted'; edited?: FileEdit };
 
 /* ---------------------------------------------------------------------------------------------------------------
  * Knowledge (screens/knowledge/adapter.ts)
@@ -152,6 +162,7 @@ export interface ImportedFile {
   encoding?: 'utf8' | 'base64';
 }
 
+/** Every request may also carry `project`: the project folder its "project" scope means (default: the open workspace). */
 export type KnowledgeRequest =
   | { type: 'knowledgeList' }
   | { type: 'readKnowledge'; requestId: string; id: string; file?: string }
@@ -163,7 +174,8 @@ export type KnowledgeRequest =
   | { type: 'openKnowledge'; id: string; file?: string };
 
 export type KnowledgeReply =
-  | { type: 'knowledgeState'; items: KnowledgeItem[] }
+  /** `project`: the folder the project-scope items were read from (none when no project is open). */
+  | { type: 'knowledgeState'; project?: string; items: KnowledgeItem[] }
   | { type: 'knowledgeContent'; requestId: string; id: string; file?: string; content: string }
   | { type: 'knowledgeSaved'; requestId: string; item: KnowledgeItem }
   | { type: 'knowledgeRemoved'; requestId: string; id: string }
@@ -186,10 +198,11 @@ export type ToolpackRequest =
   /**
    * `markDone` / `markTodo`: tick a manual step (persisted in the pack folder's `setup-state.json`).
    * `recheck`: re-evaluate every `check`. `open`: open the step's `open` URL or folder.
-   * `rerunScript`: run the pack's install script again (the user already consented at install).
+   * `rerunScript`: run the pack's install script again and install missing required packages (the user already
+   * consented at install). `install`: install one step's package (the button shows the exact command).
    * Replies `toolpackSetupState`, or `toolpackSetupError` with a message.
    */
-  | { type: 'toolpackSetupAction'; requestId?: string; id: string; action: 'markDone' | 'markTodo' | 'recheck' | 'open' | 'rerunScript'; stepId?: string };
+  | { type: 'toolpackSetupAction'; requestId?: string; id: string; action: 'markDone' | 'markTodo' | 'recheck' | 'open' | 'rerunScript' | 'install'; stepId?: string };
 
 export type ToolpackSetupReply =
   | { type: 'toolpackSetupState'; requestId?: string; setup: PackSetupState | null }

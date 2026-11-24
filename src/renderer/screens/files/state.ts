@@ -5,7 +5,29 @@
 import { createSignal } from 'solid-js';
 import { createStore, produce, reconcile } from 'solid-js/store';
 import { readPersisted, writePersisted } from '../../persist';
-import { engineEdits, listDir, onFileChanged, parentPath, readFile, type FileDocument, type FileEdit, type FileEntry } from './adapter';
+import { navigate } from '../../router';
+import type { SidebarProject } from '../../protocol';
+import {
+  baseName,
+  copyEntry,
+  createEntry,
+  deleteEntry,
+  importEntries,
+  renameEntry,
+  engineEdits,
+  filesProject,
+  listDir,
+  onEditorRequest,
+  onFileChanged,
+  parentPath,
+  readFile,
+  relativePath,
+  setFilesProject,
+  workspace,
+  type FileDocument,
+  type FileEdit,
+  type FileEntry,
+} from './adapter';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Folders
@@ -80,9 +102,65 @@ export interface OpenDocument extends FileDocument {
 const [documents, setDocuments] = createStore<Record<string, OpenDocument>>({});
 export { documents, setDocuments };
 
+/** A review diff the engine asked to show (`editorDiff`). Lives in a tab keyed `diff:<path>`; never persisted. */
+export interface DiffTab {
+  title: string;
+  /** Workspace-relative path the diff is about. */
+  path: string;
+  /** Base text (before the agent's edit). */
+  leftText: string;
+  /** Edited text. */
+  rightText: string;
+  leftLabel?: string;
+  rightLabel?: string;
+}
+
+const diffPrefix = 'diff:';
+
+/** Tab key of a path's diff tab. */
+export function diffKey(path: string): string {
+  return diffPrefix + path;
+}
+
+/** True when a tab key names a diff tab rather than a file. */
+export function isDiffKey(key: string | undefined): key is string {
+  return key !== undefined && key.startsWith(diffPrefix);
+}
+
+const [diffTabs, setDiffTabs] = createStore<Record<string, DiffTab>>({});
+export { diffTabs };
+
 function persistTabs(): void {
-  writePersisted('files.tabs', tabs());
-  writePersisted('files.active', activePath());
+  const fileTabs = tabs().filter(key => !isDiffKey(key));
+  const active = activePath();
+  writePersisted('files.tabs', fileTabs);
+  // A diff tab is gone after a restart, so the last file tab stands in for it.
+  writePersisted('files.active', isDiffKey(active) ? fileTabs[fileTabs.length - 1] : active);
+}
+
+/** Opens (or refreshes, when the path already has one) a diff tab. `activate` false only adds it. */
+export function openDiff(diff: DiffTab, activate = true): void {
+  const key = diffKey(diff.path);
+  setDiffTabs(key, reconcile({ ...diff }));
+  if (!tabs().includes(key)) setTabsSignal([...tabs(), key]);
+  if (activate) setActivePathSignal(key);
+  persistTabs();
+}
+
+/** A line range FilesEditor's Monaco scrolls to and selects once the file is shown, then clears. */
+export interface RevealRequest {
+  path: string;
+  startLine: number;
+  endLine: number;
+}
+
+const [reveal, setReveal] = createSignal<RevealRequest | undefined>();
+export { reveal, setReveal };
+
+/** Opens a file and asks the editor to reveal a line range in it (1-based, inclusive). */
+export function openFileAt(path: string, startLine?: number, endLine?: number): void {
+  openFile(path);
+  setReveal(startLine ? { path, startLine, endLine: Math.max(startLine, endLine ?? startLine) } : undefined);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -132,7 +210,8 @@ export function closeTab(path: string): void {
   unmarkTabDeleting(path);
   setTabsSignal(next);
   if (activePath() === path) setActivePathSignal(next[Math.min(index, next.length - 1)]);
-  setDocuments(produce(store => delete store[path]));
+  if (isDiffKey(path)) setDiffTabs(produce(store => delete store[path]));
+  else setDocuments(produce(store => delete store[path]));
   persistTabs();
 }
 
@@ -142,7 +221,7 @@ export function activateTab(path: string): void {
 }
 
 export async function loadDocument(path: string, force = false): Promise<void> {
-  if (!force && documents[path]) return;
+  if (isDiffKey(path) || (!force && documents[path])) return;
   try {
     const file = await readFile(path);
     setDocuments(path, reconcile({ ...file }));
@@ -156,6 +235,195 @@ export function setDraft(path: string, text: string): void {
   if (!document) return;
   setDocuments(path, 'draft', text === document.content ? undefined : text);
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Create, rename, delete (the tree's context menu and hover delete)
+
+/** True for `path` itself and anything inside it. */
+function within(key: string, path: string): boolean {
+  return key === path || key.startsWith(path + '/');
+}
+
+function joinPath(folder: string, name: string): string {
+  return folder ? `${folder}/${name}` : name;
+}
+
+/** Checks a typed name: one path segment per level, no `..`, nothing empty. Returns an error message or ''. */
+export function invalidEntryName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return 'Type a name.';
+  const parts = trimmed.replace(/\\/g, '/').split('/');
+  if (parts.some(part => !part || part === '.' || part === '..')) return 'That name is not a valid path.';
+  if (parts.some(part => /[<>:"|?*]/.test(part))) return 'Names cannot contain < > : " | ? *';
+  return '';
+}
+
+/** Creates `name` (may hold subfolders, "src/new.ts") in `folder`; opens a new file in a tab. */
+export async function createFileEntry(folder: string, name: string, kind: 'file' | 'dir'): Promise<string> {
+  const path = await createEntry(joinPath(folder, name.trim().replace(/\\/g, '/')), kind);
+  createdAt.set(path, performance.now());
+  // Open every folder on the way so the new row is visible.
+  const parents: string[] = [];
+  for (let parent = parentPath(path); parent; parent = parentPath(parent)) parents.unshift(parent);
+  for (const parent of parents) if (!openDirs().includes(parent)) setDirOpen(parent, true);
+  await Promise.all(['', ...parents].map(parent => loadDir(parent, true)));
+  if (kind === 'file') openFile(path);
+  else setDirOpen(path, true);
+  return path;
+}
+
+/** Renames an entry in place (same folder). Open tabs, folders and listings under it follow the new path. */
+export async function renameFileEntry(path: string, name: string): Promise<string> {
+  return moveFileEntry(path, joinPath(parentPath(path), name.trim()));
+}
+
+/** Moves an entry into another folder ('' = root), keeping its name. */
+export async function moveIntoFolder(path: string, folder: string): Promise<string> {
+  if (parentPath(path) === folder) return path;
+  if (within(folder, path)) throw new Error('A folder cannot move inside itself.');
+  const moved = await moveFileEntry(path, joinPath(folder, baseName(path)));
+  await revealInTree(moved);
+  return moved;
+}
+
+/** Copies an entry into a folder ('' = root); a taken name becomes "name copy". */
+export async function copyIntoFolder(path: string, folder: string): Promise<string> {
+  const copied = await copyEntry(path, folder);
+  createdAt.set(copied, performance.now());
+  await revealInTree(copied);
+  return copied;
+}
+
+/** Copies files dropped from the OS into a folder. */
+export async function importIntoFolder(sources: string[], folder: string): Promise<string[]> {
+  const copied = await importEntries(sources, folder);
+  for (const path of copied) createdAt.set(path, performance.now());
+  await revealInTree(copied[0] ?? joinPath(folder, 'x'));
+  return copied;
+}
+
+/** Opens the folders above `path` and refreshes their listings so its row shows. */
+async function revealInTree(path: string): Promise<void> {
+  const parents: string[] = [];
+  for (let parent = parentPath(path); parent; parent = parentPath(parent)) parents.unshift(parent);
+  for (const parent of parents) if (!openDirs().includes(parent)) setDirOpen(parent, true);
+  await Promise.all(['', ...parents].map(parent => loadDir(parent, true)));
+}
+
+/** Cut / copy clipboard of the tree (paths in this project). */
+const [clipboard, setClipboard] = createSignal<{ mode: 'cut' | 'copy'; paths: string[] } | undefined>();
+export { clipboard, setClipboard };
+
+export function isCut(path: string): boolean {
+  const current = clipboard();
+  return current?.mode === 'cut' && current.paths.includes(path);
+}
+
+/** Pastes the clipboard into a folder: copies, or moves after a cut (the clipboard then empties). */
+export async function pasteInto(folder: string): Promise<void> {
+  const current = clipboard();
+  if (!current) return;
+  if (current.mode === 'cut') setClipboard(undefined);
+  for (const path of current.paths) {
+    if (current.mode === 'copy') await copyIntoFolder(path, folder);
+    else await moveIntoFolder(path, folder);
+  }
+}
+
+/** Moves or renames an entry to `target` (project-relative). Open tabs, folders and listings follow it. */
+export async function moveFileEntry(path: string, target: string): Promise<string> {
+  if (target === path) return path;
+  const unsaved = tabs().filter(key => within(key, path) && documents[key]?.draft !== undefined);
+  if (unsaved.length) throw new Error(`Save or discard your changes in ${unsaved.join(', ')} first.`);
+  const renamed = await renameEntry(path, target);
+  const move = (key: string) => (within(key, path) ? renamed + key.slice(path.length) : key);
+  const nextTabs = tabs().map(move);
+  setDocuments(produce(store => {
+    for (const key of Object.keys(store)) {
+      if (!within(key, path)) continue;
+      store[move(key)] = { ...store[key], path: move(key) };
+      delete store[key];
+    }
+  }));
+  setTabsSignal(nextTabs);
+  if (activePath() && within(activePath()!, path)) setActivePathSignal(move(activePath()!));
+  persistTabs();
+  const dirs = openDirs().map(move);
+  setOpenDirsSignal(dirs);
+  writePersisted('files.openDirs', dirs);
+  setListings(produce(store => { for (const key of Object.keys(store)) if (within(key, path)) delete store[key]; }));
+  await Promise.all([...new Set([parentPath(path), parentPath(renamed)])].map(folder => loadDir(folder, true)));
+  for (const dir of dirs) if (within(dir, renamed)) void loadDir(dir, true);
+  return renamed;
+}
+
+/** Deletes an entry (OS trash when available). Its tabs close; unsaved text in them asks first. */
+export async function deleteFileEntry(path: string): Promise<boolean> {
+  const unsaved = tabs().filter(key => within(key, path) && documents[key]?.draft !== undefined);
+  if (unsaved.length && !window.confirm(`Discard unsaved changes in ${unsaved.join(', ')}?`)) return false;
+  await deleteEntry(path);
+  for (const key of tabs().filter(key => within(key, path) || within(key, diffKey(path)))) closeTab(key);
+  const dirs = openDirs().filter(dir => !within(dir, path));
+  setOpenDirsSignal(dirs);
+  writePersisted('files.openDirs', dirs);
+  setListings(produce(store => { for (const key of Object.keys(store)) if (within(key, path)) delete store[key]; }));
+  await loadDir(parentPath(path), true);
+  return true;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Project
+
+/**
+ * Shows another project folder. Paths are project-relative, so the previous project's folders, tabs and documents
+ * are dropped (tabs with unsaved text keep the switch from happening; returns false then).
+ */
+export function switchFilesProject(project: SidebarProject): boolean {
+  const current = filesProject()?.path ?? workspace().root;
+  const normal = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  if (current && normal(current) === normal(project.path)) return true;
+  const unsaved = tabs().filter(key => documents[key]?.draft !== undefined);
+  if (unsaved.length && !window.confirm(`Discard unsaved changes in ${unsaved.join(', ')}?`)) return false;
+  setFilesProject(project);
+  setTabsSignal([]);
+  setActivePathSignal(undefined);
+  persistTabs();
+  setDocuments(produce(store => { for (const key of Object.keys(store)) delete store[key]; }));
+  setDiffTabs(produce(store => { for (const key of Object.keys(store)) delete store[key]; }));
+  setListings(produce(store => { for (const key of Object.keys(store)) delete store[key]; }));
+  collapseAllDirs();
+  void loadDir('', true);
+  return true;
+}
+
+/** Diffs of one group arrive back-to-back; one arriving this soon after its group's last keeps the first active. */
+const groupWindow = 1500;
+
+let lastGroup: { id: string; at: number } | undefined;
+
+// The engine opens a file (optionally at a range) or a review diff: show it in the Files screen.
+onEditorRequest(request => {
+  navigate('files');
+  if (request.type === 'editorOpen') {
+    openFileAt(relativePath(request.path), request.startLine, request.endLine);
+    return;
+  }
+  const now = performance.now();
+  const sameGroup = request.group !== undefined && lastGroup?.id === request.group && now - lastGroup.at < groupWindow;
+  lastGroup = request.group !== undefined ? { id: request.group, at: now } : undefined;
+  const path = relativePath(request.path || request.rightPath || request.leftPath);
+  openDiff(
+    {
+      title: request.title,
+      path,
+      leftText: request.leftText,
+      rightText: request.rightText,
+      leftLabel: request.leftLabel,
+      rightLabel: request.rightLabel,
+    },
+    !sameGroup,
+  );
+});
 
 // An agent (or another editor) changed a file: refresh its folder and, when open and clean, its content.
 onFileChanged(change => {

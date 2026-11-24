@@ -5,7 +5,7 @@
  * Wiring guide (extension.ts owner):
  *   1. Once on activation, after chat state is restored:
  *        const shutdownController = createShutdownController({
- *          getActivity: () => ({ runningChats, runningSubagents, pendingApprovals, pendingQuestions, runningProcesses }),
+ *          getActivity: () => ({ runningChats, runningSubagents, pendingApprovals, pendingQuestions, runningProcesses, pendingScheduled }),
  *          onActivityChange: (listener) => subscribe(listener),  // call listener whenever any count may have changed; return unsubscribe
  *          saveState: () => saveAllChatAndWindowState(),          // flush everything to disk; a rejection aborts the shutdown
  *          notify: (title, body) => showDesktopNotification(title, body),
@@ -28,6 +28,8 @@ export interface ShutdownActivity {
   pendingApprovals: number;
   pendingQuestions: number;
   runningProcesses: number;
+  /** `/schedule` prompts for this project that have not been sent yet; they keep the PC on until they run. */
+  pendingScheduled: number;
 }
 
 export type ShutdownArmedMessage = { type: 'shutdownArmed'; armed: boolean };
@@ -121,7 +123,8 @@ export function isIdle(activity: ShutdownActivity): boolean {
     && activity.runningSubagents === 0
     && activity.pendingApprovals === 0
     && activity.pendingQuestions === 0
-    && activity.runningProcesses === 0;
+    && activity.runningProcesses === 0
+    && activity.pendingScheduled === 0;
 }
 
 function isWaitingOnUser(activity: ShutdownActivity): boolean {

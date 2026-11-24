@@ -130,7 +130,8 @@ type SidebarWebviewPayload =
   | { type: 'pickToolpack' }
   | { type: 'toolpackAction'; id: string; action: 'enable' | 'disable' | 'reload' | 'remove' }
   | { type: 'cancel' }
-  | { type: 'newSession'; project?: SidebarProject }
+  /** `noFolder` starts a chat outside any project, in its own empty scratch folder. */
+  | { type: 'newSession'; project?: SidebarProject; noFolder?: boolean }
   | { type: 'selectSession'; sessionId: string }
   | { type: 'renameSession'; sessionId: string; name: string }
   | { type: 'deleteSession'; sessionId: string }
@@ -349,10 +350,47 @@ export interface SidebarToolEvent {
   internal?: SidebarInternalTool;
   /** Unify (docs/contracts/media.md): images this call gave the agent. */
   media?: SidebarMedia[];
+  /** Unify (spec "Live edit preview in chat"): the change an edit call makes, updated while its input streams in. */
+  edit?: SidebarEditPreview;
+}
+
+/** One line of a live edit preview. Context lines carry both numbers, removed lines only oldLine, added lines only newLine. */
+export interface SidebarEditLine { kind: 'context' | 'removed' | 'added'; text: string; oldLine?: number; newLine?: number }
+
+/**
+ * Unify: what an edit tool call changes, computed by the engine from the call's input (streamed or complete)
+ * against the file as it was before the call. Several hunks are joined in `lines`; a `gap` entry is never sent,
+ * hunks are simply consecutive and the line numbers jump.
+ */
+export interface SidebarEditPreview {
+  /** Workspace-relative path with forward slashes (the first file when the call touches several). */
+  path: string;
+  /** Files the call touches (apply_patch, several MultiEdit targets); 1 for a single-file edit. */
+  files: number;
+  /** At most 3 context lines around each change; capped at 400 lines in total (the tail is dropped, `truncated` set). */
+  lines: SidebarEditLine[];
+  additions: number;
+  deletions: number;
+  /** True while the call's input is still arriving from the provider; the last added line may be partial. */
+  streaming: boolean;
+  truncated?: boolean;
+  /** The tool's error text when the edit failed (first ~300 chars). */
+  error?: string;
 }
 
 /** A subagent's tool call, shown like the main agent's tool rows. */
-export interface SidebarSubagentTool { title: string; detail?: string; full?: string; kind: SidebarToolEvent['kind']; internal?: SidebarInternalTool; media?: SidebarMedia[] }
+export interface SidebarSubagentTool {
+  title: string;
+  detail?: string;
+  full?: string;
+  kind: SidebarToolEvent['kind'];
+  internal?: SidebarInternalTool;
+  media?: SidebarMedia[];
+  /** Unify: set on edit calls (see SidebarToolEvent.edit). Later subagentEvents for the same messageId replace it. */
+  edit?: SidebarEditPreview;
+  /** Unify: the call's state; only sent for edit calls (other subagent tools have no completion event). */
+  state?: SidebarToolEvent['state'];
+}
 
 /** Unify: one code range the explorer returned (1-based, inclusive). Overlaps are merged, about 12 at most. */
 export interface SidebarExplorerRange { path: string; startLine: number; endLine: number; why?: string }
@@ -366,7 +404,11 @@ export interface SidebarSubagent {
   state: 'running' | 'complete' | 'error' | 'cancelled';
   /** Started with delegate_task: Unify reports its final state, and it can outlive its parent's turn, so cancelling that turn does not mark it cancelled. */
   delegated?: boolean;
-  messages: { id: string; role: 'assistant' | 'tool'; text: string; tool?: SidebarSubagentTool; media?: SidebarMedia[] }[];
+  /**
+   * 'user' rows are agent messages sent to this subagent (send_message), shown as incoming bubbles.
+   * `from` names the sender when it is not the subagent's own parent.
+   */
+  messages: { id: string; role: 'assistant' | 'tool' | 'user'; text: string; from?: string; tool?: SidebarSubagentTool; media?: SidebarMedia[] }[];
   /** Unify: the delegate profile name. 'explorer' renders as an inline "Explored" row (no tab, strip, roster badge or subagent count). */
   profile?: string;
   /** Unify, explorer only: the ranges parsed from its answer, set when it completes. */
@@ -409,6 +451,8 @@ export type SidebarTimelineItem =
 
 type SidebarHostPayload =
   | { type: 'timelineState'; sessionId: string; timeline: SidebarTimelineItem[]; subagents: Record<string, SidebarSubagent> }
+  /** Reply to `loadChat`: everything held for the chat has been sent (possibly nothing, for an empty chat). */
+  | { type: 'chatLoaded'; sessionId: string }
   | { type: 'sessionState'; sessions: SidebarSession[]; activeSessionId?: string }
   | { type: 'sessionDeleted'; sessionId: string }
   | { type: 'queueState'; sessionId: string; items: string[] }
@@ -455,9 +499,11 @@ type SidebarHostPayload =
   | { type: 'runState'; sessionId: string; state: 'idle' | 'thinking' | 'tool' | 'cancelling'; label?: string }
   | { type: 'toolEvent'; event: SidebarToolEvent; sessionId?: string; entryId?: string }
   | { type: 'toolState'; tools: SidebarToolEvent[] }
-  | { type: 'subagentEvent'; sessionId: string; agentId: string; title?: string; model?: string; prompt?: string; files?: string[]; state?: SidebarSubagent['state']; delegated?: boolean; text?: string; messageId?: string; role?: 'assistant' | 'tool'; tool?: SidebarSubagentTool; media?: SidebarMedia[]; sentToParent?: SidebarMedia[]; profile?: string; ranges?: SidebarExplorerRange[]; tokens?: number }
+  | { type: 'subagentEvent'; sessionId: string; agentId: string; title?: string; model?: string; prompt?: string; files?: string[]; state?: SidebarSubagent['state']; delegated?: boolean; text?: string; messageId?: string; role?: 'assistant' | 'tool' | 'user'; from?: string; tool?: SidebarSubagentTool; media?: SidebarMedia[]; sentToParent?: SidebarMedia[]; profile?: string; ranges?: SidebarExplorerRange[]; tokens?: number }
   | { type: 'diff'; diff: SidebarDiff }
   | { type: 'diffState'; diffs: SidebarDiff[] }
+  /** Unify: one chat's edits (applied ones stay until kept or undone), for that chat's changes bar. */
+  | { type: 'chatDiffState'; sessionId: string; diffs: SidebarDiff[] }
   /** A message another agent sent to the agent of the chat named by chatId. */
   | { type: 'agentMessage'; chatId: string; message: AgentMessage }
   /** The roster of running agents changed; every chat pane sees the same list. */
@@ -474,7 +520,12 @@ type SidebarHostPayload =
    * Backs `vscode.window.showTextDocument` and `vscode.diff` in the shim.
    */
   | { type: 'editorOpen'; path: string; startLine?: number; endLine?: number }
-  | { type: 'editorDiff'; title: string; leftPath: string; rightPath: string; leftLabel?: string; rightLabel?: string }
+  /**
+   * `path` is the file the diff is about (absolute, or workspace-relative for a review of an edit not applied yet).
+   * `leftText` / `rightText` are the two sides' contents; the shim always sends them, so sides with no file on disk
+   * (Unify review URIs) still show. `group` is set when several diffs open together (Review all): same group, one view.
+   */
+  | { type: 'editorDiff'; title: string; path: string; leftPath: string; rightPath: string; leftText: string; rightText: string; leftLabel?: string; rightLabel?: string; group?: string }
   /**
    * Unify: long-running work the user started outside a chat (agent runtime update, toolpack setup script),
    * shown in the notice row. Backs `vscode.window.withProgress` in the shim. One `id` per task: `running`
@@ -513,6 +564,8 @@ export interface SidebarViewState {
   tools: SidebarToolEvent[];
   subagents: Record<string, Record<string, SidebarSubagent>>;
   diffs: SidebarDiff[];
+  /** Unify: each loaded chat's edits, keyed by session id (chatDiffState). */
+  chatDiffs?: Record<string, SidebarDiff[]>;
   runStates: Record<string, { state: 'idle' | 'thinking' | 'tool' | 'cancelling'; label?: string }>;
   queues: Record<string, string[]>;
   approvalMode: ApprovalMode;

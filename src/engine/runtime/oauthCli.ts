@@ -1,4 +1,5 @@
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { OAuthCliAccount, cliCommand, cliEnv } from '../accounts/oauthCli';
 import { canDelegate, delegationInstructions, isNativeSubagentTool } from './delegation';
@@ -8,6 +9,10 @@ import { isLimitNotice, isUsageLimitText, UsageLimitError } from './limits';
 import { agentEnv } from './agentShell';
 import { applyAgentPriority } from './priority';
 import { CLAUDE_MULTI_AGENT_TOOLS, CLAUDE_NATIVE_AGENT_TOOLS, nativeAgentsBlocked } from './nativeAgents';
+import { errorText as toolErrorText, isEditTool, parsePartialJson } from './editPreview';
+
+/** Streamed edit input is parsed and reported at most this often per call. */
+const TOOL_INPUT_INTERVAL_MS = 50;
 
 export interface CliTurn {
   account: OAuthCliAccount;
@@ -31,6 +36,12 @@ export interface CliTurn {
   onRateLimit?: (info: unknown) => void;
   /** Drop built-in Claude tools that cannot work inside Unify or that Unify replaces (TRIMMED_CLAUDE_TOOLS). */
   trimTools?: boolean;
+  /**
+   * A read-only explorer: a short system prompt instead of Claude Code's, only Read / Grep / Glob plus the Unify
+   * bridge, and no skills, slash commands, CLAUDE.md, auto-memory or other MCP servers. Unify's brief already
+   * carries the memory and summary notes, so a cold start costs a few thousand tokens instead of tens of thousands.
+   */
+  explorer?: boolean;
   /** Reports token usage once per Claude result event. Errors thrown here are ignored. */
   onUsage?(usage: TurnUsage): void;
   /** Prompt size of each main-conversation request as it is made (input + cached). Errors thrown here are ignored. */
@@ -45,7 +56,19 @@ export interface CliTurn {
   onText(text: string): void;
   /** The model started a new message; text after this must not be joined to earlier text. */
   onMessageBreak?(): void;
-  onTool(id: string, title: string, detail: string | undefined, state: 'running' | 'complete' | 'error'): void;
+  /** `error` is the tool's error text when state is 'error' (Claude's tool_result content). */
+  onTool(id: string, title: string, detail: string | undefined, state: 'running' | 'complete' | 'error', error?: string): void;
+  /**
+   * A finished tool call of the agent itself returned images (Read of an image file, screenshots): `content` is the
+   * tool_result's raw content array. Errors thrown here are ignored.
+   */
+  onToolImages?(id: string, title: string, content: unknown[]): void;
+  /**
+   * Live edit preview: an edit call's input while it streams (`streaming`, parsed from the partial JSON, at most every
+   * TOOL_INPUT_INTERVAL_MS) and once more when it is complete, before onTool reports it running. Only edit tools
+   * (editPreview.isEditTool) of the agent itself, not of Claude's own subagents. Errors thrown here are ignored.
+   */
+  onToolInput?(event: { id: string; name: string; input: Record<string, unknown>; streaming: boolean }): void;
   onSubagent?(event: { id: string; title?: string; model?: string; prompt?: string; state?: 'running' | 'complete' | 'error'; text?: string; messageId?: string; role?: 'assistant' | 'tool' }): void;
   onApproval?(description: string, info?: { tool: string; input: Record<string, unknown>; autoAllowEdits?: boolean }): Promise<boolean | string>;
   /** Shows Claude's AskUserQuestion in the chat. Resolves to answers keyed by question text, or a message explaining why there are none. */
@@ -86,7 +109,22 @@ export const TRIMMED_CLAUDE_TOOLS = [
   // Cards and pages that only claude.ai shows; Unify's chat cannot display them (it has send_media for files).
   'SendUserFile', 'ReportFindings', 'ShowOnboardingRolePicker', 'ReadNotifications', 'Artifact', 'ArtifactComments', 'ArtifactData', 'DesignSync',
   'SuggestConnectors', 'SuggestPluginInstall', 'SuggestSkills',
+  // Phone notifications, cloud triggers and messages to other projects reach outside the Unify chat.
+  'PushNotification', 'RemoteTrigger', 'SendToProject', 'SendToProjectContext',
 ];
+
+/** Built-in tools a lean explorer keeps (CliTurn.explorer). */
+export const EXPLORER_CLAUDE_TOOLS = ['Read', 'Grep', 'Glob'];
+
+/** System text for a lean explorer, which replaces Claude Code's whole system prompt. */
+export function explorerSystem(cwd: string, extra?: string): string {
+  return [
+    `You are a read-only code explorer. You work in ${cwd} (${process.platform}). Never modify, create or delete files.`,
+    'Use Read, Grep and Glob, and the Unify tools when they fit (batch several reads or searches into one call; file summaries before whole files).',
+    'Answer exactly what the task asks, concisely, with file:line references. Do not guess: say what you could not find.',
+    extra?.trim() ?? '',
+  ].filter(Boolean).join('\n');
+}
 
 /** System text for lean one-shots, which replaces Claude Code's whole system prompt. */
 export const LEAN_SYSTEM = 'Reply with only what the request asks for. Do not use tools.';
@@ -134,6 +172,23 @@ export function claudeArgs(turn: CliTurn): string[] {
     ];
   }
   const bridge = turn.delegate ? ['--mcp-config', JSON.stringify({ mcpServers: { unify: turn.delegate } }), '--allowedTools', 'mcp__unify'] : [];
+  if (turn.explorer) {
+    // Not --safe-mode: it also drops --mcp-config servers, and with them the Unify bridge.
+    return [
+      '--print', ...claudeSpeedSettings(turn.speed),
+      '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+      '--permission-prompt-tool', 'stdio',
+      '--tools', EXPLORER_CLAUDE_TOOLS.join(','),
+      '--strict-mcp-config', ...bridge,
+      '--disable-slash-commands',
+      '--system-prompt', explorerSystem(turn.cwd, turn.system),
+      '--include-partial-messages',
+      '--permission-mode', 'default',
+      ...effort,
+      ...model,
+      ...(turn.sessionId ? ['--resume', turn.sessionId] : []),
+    ];
+  }
   const disallowedTools = disallowedClaudeTools(turn);
   return [
     '--print', ...claudeSpeedSettings(turn.speed),
@@ -170,8 +225,48 @@ export const NO_IDLE_LIMIT_MS = 10 * 60_000;
 function claudeEnv(turn: CliTurn): NodeJS.ProcessEnv {
   const ttl = turn.cacheTtl ?? (turn.lean ? '5m' : undefined);
   // Session state events (idle / running / requires_action) tell Unify when closing stdin can no longer cut off a permission request.
-  const env = { ...agentEnv(cliEnv(turn.account)), CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1' };
+  const env: NodeJS.ProcessEnv = {
+    ...agentEnv(cliEnv(turn.account)),
+    CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1',
+    // claude.ai connectors (Claude Docs and the like) add their instructions and tool schemas to every request and
+    // have no use inside Unify, which brings its own tools over the Unify bridge.
+    ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
+    // A lean explorer gets its memory and summary notes in Unify's brief; Claude Code's own copies would repeat them.
+    ...(turn.explorer ? { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: '1' } : {}),
+  };
   return ttl ? { ...env, CLAUDE_CODE_PROMPT_CACHE_TTL: ttl } : env;
+}
+
+/** Image types the Claude API accepts as inline image blocks. */
+const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+/** Largest attachment sent inline; the API rejects images over 5 MB. Bigger ones are passed as paths to Read. */
+const INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * The user message content for a turn. Attached images go inline as base64 image blocks, so the model sees them
+ * without first spending a request on Read; an image that cannot go inline is listed as a path instead.
+ */
+export function userContent(prompt: string, images: CliTurn['images']): unknown[] {
+  const blocks: unknown[] = [];
+  const inlined: string[] = [];
+  const byPath: string[] = [];
+  for (const image of images ?? []) {
+    const mediaType = image.mimeType === 'image/jpg' ? 'image/jpeg' : image.mimeType;
+    let data: Buffer | undefined;
+    if (INLINE_IMAGE_TYPES.has(mediaType)) {
+      try { data = readFileSync(image.path); } catch { data = undefined; }
+    }
+    if (data && data.length <= INLINE_IMAGE_BYTES) {
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: data.toString('base64') } });
+      inlined.push(image.path);
+    } else byPath.push(image.path);
+  }
+  const notes = [
+    inlined.length ? `Attached images (shown above; saved at):\n${inlined.join('\n')}` : '',
+    byPath.length ? `Attached images (view these files):\n${byPath.join('\n')}` : '',
+  ].filter(Boolean);
+  blocks.push({ type: 'text', text: notes.length ? `${prompt}\n\n${notes.join('\n\n')}` : prompt });
+  return blocks;
 }
 
 /** Runs one Claude Code turn as `claude --print` with stream-json input and output. */
@@ -202,6 +297,11 @@ export class ClaudeCliRuntime {
       const subagentTools = new Set<string>();
       const subagentText = new Map<string, string>();
       const subagentMessages = new Map<string, Map<string, string>>();
+      // Live edit preview: the agent's own edit calls whose input is streaming, keyed by content block index.
+      const streamingEdits = new Map<number, { id: string; name: string; json: string; reportedAt: number }>();
+      const reportToolInput = (id: string, name: string, input: Record<string, unknown>, streaming: boolean): void => {
+        try { turn.onToolInput?.({ id, name, input, streaming }); } catch { /* Callback errors must not interrupt the turn. */ }
+      };
       // Claude asks permission over stdin, and once stdin has ended every request fails with "Stream closed".
       // It can keep working after a result: background tasks finish and continue the turn, and a resumed session
       // can report a result before it reads the new message. So stdin stays open until Claude reports it is idle
@@ -367,7 +467,25 @@ export class ClaudeCliRuntime {
             const source = parentToolId || 'root';
             if (stream?.type === 'message_start') {
               currentClaudeMessages.set(source, String((stream.message as Record<string, unknown> | undefined)?.id || ''));
-              if (!parentToolId) turn.onMessageBreak?.();
+              if (!parentToolId) { turn.onMessageBreak?.(); streamingEdits.clear(); }
+            }
+            if (!parentToolId && turn.onToolInput && typeof stream?.index === 'number') {
+              const block = stream.content_block as Record<string, unknown> | undefined;
+              if (stream.type === 'content_block_start' && block?.type === 'tool_use' && isEditTool(String(block.name || ''))) {
+                streamingEdits.set(stream.index, { id: String(block.id || ''), name: String(block.name), json: '', reportedAt: 0 });
+              } else if (stream.type === 'content_block_delta' && delta?.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
+                const edit = streamingEdits.get(stream.index);
+                if (edit) {
+                  edit.json += delta.partial_json;
+                  const now = Date.now();
+                  if (now - edit.reportedAt >= TOOL_INPUT_INTERVAL_MS) {
+                    const input = parsePartialJson(edit.json);
+                    if (input) { edit.reportedAt = now; reportToolInput(edit.id, edit.name, input, true); }
+                  }
+                }
+              } else if (stream.type === 'content_block_stop') {
+                streamingEdits.delete(stream.index);
+              }
             }
             if (stream?.type === 'content_block_delta' && delta?.type === 'text_delta' && typeof delta.text === 'string') {
               const messageId = currentClaudeMessages.get(source) || 'stream';
@@ -402,7 +520,10 @@ export class ClaudeCliRuntime {
                   turn.onSubagent?.({ id, title: String(input.description || input.name || 'Subagent'), prompt: typeof input.prompt === 'string' ? input.prompt : undefined,
                     model: typeof input.model === 'string' ? input.model : turn.backend, state: 'running' });
                 } else if (parentToolId) turn.onSubagent?.({ id: parentToolId, text: `${title}${Object.keys(input).length ? `: ${JSON.stringify(input).slice(0, 500)}` : ''}`, messageId: `tool:${id}`, role: 'tool' });
-                else turn.onTool(id, title, block.input && typeof block.input === 'object' ? JSON.stringify(block.input).slice(0, 500) : undefined, 'running');
+                else {
+                  if (isEditTool(title)) reportToolInput(id, title, input, false);
+                  turn.onTool(id, title, block.input && typeof block.input === 'object' ? JSON.stringify(block.input).slice(0, 500) : undefined, 'running');
+                }
               }
             }
           }
@@ -418,7 +539,15 @@ export class ClaudeCliRuntime {
                 const seen = subagentText.get(block.tool_use_id) || '';
                 const duplicate = !cleaned || seen.includes(cleaned);
                 turn.onSubagent?.({ id: block.tool_use_id, state: block.is_error ? 'error' : 'complete', ...(duplicate ? {} : { text: cleaned, messageId: 'result' }) });
-              } else if (!parentToolId) turn.onTool(block.tool_use_id, toolNames.get(block.tool_use_id) || 'Claude tool', undefined, block.is_error ? 'error' : 'complete');
+              } else if (!parentToolId) {
+                const title = toolNames.get(block.tool_use_id) || 'Claude tool';
+                turn.onTool(block.tool_use_id, title, undefined, block.is_error ? 'error' : 'complete',
+                  block.is_error ? toolErrorText(block.content) : undefined);
+                const content = Array.isArray(block.content) ? block.content as Record<string, unknown>[] : [];
+                if (!block.is_error && content.some(item => item?.type === 'image')) {
+                  try { turn.onToolImages?.(block.tool_use_id, title, content); } catch { /* Callback errors must not interrupt the turn. */ }
+                }
+              }
             }
           }
           if (event.type === 'result') {
@@ -445,9 +574,8 @@ export class ClaudeCliRuntime {
       child.on('close', closed);
       // 'close' waits for every holder of the output pipes; a process Claude left behind can hold them open, so the exit alone ends the turn soon after.
       child.on('exit', code => { setTimeout(() => closed(code), 3_000).unref(); });
-      const text = turn.images?.length ? `${turn.prompt}\n\nAttached images (view these files):\n${turn.images.map(image => image.path).join('\n')}` : turn.prompt;
       child.stdin.on('error', () => undefined);
-      child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } }) + '\n');
+      child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: userContent(turn.prompt, turn.images) } }) + '\n');
     });
   }
 }

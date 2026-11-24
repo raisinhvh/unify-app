@@ -969,6 +969,24 @@ function installIpc(): void {
     const picked = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], title: 'Open project folder' });
     return picked.canceled ? undefined : picked.filePaths[0];
   });
+  // Files screen "Delete": moves a project entry to the OS trash / Recycle Bin, so it can be restored.
+  const projectItem = (root: unknown, relative: unknown): string => {
+    if (typeof root !== 'string' || typeof relative !== 'string' || !root || !relative) throw new Error('Invalid path.');
+    const parts = relative.replace(/\\/g, '/').split('/').filter(Boolean);
+    if (!parts.length || parts.some(part => part === '..' || part.includes(':')) || relative.includes('\0')) throw new Error('Invalid path.');
+    const base = resolve(root);
+    const target = resolve(base, ...parts);
+    if (!target.startsWith(base + sep)) throw new Error('Invalid path.');
+    if (!existsSync(target)) throw new Error(`Nothing at ${relative}.`);
+    return target;
+  };
+  ipcMain.handle('unify:trash-item', async (_event, root: unknown, relative: unknown) => {
+    await shell.trashItem(projectItem(root, relative));
+  });
+  // Files screen "Reveal in File Explorer": opens the OS file manager with the entry selected.
+  ipcMain.handle('unify:reveal-item', (_event, root: unknown, relative: unknown) => {
+    shell.showItemInFolder(projectItem(root, relative));
+  });
   ipcMain.on('unify:set-project', (_event, nextPath: unknown) => {
     if (typeof nextPath !== 'string' || !nextPath) return;
     writeJson(windowStatePath, { ...savedWindowState, project: resolve(nextPath) });

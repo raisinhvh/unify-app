@@ -28,7 +28,30 @@ export const SEND_MEDIA_TOOL: DelegateToolInfo = {
   },
 };
 
-export const MEDIA_INSTRUCTIONS = `Unify media: ${SEND_MEDIA} shows a file (screenshot, render, video, audio, other) in the chat.`;
+export const MEDIA_INSTRUCTIONS = `To show the user an image, use ${SEND_MEDIA}; never just give its path or a link to where it is saved.`;
+
+const IMAGE_EXTENSIONS = 'png|jpe?g|webp|gif|bmp|avif';
+
+/**
+ * Local image paths a reply mentions: markdown links and images, `code` spans and bare paths.
+ * Web URLs are left out; file:// URLs become paths. Order is kept and duplicates dropped.
+ */
+export function linkedImagePaths(text: string): string[] {
+  // Markdown link targets may hold spaces (`[x](<a b.png>)` or `[x](a b.png)`); bare paths and code spans may not.
+  const linkPattern = new RegExp(`\\]\\(<?([^()<>\\n]+?\\.(?:${IMAGE_EXTENSIONS}))>?\\)`, 'gi');
+  const barePattern = new RegExp(`(?:\`|^|[\\s"'(<])((?:file:\\/\\/\\/?)?[^\\s\`"'()<>\\[\\]]+\\.(?:${IMAGE_EXTENSIONS}))(?=$|[\\s\`"')>.,;:!?])`, 'gim');
+  const paths: string[] = [];
+  const add = (raw: string): void => {
+    let path = raw.trim();
+    if (/^file:\/\//i.test(path)) path = decodeURIComponent(path.replace(/^file:\/\/\/?/i, ''));
+    else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path)) return;
+    if (path && !paths.includes(path)) paths.push(path);
+  };
+  for (const match of text.matchAll(linkPattern)) add(match[1]);
+  // Link targets are blanked out first, so a target with spaces is not read again in pieces.
+  for (const match of text.replace(linkPattern, '] ').matchAll(barePattern)) add(match[1]);
+  return paths;
+}
 
 /**
  * TODO 2e ("show your work, no duplicate visuals"), added to the agent prompt only while

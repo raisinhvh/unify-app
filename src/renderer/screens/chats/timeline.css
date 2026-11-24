@@ -23,6 +23,16 @@
   color: var(--text3);
 }
 
+/* Shown while a restored chat's history is on its way (store requestChatHistory). */
+.feed-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: auto;
+  color: var(--text3);
+  transform-origin: center;
+}
+
 .feed-entry {
   min-width: 0;
 }
@@ -39,6 +49,12 @@
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* A subagent's incoming message from an agent other than its parent. */
+.bubble-from {
+  margin-bottom: 2px;
+  color: var(--text3);
 }
 
 .bubble.user.editing {
@@ -570,12 +586,33 @@
   white-space: nowrap;
 }
 
+/* Pinned to the top of the scroller, so the way back to the parent chat never scrolls away. */
 .subagent-back {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
+  flex: none;
   gap: 8px;
-  height: 28px;
+  height: 36px;
+  /* Bleeds to the feed's edges so scrolled content never peeks past it; the top margin cancels the feed padding. */
+  margin: -16px -20px auto;
+  padding: 0 20px;
   color: var(--text2);
+  background: var(--bg);
+}
+
+/* A short fade under the bar, so content slides beneath it instead of being cut off. */
+.subagent-back::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 12px;
+  background: linear-gradient(var(--bg), transparent);
+  pointer-events: none;
 }
 
 .subagent-back:hover {

@@ -15,11 +15,16 @@ import { unifyHome } from '../engine/unify/settings';
 
 const MEDIA_SCHEME = 'unify-media';
 
-// Raster images and audio/video only: SVG, HTML and anything else is served as a download, so it
-// can never run as an active document in the renderer.
+// Raster images and audio/video. SVG is served too, but locked down (SVG_HEADERS): in `<img>` it can
+// never run script, and opened on its own the CSP blocks script and every outside load. HTML and
+// anything else is served as a download, so it can never run as an active document in the renderer.
 const SAFE_IMAGE_TYPES = new Set([
-  'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/avif', 'image/bmp',
+  'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/avif', 'image/bmp', 'image/x-icon',
 ]);
+const SVG_TYPE = 'image/svg+xml';
+const SVG_HEADERS = {
+  'content-security-policy': "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:",
+} as const;
 const SAFE_MEDIA_TYPES = new Set([
   'video/mp4', 'video/webm', 'video/quicktime', 'video/ogg',
   'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/flac', 'audio/aac',
@@ -58,6 +63,7 @@ function notFound(): Response {
 function safeContentType(mimeType: string): string | undefined {
   const type = (mimeType || '').split(';')[0].trim().toLowerCase();
   if (SAFE_IMAGE_TYPES.has(type)) return type === 'image/jpg' ? 'image/jpeg' : type;
+  if (type === SVG_TYPE) return SVG_TYPE;
   return SAFE_MEDIA_TYPES.has(type) ? type : undefined;
 }
 
@@ -65,6 +71,7 @@ function responseFor(bytes: Buffer, mimeType: string): Response {
   const contentType = safeContentType(mimeType);
   const headers: Record<string, string> = {
     ...SECURITY_HEADERS,
+    ...(contentType === SVG_TYPE ? SVG_HEADERS : {}),
     'content-type': contentType || 'application/octet-stream',
     'content-length': String(bytes.length),
     // Media is immutable once stored under its content hash.

@@ -143,6 +143,8 @@ export function AddModelForm(props: AddModelFormProps): JSX.Element {
     on(
       () => `${props.account.id}:${props.model?.name || ''}`,
       () => {
+        // A rename's modelState lands before modelSaved and drops the old name; keep waiting for the ack.
+        if (saving()) return;
         resetForm();
       },
       { defer: true },

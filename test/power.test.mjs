@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { build } from 'esbuild';
 
-// Every test injects settings, timers and exec: nothing touches ~/.dsh/unify/settings.json and no
+// Every test injects settings, timers and exec: nothing touches ~/.unify/settings.json and no
 // real shutdown command ever runs.
 const bundled = await build({
   entryPoints: ['src/engine/unify/power.ts'],
@@ -87,7 +87,7 @@ function createFakeSettings(initial = {}) {
   };
 }
 
-const IDLE = { runningChats: 0, runningSubagents: 0, pendingApprovals: 0, pendingQuestions: 0, runningProcesses: 0 };
+const IDLE = { runningChats: 0, runningSubagents: 0, pendingApprovals: 0, pendingQuestions: 0, runningProcesses: 0, pendingScheduled: 0 };
 
 const WINDOWS_SHUTDOWN = { file: `${process.env.SystemRoot ?? 'C:\\Windows'}\\System32\\shutdown.exe`, args: ['/s', '/t', '0'] };
 
@@ -159,6 +159,19 @@ test('power: arming posts shutdownArmed and waits while work runs', async () => 
   await harness.timers.advance(120_000);
   assert.equal(harness.controller.getStatus().phase, 'waiting');
   assert.equal(harness.execCalls.length, 0);
+});
+
+test('power: a pending scheduled prompt keeps the PC on until it has run', async () => {
+  const harness = setup({ activity: { ...IDLE, pendingScheduled: 1 } });
+  harness.arm();
+  await harness.timers.advance(120_000);
+  assert.equal(harness.controller.getStatus().phase, 'waiting');
+  harness.setActivity({ runningChats: 1 });
+  await harness.timers.advance(120_000);
+  assert.equal(harness.controller.getStatus().phase, 'waiting');
+  harness.setActivity({});
+  await harness.timers.advance(5000);
+  assert.equal(harness.controller.getStatus().phase, 'countdown');
 });
 
 test('power: idle must hold for the debounce before the countdown starts', async () => {

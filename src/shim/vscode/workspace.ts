@@ -160,6 +160,19 @@ export function getTextDocument(uri: Uri): TextDocument {
   return document;
 }
 
+/**
+ * Current text behind a URI, read fresh (not from the open-document cache): a file's content on disk, or what the
+ * scheme's content provider answers now. '' when neither has it.
+ */
+export async function readUriText(uri: Uri): Promise<string> {
+  if (uri.scheme === 'file') {
+    try { return readFileSync(uri.fsPath, 'utf8'); } catch { return ''; }
+  }
+  const provider = contentProviders.get(uri.scheme);
+  if (!provider) return '';
+  try { return String(await provider.provideTextDocumentContent(uri) ?? ''); } catch { return ''; }
+}
+
 export async function openTextDocument(uriOrPath: Uri | string): Promise<TextDocument> {
   return getTextDocument(typeof uriOrPath === 'string' ? Uri.file(uriOrPath) : uriOrPath);
 }
@@ -169,12 +182,17 @@ function globToRegExp(glob: string): RegExp {
   if (pattern.startsWith('**/')) pattern = pattern.slice(3);
   if (pattern.startsWith('./')) pattern = pattern.slice(2);
   const body = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\{([^}]+)\}/g, (_match, group: string) => `(?:${group.split(',').join('|')})`)
+    // Braces stay unescaped so the next step can expand "{a,b}" groups.
+    .replace(/[.+^$()|[\]\\]/g, '\\$&')
+    // Placeholders keep the group's "(?:" and "|" away from the "?" and "*" steps below.
+    .replace(/\{([^}]+)\}/g, (_match, group: string) => `\u0001${group.split(',').join('\u0003')}\u0002`)
     .replace(/\*\*/g, '\u0000')
     .replace(/\*/g, '[^/]*')
     .replace(/\?/g, '[^/]')
-    .replace(/\u0000/g, '.*');
+    .replace(/\u0000/g, '.*')
+    .replace(/\u0001/g, '(?:')
+    .replace(/\u0002/g, ')')
+    .replace(/\u0003/g, '|');
   return new RegExp(`^${body}$`, 'i');
 }
 

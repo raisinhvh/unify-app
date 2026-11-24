@@ -8,7 +8,7 @@
 import { createSignal } from 'solid-js';
 import { post } from '../../bridge';
 import { readPersisted, writePersisted } from '../../persist';
-import type { HubInstallMessage, HubInstallResultMessage, SidebarWebviewMessage } from '../../protocol';
+import type { HubInstallMessage, HubInstallPackage, HubInstallResultMessage, SidebarWebviewMessage } from '../../protocol';
 import { onHostMessage } from '../../store';
 import { feature } from '../../store/features';
 import { applySetup } from '../toolpacks/setup';
@@ -82,8 +82,13 @@ export type HubReply =
 export interface ScriptConsent {
   id: string;
   target: HubInstallTarget;
+  /** Empty when the pack only installs packages. */
   scriptName: string;
   scriptText: string;
+  /** Empty when the pack has nothing to undo on removal. */
+  uninstallScriptName: string;
+  uninstallScriptText: string;
+  packages: HubInstallPackage[];
 }
 
 /** Whether the Hub shows at all (`toolpacks.hub`). Nav entries and the panel's Hub folder check this. */
@@ -138,7 +143,15 @@ function applyInstallResult(result: HubInstallResultMessage): void {
   pendingTargets.delete(result.id);
   if (result.needsScriptConsent) {
     setInstall(result.id, undefined);
-    setScriptConsent({ id: result.id, target, scriptName: result.scriptName ?? 'Install script', scriptText: result.scriptText ?? '' });
+    setScriptConsent({
+      id: result.id,
+      target,
+      scriptName: result.scriptName ?? '',
+      scriptText: result.scriptText ?? '',
+      uninstallScriptName: result.uninstallScriptName ?? '',
+      uninstallScriptText: result.uninstallScriptText ?? '',
+      packages: result.packages ?? [],
+    });
     return;
   }
   if (result.ok) {

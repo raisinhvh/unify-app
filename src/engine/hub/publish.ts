@@ -4,7 +4,7 @@
  * Flow:
  *   1. Verify the signed-in GitHub login is listed in `publishers.json`.
  *   2. Let the user pick an installed pack from `storage/toolpacks`.
- *   3. Compile and validate `pack.ts` as a runnable toolpack, assemble its README and optional install scripts,
+ *   3. Compile and validate `pack.ts` as a runnable toolpack, assemble its README and optional (un)install scripts,
  *      and run a safety scan for secrets, emails and absolute user paths.
  *   4. Read the current `index.json`, compute the next version, and ask the user to confirm the exact file list.
  *   5. Create one commit on `publish/<id>-<version>` via the GitHub Git Data API (blobs, tree, commit, ref)
@@ -17,13 +17,14 @@ import * as vm from 'node:vm';
 import { TOOLPACK_NAME, TOOLPACK_SYNC_FILE } from '../toolpacks/types';
 import type { GithubAuth } from '../unify/github';
 import { publishAccessError, PUBLISH_SIGNED_OUT } from './publishing';
+import { PACK_SCRIPT_NAMES } from './scripts';
 import { HubPack, HubPickItem, HubPublishOptions, HubPublishResult } from './types';
 
 export const HUB_REPOSITORY = 'raisinhvh/unify-hub';
 export const HUB_BRANCH = 'main';
 export const HUB_PUBLISHERS_URL = `https://raw.githubusercontent.com/${HUB_REPOSITORY}/${HUB_BRANCH}/publishers.json`;
 const REQUEST_TIMEOUT = 15_000;
-const SCRIPT_NAMES = ['install.js', 'install.ps1', 'install.sh'];
+const SCRIPT_NAMES = PACK_SCRIPT_NAMES;
 const HUB_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SEMVER_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
 

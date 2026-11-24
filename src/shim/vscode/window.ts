@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { Disposable, EventEmitter } from './events';
 import { appendLog, nativeUi, outputChannel, onDidChangeWindowState, postToRenderer, registerWebviewViewProvider, requestUi, showDesktopNotification } from './host';
 import { Position, Range, Selection, Uri } from './uri';
-import { onDidSaveTextDocument, openTextDocument, TextDocument, workspace } from './workspace';
+import { onDidSaveTextDocument, openTextDocument, readUriText, TextDocument, workspace } from './workspace';
 import { settingsSnapshot, shimPaths } from './state';
 import {
   TabInputText, activeTextEditor, createEditor, onDidChangeActiveTextEditor, onDidChangeTextEditorSelection,
@@ -280,11 +280,29 @@ export const commandRegistry = {
   },
 };
 
-function diffPath(value: unknown): string | undefined {
-  if (value instanceof Uri) return value.scheme === 'file' ? value.fsPath : undefined;
-  if (typeof value !== 'string' || !value) return undefined;
-  const uri = Uri.parse(value);
-  return uri.scheme === 'file' ? uri.fsPath : undefined;
+function diffUri(value: unknown): Uri | undefined {
+  if (value instanceof Uri) return value;
+  return typeof value === 'string' && value ? Uri.parse(value) : undefined;
+}
+
+/** A file URI's OS path; for a virtual document (Unify review sides) the workspace-relative path it names. */
+function diffPath(uri: Uri): string {
+  return uri.scheme === 'file' ? uri.fsPath : uri.path.replace(/^\/+/, '');
+}
+
+/** Posts one diff to the Files editor with both sides' text, so virtual sides (no file on disk) still show. */
+async function postDiff(left: Uri, right: Uri, title: string, file?: Uri, group?: string): Promise<void> {
+  const [leftText, rightText] = await Promise.all([readUriText(left), readUriText(right)]);
+  postToRenderer({
+    type: 'editorDiff',
+    title,
+    path: diffPath(file ?? right),
+    leftPath: diffPath(left),
+    rightPath: diffPath(right),
+    leftText,
+    rightText,
+    ...(group ? { group } : {}),
+  });
 }
 
 async function executeBuiltin(name: string, args: unknown[]): Promise<unknown> {
@@ -293,22 +311,24 @@ async function executeBuiltin(name: string, args: unknown[]): Promise<unknown> {
     return undefined;
   }
   if (name === 'vscode.diff') {
-    const leftPath = diffPath(args[0]);
-    const rightPath = diffPath(args[1]);
-    if (!leftPath || !rightPath) {
-      appendLog('vscode.diff ignored: both sides must be file URIs.');
+    const left = diffUri(args[0]);
+    const right = diffUri(args[1]);
+    if (!left || !right) {
+      appendLog('vscode.diff ignored: both sides must be URIs.');
       return undefined;
     }
-    postToRenderer({
-      type: 'editorDiff',
-      title: typeof args[2] === 'string' && args[2] ? args[2] : `${leftPath} ↔ ${rightPath}`,
-      leftPath,
-      rightPath,
-    });
+    await postDiff(left, right, typeof args[2] === 'string' && args[2] ? args[2] : `${diffPath(left)} ↔ ${diffPath(right)}`);
     return undefined;
   }
   if (name === 'vscode.changes') {
-    // A multi-file change view has no renderer counterpart yet.
+    // [title, [file, base, proposed][]]: one diff per file, grouped so the Files editor opens them together.
+    const resources = Array.isArray(args[1]) ? args[1] as unknown[][] : [];
+    const group = `changes-${randomUUID()}`;
+    for (const entry of resources) {
+      if (!Array.isArray(entry)) continue;
+      const [file, left, right] = entry.map(diffUri);
+      if (left && right) await postDiff(left, right, `Review: ${diffPath(file ?? right)}`, file, group);
+    }
     return undefined;
   }
   if (name === 'workbench.action.openSettings') {

@@ -79,8 +79,12 @@ function MetricRow(props:{ metric: SidebarUsageMetric; first: boolean; account: 
         <span class="pv-metric-fill" style={{ width: `${width()}%`, background: props.account.color }} />
       </span>
       <span class="pv-metric-used type-mono">{usedLabel()}</span>
-      <span class="pv-metric-reset" style={{ color: reset() ? resetColor(reset()!) : undefined }}>
-        {reset() ? (resetIn(reset()) ? `resets in ${resetIn(reset())}` : 'resets now') : ''}
+      <span
+        class="pv-metric-reset"
+        style={{ color: reset() ? resetColor(reset()!) : undefined }}
+        title={reset() ? (resetIn(reset()) ? `Resets in ${resetIn(reset())}` : 'Resets now') : undefined}
+      >
+        {reset() ? resetIn(reset()) || 'now' : ''}
       </span>
       <Show when={props.first}>
         <button type="button" class="pv-view-usage" onClick={() => openProviderUsage(props.account)}>

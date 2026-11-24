@@ -5,16 +5,19 @@
  * the toolpack registry scans (`meta.json` keeps an existing `enabled` flag), run the pack's install script and
  * report progress throughout. Nothing is left behind on failure.
  *
- * A pack's install script never runs without explicit user consent: the first install attempt returns
- * `needsScriptConsent` with the script so the Hub screen can show it, and no pack folder is installed.
+ * A pack's install script, its uninstall script (run later, when the pack is removed), and any program its setup.json
+ * installs (winget/brew/pip), never run without explicit user consent: the first install attempt returns
+ * `needsScriptConsent` with both scripts and the package commands
+ * so the Hub screen can show them, and no pack folder is installed.
  * The caller retries with `allowScript: true` after the user agrees.
  */
-import { promises as fsp } from 'node:fs';
+import { existsSync, promises as fsp } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import { toolpackIdFor } from './ids';
-import { INSTALL_SCRIPT_NAMES, readPackSetup, runPackInstallScript } from './setup';
-import { HubInstallProgress, HubInstallRequest, HubRegistry, PackSetupState } from './types';
+import { INSTALL_SCRIPT_NAMES, UNINSTALL_SCRIPT_NAMES } from './scripts';
+import { installSetupPackages, pendingPackages, readPackSetup, runPackInstallScript } from './setup';
+import { HubInstallPackage, HubInstallProgress, HubInstallRequest, HubRegistry, PackSetupState } from './types';
 import type { InstalledHubPack } from '../unify/requests/toolpacks';
 /** The most of an install script the consent screen is sent; longer scripts are truncated with a note. */
 const MAX_SCRIPT_TEXT_BYTES = 64 * 1024;
@@ -50,6 +53,11 @@ export interface HubInstallResult {
   /** The install script the user must agree to run. */
   scriptName?: string;
   scriptText?: string;
+  /** The script that runs when the pack is removed, shown on the same consent. */
+  uninstallScriptName?: string;
+  uninstallScriptText?: string;
+  /** Programs the pack's setup installs on this machine, with the exact command, for the same consent. */
+  packages?: HubInstallPackage[];
   /** The pack's setup checklist, when it ships a `setup.json`. */
   setup?: PackSetupState | null;
 }
@@ -62,6 +70,10 @@ interface ExistingMeta {
 
 function installScriptFor(files: string[]): string | undefined {
   return INSTALL_SCRIPT_NAMES.find(name => files.includes(name));
+}
+
+function uninstallScriptFor(files: string[]): string | undefined {
+  return UNINSTALL_SCRIPT_NAMES.find(name => files.includes(name));
 }
 
 async function readExistingMeta(destination: string): Promise<ExistingMeta> {
@@ -138,9 +150,21 @@ export async function installHubPack(options: InstallHubPackOptions): Promise<Hu
       throw new Error('The download did not write any files.');
     }
     const scriptName = installScriptFor(files);
-    if (scriptName && !options.allowScript) {
-      const scriptText = await fsp.readFile(path.join(staging, scriptName), 'utf8');
-      return { ok: false, id, needsScriptConsent: true, scriptName, scriptText: scriptTextForUi(scriptText) };
+    const uninstallScriptName = uninstallScriptFor(files);
+    const packages = files.includes('setup.json') ? await pendingPackages(staging, pack.name) : [];
+    if ((scriptName || uninstallScriptName || packages.length) && !options.allowScript) {
+      const scriptText = scriptName ? await fsp.readFile(path.join(staging, scriptName), 'utf8') : undefined;
+      const uninstallScriptText = uninstallScriptName ? await fsp.readFile(path.join(staging, uninstallScriptName), 'utf8') : undefined;
+      return {
+        ok: false,
+        id,
+        needsScriptConsent: true,
+        ...(scriptName ? { scriptName } : {}),
+        ...(scriptText !== undefined ? { scriptText: scriptTextForUi(scriptText) } : {}),
+        ...(uninstallScriptName ? { uninstallScriptName } : {}),
+        ...(uninstallScriptText !== undefined ? { uninstallScriptText: scriptTextForUi(uninstallScriptText) } : {}),
+        ...(packages.length ? { packages: packages.map(item => ({ title: item.title, command: item.command.display })) } : {}),
+      };
     }
     const sourceFile = path.join(staging, 'pack.ts');
     const compiledFile = path.join(staging, 'pack.js');
@@ -158,8 +182,20 @@ export async function installHubPack(options: InstallHubPackOptions): Promise<Hu
     }
 
     await fsp.mkdir(path.dirname(destination), { recursive: true });
-    await fsp.rm(destination, { recursive: true, force: true });
-    await fsp.cp(staging, destination, { recursive: true, force: true });
+    // The pack's data folder (keys the user pasted, a built Python environment, downloaded tools) survives updates.
+    const dataDir = path.join(destination, 'data');
+    const keptData = path.join(toolpacksDir, `.data-${packId}-${randomUUID()}`);
+    const keep = existsSync(dataDir) && !files.includes('data');
+    if (keep) await fsp.rename(dataDir, keptData);
+    try {
+      await fsp.rm(destination, { recursive: true, force: true });
+      await fsp.cp(staging, destination, { recursive: true, force: true });
+    } finally {
+      if (keep) {
+        await fsp.mkdir(destination, { recursive: true });
+        await fsp.rename(keptData, dataDir);
+      }
+    }
     const meta = {
       description: pack.description,
       enabled: existing.enabled !== false,
@@ -168,7 +204,14 @@ export async function installHubPack(options: InstallHubPackOptions): Promise<Hu
     };
     await fsp.writeFile(path.join(destination, 'meta.json'), `${JSON.stringify(meta, null, 2)}\n`, 'utf8');
 
+    // Missing required programs (ImageMagick, ffmpeg, Python, ...) first, since the script may need them; the
+    // checklist shows any that failed.
+    if (packages.length) {
+      send({ id, percent: 70, state: 'installing' });
+      await installSetupPackages(destination, pack.name);
+    }
     if (scriptName) {
+      send({ id, percent: 85, state: 'installing' });
       const result = await runPackInstallScript(destination, scriptName, { unifyHome: options.unifyHome });
       // With a setup.json the pack stays installed and its checklist shows the failed step and how to fix it.
       if (!result.ok && !files.includes('setup.json')) throw new Error(result.error ?? 'The install script failed.');

@@ -148,8 +148,10 @@ test('batch file tools read, search and list inside the working copy only', asyn
 
     assert.equal((await runBatchFileTool(root, 'read_file', { path: 'src/a.ts' })).text, 'one\ntwo needle\nthree\n');
     assert.equal((await runBatchFileTool(root, 'read_file', { path: 'src/a.ts', offset: 2, limit: 1 })).text, '(lines 2-2 of 4)\ntwo needle');
-    assert.equal((await runBatchFileTool(root, 'search', { pattern: 'needle' })).text, 'src/a.ts:2: two needle\nsrc/b.js:1: needle');
-    assert.equal((await runBatchFileTool(root, 'search', { pattern: 'NEEDLE', glob: '*.ts', ignore_case: true })).text, 'src/a.ts:2: two needle');
+    assert.equal((await runBatchFileTool(root, 'search', { pattern: 'needle' })).text, 'src/a.ts\n  2: two needle\n\nsrc/b.js\n  1: needle');
+    assert.equal((await runBatchFileTool(root, 'search', { pattern: 'needle', max_results: 1 })).text, 'src/a.ts\n  2: two needle\n[stopped at 1 matches; narrow path or glob]');
+    assert.equal((await runBatchFileTool(root, 'search', { pattern: 'missing-pattern' })).text, 'No matches.');
+    assert.equal((await runBatchFileTool(root, 'search', { pattern: 'NEEDLE', glob: '*.ts', ignore_case: true })).text, 'src/a.ts\n  2: two needle');
     assert.match((await runBatchFileTool(root, 'list_dir', {})).text, /node_modules\/\nsrc\/$/);
     for (const path of ['../x', join(outside, 'secret.txt'), 'link/secret.txt']) {
       const result = await runBatchFileTool(root, 'read_file', { path });
@@ -158,13 +160,13 @@ test('batch file tools read, search and list inside the working copy only', asyn
     }
     assert.match((await runBatchFileTool(root, 'read_file', { path: 'missing.ts' })).text, /does not exist/);
     assert.match((await runBatchFileTool(root, 'search', { pattern: '(' })).text, /Invalid pattern/);
-    assert.equal((await runBatchFileTool(root, 'search', { pattern: '(?i)TWO NEEDLE' })).text, 'src/a.ts:2: two needle');
+    assert.equal((await runBatchFileTool(root, 'search', { pattern: '(?i)TWO NEEDLE' })).text, 'src/a.ts\n  2: two needle');
 
     // Outside paths read once the caller allows them, and are shown absolute.
     assert.equal(await outsideWorkingCopy(root, 'src/a.ts'), false);
     for (const path of ['../x', join(outside, 'secret.txt')]) assert.equal(await outsideWorkingCopy(root, path), true, path);
     assert.equal((await runBatchFileTool(root, 'read_file', { path: join(outside, 'secret.txt') }, { outside: true })).text, 'secret');
-    assert.equal((await runBatchFileTool(root, 'search', { pattern: 'sec', path: outside }, { outside: true })).text, `${join(outside, 'secret.txt').split(sep).join('/')}:1: secret`);
+    assert.equal((await runBatchFileTool(root, 'search', { pattern: 'sec', path: outside }, { outside: true })).text, `${join(outside, 'secret.txt').split(sep).join('/')}\n  1: secret`);
 
     // Images come back as image content, not text.
     await writeFile(join(root, 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]));

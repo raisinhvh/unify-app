@@ -4,9 +4,13 @@
  *
  *   <SetupChecklist id={pack.id} />
  *
- *   header   "Finish setup" + "1 of 2 done"; once every step is done it becomes the single done line
- *            "Setup complete", and the steps fold away (Show steps opens them again)
+ *   header   "Finish setup" + "1 of 2 done" (required steps only); once every required step is done it becomes
+ *            "Setup complete"
+ *   steps    only what still needs the user: automatic steps that worked are hidden, and so are ticked manual
+ *            steps once setup is complete. Optional extras not done yet stay listed. "Show all steps" lists
+ *            everything; with nothing left to show the list folds away
  *   step     status glyph (manual steps: the glyph is the tick box), title, muted detail, the failure reason,
+ *            Install (steps with a package: Unify runs winget/brew/pip; retypes to "Installing…"),
  *            Copy (clipboard, the label morphs to "Copied" for a moment) and Open (the engine opens it)
  *   footer   Check again (recheck), Run setup again (only when the pack's script can run again), last error
  *
@@ -18,7 +22,7 @@ import { Button } from '../../components';
 import { Collapse, createSpring, pressable } from '../../motion';
 import { RetypeText, RollingNumber } from '../../motion/organic';
 import type { PackSetupStep } from '../../protocol';
-import { runSetupAction, setupBusy, setupError, setupFor } from './setup';
+import { runSetupAction, setupBusy, setupError, setupFor, setupInstalling } from './setup';
 import './setup.css';
 
 /** How long "Copied" stays before the label turns back. */
@@ -101,6 +105,7 @@ function StepRow(props: { packId: string; step: PackSetupStep }): JSX.Element {
   const manual = () => props.step.kind === 'manual';
   const done = () => props.step.status === 'done';
   const toggle = () => runSetupAction(props.packId, done() ? 'markTodo' : 'markDone', props.step.id);
+  const installing = () => setupInstalling(props.packId) === props.step.id;
   return (
     <div class="tp-setup-step" classList={{ done: done(), failed: props.step.status === 'failed' }}>
       <Show
@@ -136,6 +141,18 @@ function StepRow(props: { packId: string; step: PackSetupStep }): JSX.Element {
         </Show>
       </div>
       <div class="tp-setup-actions">
+        <Show when={props.step.install && !done()}>
+          <Button
+            variant="text"
+            class="tp-setup-action"
+            title={props.step.install}
+            aria-label={`Install for ${props.step.title}: ${props.step.install}`}
+            disabled={!!setupBusy(props.packId)}
+            onClick={() => runSetupAction(props.packId, 'install', props.step.id)}
+          >
+            <RetypeText value={installing() ? 'Installing…' : props.step.status === 'failed' ? 'Retry' : 'Install'} speed="fast" data-motion="setup-install" />
+          </Button>
+        </Show>
         <Show when={props.step.copy}>
           {text => <CopyButton text={text()} title={props.step.title} />}
         </Show>
@@ -156,9 +173,15 @@ function StepRow(props: { packId: string; step: PackSetupStep }): JSX.Element {
 
 export function SetupChecklist(props: { id: string }): JSX.Element {
   const setup = () => setupFor(props.id);
-  const [showSteps, setShowSteps] = createSignal(false);
+  const [showAll, setShowAll] = createSignal(false);
   const complete = () => (setup()?.pending ?? 0) === 0;
-  const doneCount = () => (setup()?.steps.filter(step => step.status === 'done').length ?? 0);
+  const steps = () => setup()?.steps ?? [];
+  /** Nothing left for the user: automatic steps that worked, and (once setup is complete) ticked manual ones. */
+  const finished = (step: PackSetupStep) => step.status === 'done' && (step.kind === 'auto' || complete());
+  const hiddenCount = () => steps().filter(finished).length;
+  const visibleSteps = () => (showAll() ? steps() : steps().filter(step => !finished(step)));
+  const required = () => steps().filter(step => !step.optional);
+  const doneCount = () => required().filter(step => step.status === 'done').length;
   const busy = () => setupBusy(props.id);
   return (
     <Show when={setup()?.steps.length}>
@@ -170,20 +193,22 @@ export function SetupChecklist(props: { id: string }): JSX.Element {
           <h2 class="tp-setup-heading">
             <RetypeText value={complete() ? 'Setup complete' : 'Finish setup'} speed="fast" data-motion="setup-heading" />
           </h2>
-          <span class="tp-setup-count type-caption">
-            <RollingNumber value={doneCount()} /> of <RollingNumber value={setup()!.steps.length} /> done
-          </span>
+          <Show when={required().length}>
+            <span class="tp-setup-count type-caption">
+              <RollingNumber value={doneCount()} /> of <RollingNumber value={required().length} /> done
+            </span>
+          </Show>
           <span class="tp-setup-spacer" />
-          <Show when={complete()}>
-            <Button variant="text" class="tp-setup-action" aria-expanded={showSteps()} onClick={() => setShowSteps(!showSteps())}>
-              <RetypeText value={showSteps() ? 'Hide steps' : 'Show steps'} speed="fast" data-motion="setup-toggle" />
+          <Show when={hiddenCount()}>
+            <Button variant="text" class="tp-setup-action" aria-expanded={showAll()} onClick={() => setShowAll(!showAll())}>
+              <RetypeText value={showAll() ? 'Hide finished steps' : 'Show all steps'} speed="fast" data-motion="setup-toggle" />
             </Button>
           </Show>
         </header>
-        <Collapse open={!complete() || showSteps()}>
+        <Collapse open={visibleSteps().length > 0}>
           <div class="tp-setup-body">
             <div class="tp-setup-steps">
-              <Index each={setup()!.steps}>{step => <StepRow packId={props.id} step={step()} />}</Index>
+              <Index each={visibleSteps()}>{step => <StepRow packId={props.id} step={step()} />}</Index>
             </div>
             <footer class="tp-setup-footer">
               <span class="tp-setup-footer-error" role={setupError(props.id) ? 'alert' : undefined}>

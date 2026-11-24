@@ -6,7 +6,7 @@
  * runs unchanged. Engine messages are also re-posted on `window` because the
  * legacy sidebar listens with `window.addEventListener('message', ...)`.
  */
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 type HostMessage = Record<string, unknown>;
 type Listener = (message: HostMessage) => void;
@@ -124,6 +124,25 @@ const api = {
 
   pickFolder(): Promise<string | undefined> {
     return ipcRenderer.invoke('unify:pick-folder') as Promise<string | undefined>;
+  },
+
+  /** Moves `relative` (inside the project folder `root`) to the OS trash. */
+  trashItem(root: string, relative: string): Promise<void> {
+    return ipcRenderer.invoke('unify:trash-item', root, relative) as Promise<void>;
+  },
+
+  /** Shows `relative` (inside `root`) selected in the OS file manager. */
+  revealItem(root: string, relative: string): Promise<void> {
+    return ipcRenderer.invoke('unify:reveal-item', root, relative) as Promise<void>;
+  },
+
+  /** Absolute path of a file dropped from the OS (empty for files that are not on disk). */
+  pathForFile(file: File): string {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return '';
+    }
   },
 
   /** Folder picker for "Folder as context"; defaults to the project. */

@@ -1,35 +1,23 @@
 /**
  * The one model picker (spec "One reusable model picker"). Every place that chooses a model uses it.
  *
- *   <ModelPicker chatId={id} variant="compact" placement="top-start" />          bound to the chat's model, effort, speed
+ *   <ModelPicker chatId={id} variant="compact" placement="top-start" />          bound to the chat's model
  *   <ModelPicker value={profile.model} onChange={model => …} smartAuto={false} />  bound to the caller's own field
  *
- * Closed: one flat line, provider glyph, model name, then muted effort and speed as separate cells, and a chevron.
+ * Closed: one flat line, provider glyph, model name and a chevron. Effort and speed live in EffortPicker.
  * It truncates with an ellipsis and never wraps.
  * Open: a Popover with a search field (focused; filters by name, provider, account and backend), an optional
- * "None" row, Smart Auto when ready, Recent models, then every enabled model grouped by provider like a folder
- * tree. Effort and speed sit in a footer as segmented choices when the selected model has them.
+ * "None" row, Smart Auto when ready, then every enabled model grouped by provider like a folder tree.
  * Keyboard: arrows move, Enter picks, Esc closes, typing on the closed line opens it and starts the search.
  *
  * Options come from screens/chats/models.ts, so the rules (enabled models only, Smart Auto first when ready,
- * effort "Default" plus the model's efforts) live in one place.
+ * Smart Auto naming) live in one place.
  */
-import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, type JSX } from 'solid-js';
+import { createEffect, createMemo, createSignal, on, onMount, Show, type JSX } from 'solid-js';
 import { AnimatedList, Collapse } from '../motion';
 import { viewState } from '../store';
-import { rememberModel, recentModelIds } from '../store/recentModels';
-import {
-  effortOptions,
-  modelOptions,
-  selectedModelValue,
-  selectEffort,
-  selectModel,
-  selectSpeed,
-  smartAutoId,
-  speedOptions,
-} from '../screens/chats/models';
+import { modelOptions, selectedModelValue, selectModel, smartAutoId } from '../screens/chats/models';
 import { ProviderGlyph } from './ProviderGlyph';
-import { Segmented } from '../screens/hub/Segmented';
 import { Button } from './Button';
 import { Icon } from './Icon';
 import { Popover, type PopoverPlacement } from './Popover';
@@ -42,14 +30,12 @@ export interface ModelPickerProps {
   value?: string;
   /** Called with the picked model id ('' for the None row). Omit to post selectModel for `chatId`. */
   onChange?: (modelId: string) => void;
-  /** The chat the default binding (model, effort, speed) applies to. */
+  /** The chat the default binding applies to. */
   chatId?: string;
   /** `compact` for tight spots (composer footer, pane header), `regular` for settings rows. Default compact. */
   variant?: ModelPickerVariant;
   /** Offer Smart Auto (only shown when it is ready). Default true. */
   smartAuto?: boolean;
-  /** Show effort and speed on the line and in the footer. Default: only when bound to the chat (no onChange). */
-  effortSpeed?: boolean;
   /** Adds a first row with this label that picks ''. */
   noneLabel?: string;
   /** Only offer these model ids (an account's own models). */
@@ -98,13 +84,9 @@ interface Candidate {
 }
 
 const noneValue = '';
-/** The closed line drops effort and speed before the name gets narrower than this (about 10 characters). */
-const minimumNameWidth = 80;
 let pickerCount = 0;
-
-function capitalize(text: string): string {
-  return text ? text[0].toUpperCase() + text.slice(1) : text;
-}
+/** DEV: ?open= opens only one picker (the first visible one in a composer). */
+let devOpened = false;
 
 function accountLabel(accountId: string | undefined): string | undefined {
   if (!accountId) return undefined;
@@ -122,7 +104,6 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
   let searchInput: HTMLInputElement | undefined;
 
   const boundToChat = () => !props.onChange;
-  const showEffortSpeed = () => props.effortSpeed ?? boundToChat();
   const offersSmartAuto = () => props.smartAuto ?? true;
 
   const value = (): string | undefined => (boundToChat() ? selectedModelValue() : props.value);
@@ -174,25 +155,6 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
 
     const models = candidates().filter(candidate => !candidate.smartAuto);
 
-    if (!search) {
-      const recent = recentModelIds()
-        .map(id => models.find(candidate => candidate.value === id))
-        .filter((candidate): candidate is Candidate => !!candidate);
-      if (recent.length) {
-        list.push({ kind: 'group', key: 'group:recent', label: 'Recent' });
-        for (const candidate of recent) {
-          list.push({
-            kind: 'choice',
-            key: `recent:${candidate.value}`,
-            value: candidate.value,
-            label: candidate.label,
-            hint: candidate.group,
-            provider: candidate.provider ?? 'unknown',
-          });
-        }
-      }
-    }
-
     const groups = new Map<string, Candidate[]>();
     for (const candidate of models) {
       if (!matches(candidate)) continue;
@@ -231,8 +193,8 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
     const list = choices();
     if (query().trim()) return list[0]?.key;
     const picked = value() ?? noneValue;
-    const inGroup = list.find(row => row.value === picked && !row.key.startsWith('recent:'));
-    return (inGroup ?? list[0])?.key;
+    const current = list.find(row => row.value === picked);
+    return (current ?? list[0])?.key;
   }
 
   createEffect(on(query, () => {
@@ -258,8 +220,22 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
     if (focusTrigger) anchor()?.focus();
   }
 
+  // DEV: `?open=model` opens the composer's picker so tools/shot.mjs can capture the popover.
+  onMount(() => {
+    if (!import.meta.env.DEV || !boundToChat()) return;
+    if (new URLSearchParams(window.location.search).get('open') !== 'model') return;
+    window.setTimeout(() => {
+      const trigger = anchor();
+      if (devOpened || !trigger?.closest('.composer-bar')) return;
+      // Only the composer on screen: a hidden one still has layout, so hit-test the trigger's centre.
+      const box = trigger.getBoundingClientRect();
+      if (!trigger.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2))) return;
+      devOpened = true;
+      openPicker();
+    }, 400);
+  });
+
   function pick(row: ChoiceRow): void {
-    if (row.value !== noneValue && row.value !== smartAutoId) rememberModel(row.value);
     if (props.onChange) props.onChange(row.value);
     else selectModel(row.value, props.chatId);
     closePicker(true);
@@ -320,47 +296,8 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
     return props.noneLabel ?? props.placeholder ?? 'Choose model';
   };
 
-  const effortText = () => {
-    if (!showEffortSpeed() || value() === smartAutoId) return undefined;
-    const effort = viewState.selectedEffort;
-    if (!effort || !effortOptions().some(option => option.value === effort)) return undefined;
-    return capitalize(effort);
-  };
-
-  const speedText = () => {
-    if (!showEffortSpeed() || value() === smartAutoId) return undefined;
-    const speed = viewState.selectedSpeed;
-    if (!speed || !speedOptions().some(option => option.value === speed)) return undefined;
-    return capitalize(speed);
-  };
-
-  /*
-   * Effort and speed give way whole (never "H…") once the name would shrink below a readable width. Measured
-   * with the cells shown and decided in the same frame, so nothing flickers and the result cannot oscillate.
-   */
-  let nameElement: HTMLSpanElement | undefined;
-  let metaElement: HTMLSpanElement | undefined;
-  const fitMeta = () => {
-    if (!nameElement || !metaElement || !metaElement.isConnected) return;
-    metaElement.style.display = '';
-    const truncated = nameElement.scrollWidth > nameElement.clientWidth + 1;
-    metaElement.style.display = truncated && nameElement.clientWidth < minimumNameWidth ? 'none' : '';
-  };
-
-  onMount(() => {
-    const trigger = anchor();
-    if (!trigger) return;
-    const observer = new ResizeObserver(fitMeta);
-    observer.observe(trigger);
-    if (trigger.parentElement) observer.observe(trigger.parentElement);
-    onCleanup(() => observer.disconnect());
-  });
-
-  createEffect(on([lineLabel, effortText, speedText], () => queueMicrotask(fitMeta)));
-
   const lineTitle = () => {
-    const parts = [lineLabel(), effortText(), speedText()].filter(Boolean);
-    return props.title ? `${props.title}: ${parts.join(', ')}` : parts.join(', ');
+    return props.title ? `${props.title}: ${lineLabel()}` : lineLabel();
   };
 
   const lineGlyph = (): JSX.Element => {
@@ -368,19 +305,6 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
     if (current === smartAutoId) return <Icon name="bot" size={14} class="model-picker-glyph" />;
     if (!current) return null;
     return <ProviderGlyph provider={currentModel()?.provider ?? 'unknown'} size={14} class="model-picker-glyph" />;
-  };
-
-  /* Footer */
-
-  const footerEfforts = () => (showEffortSpeed() && value() !== smartAutoId ? effortOptions() : []);
-  const footerSpeeds = () => (showEffortSpeed() && value() !== smartAutoId ? speedOptions() : []);
-  const effortValue = () => {
-    const effort = viewState.selectedEffort || '';
-    return footerEfforts().some(option => option.value === effort) ? effort : '';
-  };
-  const speedValue = () => {
-    const speed = viewState.selectedSpeed;
-    return footerSpeeds().some(option => option.value === speed) ? speed! : footerSpeeds()[0]?.value ?? '';
   };
 
   /* Rows */
@@ -457,22 +381,11 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
       >
         {lineGlyph()}
         <span
-          ref={element => (nameElement = element)}
           class="model-picker-name"
           classList={{ placeholder: !value() && props.noneLabel === undefined }}
         >
           {lineLabel()}
         </span>
-        <Show when={effortText() || speedText()}>
-          <span ref={element => (metaElement = element)} class="model-picker-metas">
-            <Show when={effortText()}>
-              <span class="model-picker-meta">{effortText()}</span>
-            </Show>
-            <Show when={speedText()}>
-              <span class="model-picker-meta">{speedText()}</span>
-            </Show>
-          </span>
-        </Show>
       </Button>
       <Popover
         anchor={anchor()}
@@ -518,30 +431,6 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
             </p>
           </Collapse>
         </div>
-        <Show when={footerEfforts().length > 0 || footerSpeeds().length > 0}>
-          <div class="model-picker-footer">
-            <Show when={footerEfforts().length > 0}>
-              <span class="model-picker-footer-label type-caption">Effort</span>
-              <Segmented
-                label="Reasoning effort"
-                class="model-picker-segmented"
-                value={effortValue()}
-                options={footerEfforts().map(option => ({ value: option.value, label: capitalize(option.label) }))}
-                onChange={effort => selectEffort(effort, props.chatId)}
-              />
-            </Show>
-            <Show when={footerSpeeds().length > 0}>
-              <span class="model-picker-footer-label type-caption">Speed</span>
-              <Segmented
-                label="Response speed"
-                class="model-picker-segmented"
-                value={speedValue()}
-                options={footerSpeeds().map(option => ({ value: option.value, label: capitalize(option.label) }))}
-                onChange={speed => selectSpeed(speed, props.chatId)}
-              />
-            </Show>
-          </div>
-        </Show>
       </Popover>
     </>
   );

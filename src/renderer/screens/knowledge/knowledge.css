@@ -138,6 +138,10 @@
   flex: none;
 }
 
+.knowledge-project {
+  margin-top: 8px;
+}
+
 .knowledge-tree {
   flex: 1;
   min-height: 0;

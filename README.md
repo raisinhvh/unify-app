@@ -47,6 +47,25 @@ npm run dist
 `npm run dist:linux`). The installer is a normal wizard: choose the folder,
 desktop shortcut and Start menu entry.
 
+## Publish a release
+
+Versions are written `VX.Y` (stored in `package.json` as `X.Y.0`, since Electron
+and the updater need semver). One command does the whole release:
+
+```sh
+npm run release -- V1.1
+```
+
+It sets the version, runs the tests, builds, packages `Unify-Setup-VX.Y.exe` and
+`Unify-VX.Y-Portable.exe`, commits the working tree, tags `VX.Y`, pushes to
+`main` of the repository in `package.json` (`raisinhvh/unify-app`, created if
+missing) and creates the GitHub release with the installer, portable exe,
+blockmap and `latest.yml`. Installed copies update from that release.
+
+Options: `--notes "text"` (default: commit subjects since the last tag),
+`--skip-tests`, and `--dry-run` (build only; nothing is committed or uploaded).
+Needs the GitHub CLI signed in (`gh auth login`).
+
 ## Tests
 
 ```sh
@@ -57,16 +76,12 @@ This compiles the engine's test modules and runs DSH's test suite (301 tests).
 
 ## Data
 
-Unify shares `~/.dsh` with DSH: accounts, rules, memory, toolpacks, chats and
-settings stay in one place. On first launch it imports DSH state from VS Code
-(`globalStorage/state.vscdb` and the extension's global storage folder), so
-existing accounts carry over. Secrets held in VS Code's encrypted secret storage
-cannot be decrypted outside VS Code; the setup status lists the accounts that
-need signing in again.
-
-Unify's own files live in `~/.dsh/unify/` (`settings.json`, `state.json`,
-`secrets.json`, `renderer-state.json`, `logs/`). Secrets are encrypted with
-Electron `safeStorage`.
+Unify keeps its data in `~/.unify` (or `UNIFY_HOME`) and doesn't read or write
+DSH's `~/.dsh`: `settings.json`, `state.json`, `secrets.json`,
+`renderer-state.json`, `logs/`, global rules (`AGENTS.md`) and memory
+(`memory/`), and `storage/` (accounts, toolpacks, usage log, summaries).
+Secrets are encrypted with Electron `safeStorage`. Per-project data lives in
+the repo's `.unify/` folder.
 
 ## License
 

@@ -175,7 +175,7 @@ export class UnifySidebarProvider implements vscode.WebviewViewProvider {
         if (!event.detail && previous?.detail) event.detail = previous.detail;
         this.state.tools = this.state.tools.filter(t => t.id !== event.id).concat(event);
         const sessionId = message.sessionId || this.state.activeSessionId;
-        if (sessionId && event.kind !== 'edit' && event.kind !== 'subagent') {
+        if (sessionId && event.kind !== 'subagent') {
           const timeline = this.state.timeline[sessionId] ||= [];
           const id = message.entryId || `tool:${event.id}`;
           const entry = timeline.find(item => item.id === id);
@@ -197,12 +197,17 @@ export class UnifySidebarProvider implements vscode.WebviewViewProvider {
         if (message.effort) agent.effort = message.effort;
         if (message.speed) agent.speed = message.speed;
         if (message.sentToParent) agent.sentToParent = message.sentToParent;
-        if (message.text || message.media?.length) {
+        if (message.text || message.media?.length || message.tool?.edit || message.tool?.state) {
           const id = message.messageId || `message:${agent.messages.length}`;
           const text = message.text || '';
           const entry = agent.messages.find(item => item.id === id);
           if (entry) {
             entry.text += text;
+            // Live edit preview: later events for the same call carry the grown diff and the final state.
+            if (message.tool) {
+              const defined = Object.fromEntries(Object.entries(message.tool).filter(([, value]) => value !== undefined));
+              entry.tool = { ...entry.tool, ...defined } as typeof message.tool;
+            }
             if (message.media?.length) {
               // Repeated tool_call_update events can report the same image again; the file URL is the hash.
               const known = new Set((entry.media || []).map(item => item.file));
@@ -212,6 +217,7 @@ export class UnifySidebarProvider implements vscode.WebviewViewProvider {
           } else {
             agent.messages.push({
               id, role: message.role || 'assistant', text,
+              ...(message.from ? { from: message.from } : {}),
               ...(message.tool ? { tool: message.tool } : {}),
               ...(message.media?.length ? { media: message.media } : {}),
             });
@@ -248,6 +254,7 @@ export class UnifySidebarProvider implements vscode.WebviewViewProvider {
       case 'toolState': this.state.tools = message.tools; break;
       case 'diff': this.state.diffs = this.state.diffs.filter(d => d.id !== message.diff.id).concat(message.diff); break;
       case 'diffState': this.state.diffs = message.diffs; break;
+      case 'chatDiffState': (this.state.chatDiffs ||= {})[message.sessionId] = message.diffs; break;
       case 'error': this.state.error = message.message; break;
       case 'dependencyState': this.state.dependencies = message.providers; break;
     }

@@ -3,14 +3,14 @@
  *
  *   header       "Providers" + add
  *   Usage        combined weight meter; opens the usage overview
- *   providers    one collapsible folder per provider (glyph, name), accounts inside:
+ *   providers    one TreeFolder per provider (logo, name, account count), accounts inside as tree rows:
  *                a status mark, the account label, and what it reports (mini bar, "Connected", "Sign in")
  *
  * Rows only select; every action lives on the account page, except "Sign in" on a signed-out row.
  */
 import { For, Show, type JSX } from 'solid-js';
-import { Icon, IconButton, ProviderGlyph } from '../../components';
-import { Collapse, createSpring, pressable } from '../../motion';
+import { Icon, IconButton, ProviderGlyph, TreeFolder, TreeItem } from '../../components';
+import { createSpring, pressable } from '../../motion';
 import { RollingNumber } from '../../motion/organic';
 import { clampPercent, usageSummary } from '../../store/usage';
 import type { AccountView, ProviderGroup } from './adapter';
@@ -19,23 +19,15 @@ import { providerOpen, select, selection, setAddProviderOpen, setProviderOpen } 
 
 function UsageRow(): JSX.Element {
   const summary = usageSummary;
-  const selected = () => selection().kind === 'usage';
   return (
-    <button
-      type="button"
-      class="pv-panel-row pv-panel-usage"
-      classList={{ selected: selected() }}
-      aria-current={selected() ? 'true' : undefined}
-      ref={element => pressable(element, 0.98)}
+    <TreeItem
+      class="pv-panel-usage"
+      leading={<Icon name="usage" size={16} />}
+      label="Usage"
+      trailing={<RollingNumber value={summary().entries.length ? `${summary().combined}%` : '–'} data-motion="providers-usage" />}
+      selected={selection().kind === 'usage'}
       onClick={() => select({ kind: 'usage' })}
-    >
-      <span class="pv-row-chevron-slot" />
-      <Icon name="usage" size={16} class="pv-row-icon" />
-      <span class="pv-row-label">Usage</span>
-      <span class="pv-row-meta">
-        <RollingNumber value={summary().entries.length ? `${summary().combined}%` : '–'} data-motion="providers-usage" />
-      </span>
-    </button>
+    />
   );
 }
 
@@ -68,7 +60,7 @@ function AccountRow(props: { account: AccountView }): JSX.Element {
   const choose = () => select({ kind: 'account', id: account().id });
   return (
     <div
-      class="pv-account-row"
+      class="tree-row tree-item pv-account-row"
       classList={{ selected: selected(), signedOut: account().status === 'signedOut' }}
       role="button"
       tabIndex={0}
@@ -115,31 +107,26 @@ function AccountRow(props: { account: AccountView }): JSX.Element {
 
 function ProviderFolder(props: { group: ProviderGroup }): JSX.Element {
   const group = () => props.group;
-  const open = () => providerOpen(group().provider);
-  const rotation = createSpring(() => (open() ? 0 : -90), 'indicator', { precision: 100 });
   // Keyed by id: usage updates hand over new account objects, which must not remount the rows.
   const accountIds = () => group().accounts.map(account => account.id);
+  // A folder like any other in the app; the provider's logo stands in for the folder glyph (as the Hub's does).
   return (
-    <div class="pv-provider">
-      <button
-        type="button"
-        class="pv-panel-row pv-provider-row"
-        aria-expanded={open()}
-        ref={element => pressable(element, 0.98)}
-        onClick={() => setProviderOpen(group().provider, !open())}
-      >
-        <Icon name="chevron" size={12} class="pv-provider-chevron" style={{ rotate: `${rotation()}deg` }} />
-        <ProviderGlyph provider={group().provider} size={16} class="pv-provider-glyph" />
-        <span class="pv-row-label">{providerTitle(group().provider)}</span>
-      </button>
-      <Collapse open={open()} class="pv-account-children">
-        <div class="pv-account-list">
-          <For each={accountIds()}>
-            {id => <Show when={group().accounts.find(account => account.id === id)}>{account => <AccountRow account={account()} />}</Show>}
-          </For>
-        </div>
-      </Collapse>
-    </div>
+    <TreeFolder
+      class="pv-provider"
+      label={
+        <span class="pv-provider-label">
+          <ProviderGlyph provider={group().provider} size={16} class="pv-provider-glyph" />
+          <span class="pv-row-label">{providerTitle(group().provider)}</span>
+        </span>
+      }
+      trailing={String(group().accounts.length)}
+      open={providerOpen(group().provider)}
+      onToggle={open => setProviderOpen(group().provider, open)}
+    >
+      <For each={accountIds()}>
+        {id => <Show when={group().accounts.find(account => account.id === id)}>{account => <AccountRow account={account()} />}</Show>}
+      </For>
+    </TreeFolder>
   );
 }
 

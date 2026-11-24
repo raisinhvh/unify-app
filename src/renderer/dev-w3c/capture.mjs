@@ -43,6 +43,27 @@ const scenes = [
   { name: 'settings-power-off', route: 'settings', steps: [] },
   { name: 'settings-agents-models', route: 'settings', section: 'agents', steps: agentModels },
   { name: 'settings-agents-picker-open', route: 'settings', section: 'agents', steps: [...agentModels, ...openFirstPicker] },
+  { name: 'agents-general', route: 'agents', steps: [{ eval: 'window.__w3cAgentModels()' }, { wait: 800 }] },
+  {
+    name: 'agents-general-lower',
+    route: 'agents',
+    steps: [
+      { eval: 'window.__w3cAgentModels()' },
+      { wait: 800 },
+      { eval: `[...document.querySelectorAll('.setting-row')].at(-1).scrollIntoView({ block: 'end' })` },
+      { wait: 400 },
+    ],
+  },
+  {
+    name: 'agents-profile',
+    route: 'agents',
+    steps: [
+      { eval: 'window.__w3cAgentModels()' },
+      { wait: 800 },
+      { eval: `[...document.querySelectorAll('button, [role="treeitem"], a')].find(element => element.textContent.trim().startsWith('explorer')).click()` },
+      { wait: 800 },
+    ],
+  },
   { name: 'composer', route: 'chats', steps: [], clip: { selector: '.composer', pad: 24 } },
   { name: 'popover-hover', route: 'chats', steps: [...openPopover, { hover: '.shutdown-arm-label' }, { wait: 300 }], clip: popoverClip },
   { name: 'settings-power-armed', route: 'settings', steps: [{ eval: emit({ type: 'shutdownArmed', armed: true }) }] },

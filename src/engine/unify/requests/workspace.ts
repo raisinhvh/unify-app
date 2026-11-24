@@ -147,6 +147,104 @@ export function writeWorkspaceFile(
   return { ok: true, version: contentVersion(content) };
 }
 
+/** Resolves a path for create/rename/delete: inside the project, never the project folder itself. */
+function entryPath(base: string, relativePath: string): string {
+  const file = resolveInside(base, relativePath);
+  if (file === path.resolve(base)) throw new Error('Pick a file or folder inside the project.');
+  const name = path.basename(file);
+  if (/[<>:"|?*]/.test(name) || /[. ]$/.test(name)) throw new Error(`"${name}" is not a valid name.`);
+  return file;
+}
+
+/** Creates an empty file or a folder (with any missing parents). Fails when something is already there. */
+export function createWorkspaceEntry(root: string | undefined, relativePath: string, kind: 'file' | 'dir'): string {
+  const base = requireWorkspace(root);
+  const file = entryPath(base, relativePath);
+  if (statOrUndefined(file)) throw new Error(`${relativeToWorkspace(base, file)} already exists.`);
+  if (kind === 'dir') fs.mkdirSync(file, { recursive: true });
+  else {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '', { encoding: 'utf8', flag: 'wx' });
+  }
+  const relative = relativeToWorkspace(base, file);
+  rememberPath(relative);
+  return relative;
+}
+
+/** Renames or moves a file or folder inside the project. Fails when the target exists. */
+export function renameWorkspaceEntry(root: string | undefined, from: string, to: string): string {
+  const base = requireWorkspace(root);
+  const source = entryPath(base, from);
+  const target = entryPath(base, to);
+  if (!statOrUndefined(source)) throw new Error(`No file at ${from}.`);
+  // Case-only renames on Windows/macOS see the source as the target; allow those.
+  if (statOrUndefined(target) && source.toLowerCase() !== target.toLowerCase()) throw new Error(`${relativeToWorkspace(base, target)} already exists.`);
+  if ((target + path.sep).startsWith(source + path.sep)) throw new Error('A folder cannot move inside itself.');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.renameSync(source, target);
+  const relative = relativeToWorkspace(base, target);
+  rememberPath(relative);
+  return relative;
+}
+
+/** A free path for `name` in `folder`: "a.ts", then "a copy.ts", "a copy 2.ts", … (like a file manager). */
+function freeTarget(folder: string, name: string): string {
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const extension = dot > 0 ? name.slice(dot) : '';
+  let candidate = path.join(folder, name);
+  for (let index = 1; statOrUndefined(candidate); index += 1) {
+    candidate = path.join(folder, `${stem} copy${index > 1 ? ` ${index}` : ''}${extension}`);
+  }
+  return candidate;
+}
+
+function targetFolder(base: string, relativeFolder: string): string {
+  const folder = resolveInside(base, relativeFolder || '');
+  if (!statOrUndefined(folder)?.isDirectory()) throw new Error(`No folder at ${relativeFolder || '.'}.`);
+  return folder;
+}
+
+/** Copies a file or folder into `toFolder` (project-relative, '' = root); a taken name gets " copy". */
+export function copyWorkspaceEntry(root: string | undefined, from: string, toFolder: string): string {
+  const base = requireWorkspace(root);
+  const source = entryPath(base, from);
+  if (!statOrUndefined(source)) throw new Error(`No file at ${from}.`);
+  const folder = targetFolder(base, toFolder);
+  if ((folder + path.sep).startsWith(source + path.sep)) throw new Error('A folder cannot be copied into itself.');
+  const target = freeTarget(folder, path.basename(source));
+  fs.cpSync(source, target, { recursive: true, errorOnExist: true, force: false });
+  const relative = relativeToWorkspace(base, target);
+  rememberPath(relative);
+  return relative;
+}
+
+/** Copies files or folders from anywhere on disk (dropped from the OS) into `toFolder`. */
+export function importWorkspaceEntries(root: string | undefined, sources: string[], toFolder: string): string[] {
+  const base = requireWorkspace(root);
+  const folder = targetFolder(base, toFolder);
+  const copied: string[] = [];
+  for (const source of sources) {
+    if (typeof source !== 'string' || !path.isAbsolute(source) || !statOrUndefined(source)) throw new Error(`Cannot read ${source}.`);
+    const resolved = path.resolve(source);
+    if ((folder + path.sep).startsWith(resolved + path.sep)) throw new Error('A folder cannot be copied into itself.');
+    const target = freeTarget(folder, path.basename(resolved));
+    fs.cpSync(resolved, target, { recursive: true, errorOnExist: true, force: false });
+    const relative = relativeToWorkspace(base, target);
+    rememberPath(relative);
+    copied.push(relative);
+  }
+  return copied;
+}
+
+/** Deletes a file or folder for good (the screen prefers the OS trash and uses this only without one). */
+export function deleteWorkspaceEntry(root: string | undefined, relativePath: string): void {
+  const base = requireWorkspace(root);
+  const file = entryPath(base, relativePath);
+  if (!statOrUndefined(file)) throw new Error(`No file at ${relativePath}.`);
+  fs.rmSync(file, { recursive: true, force: true });
+}
+
 /** Substring search over workspace-relative paths; directory names are ignored. */
 export function findWorkspaceFiles(root: string | undefined, query: string, limit = 50): string[] {
   const base = requireWorkspace(root);
@@ -414,12 +512,13 @@ function scheduleChange(root: string, relative: string): void {
     const wasKnown = state.known.has(relative);
     if (!info) {
       state.known.delete(relative);
-      activeReply?.({ type: 'fileChanged', path: relative, kind: 'deleted' } satisfies FilesReply);
+      activeReply?.({ type: 'fileChanged', root: base, path: relative, kind: 'deleted' } satisfies FilesReply);
       return;
     }
     state.known.add(relative);
     activeReply?.({
       type: 'fileChanged',
+      root: base,
       path: relative,
       kind: wasKnown ? 'changed' : 'created',
     } satisfies FilesReply);

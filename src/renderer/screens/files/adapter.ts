@@ -10,9 +10,10 @@
  * rows and tabs show +N −M as soon as an agent touches a file, whatever the source of the listing.
  */
 import { createSignal } from 'solid-js';
-import { hasHostBridge, post } from '../../bridge';
+import { bridge, hasHostBridge, post } from '../../bridge';
+import { readPersisted, writePersisted } from '../../persist';
 import { onHostMessage, viewState } from '../../store';
-import type { SidebarWebviewMessage } from '../../protocol';
+import type { SidebarHostMessage, SidebarProject, SidebarWebviewMessage } from '../../protocol';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Contract (mirrors protocol-requests.md)
@@ -57,9 +58,15 @@ export type FilesRequest =
   | { type: 'listDir'; requestId: string; path: string }
   | { type: 'readFile'; requestId: string; path: string }
   | { type: 'writeFile'; requestId: string; path: string; content: string; version: string }
-  | { type: 'findFiles'; requestId: string; query: string; limit?: number };
+  | { type: 'findFiles'; requestId: string; query: string; limit?: number }
+  | { type: 'createEntry'; requestId: string; path: string; kind: 'file' | 'dir' }
+  | { type: 'renameEntry'; requestId: string; from: string; to: string }
+  | { type: 'deleteEntry'; requestId: string; path: string }
+  | { type: 'copyEntry'; requestId: string; from: string; toFolder: string }
+  | { type: 'importEntries'; requestId: string; /** Absolute paths on disk (dropped from the OS). */ sources: string[]; toFolder: string };
 
 export type FilesReply =
+  | { type: 'entryDone'; requestId: string; path: string; /** importEntries: every copied path. */ paths?: string[] }
   | { type: 'workspaceState'; root: string; name: string }
   | { type: 'dirListing'; requestId: string; path: string; entries: FileEntry[] }
   | { type: 'fileContent'; requestId: string; file: FileDocument }
@@ -68,7 +75,10 @@ export type FilesReply =
   | { type: 'fileMatches'; requestId: string; query: string; paths: string[] }
   | { type: 'filesError'; requestId: string; message: string }
   /** Pushed when a file changes on disk (agent edit, external editor). The screen re-reads open files. */
-  | { type: 'fileChanged'; path: string; kind: 'changed' | 'created' | 'deleted'; edited?: FileEdit };
+  | { type: 'fileChanged'; /** The watched project folder the path is relative to. */ root?: string; path: string; kind: 'changed' | 'created' | 'deleted'; edited?: FileEdit };
+
+/** The engine asks the Files editor to open a file or a diff (shim `showTextDocument` / `vscode.diff`). */
+export type EditorRequest = Extract<SidebarHostMessage, { type: 'editorOpen' } | { type: 'editorDiff' }>;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Transport
@@ -78,18 +88,43 @@ const replyTimeout = 10000;
 const useMock = !hasHostBridge();
 const pending = new Map<string, (reply: FilesReply) => void>();
 const changeListeners = new Set<(change: Extract<FilesReply, { type: 'fileChanged' }>) => void>();
+const editorListeners = new Set<(request: EditorRequest) => void>();
 const [workspace, setWorkspace] = createSignal<{ root: string; name: string }>({ root: '', name: '' });
 export { workspace };
+
+/** The project folder picked on the Files screen; undefined means the folder the app has open. */
+const [filesProject, setFilesProjectSignal] = createSignal<SidebarProject | undefined>(
+  readPersisted<SidebarProject | undefined>('files.project', undefined),
+);
+export { filesProject };
+
+/** Use state.ts's switchFilesProject, which also clears the tree and tabs of the previous project. */
+export function setFilesProject(project: SidebarProject | undefined): void {
+  setFilesProjectSignal(project);
+  writePersisted('files.project', project);
+  if (project && !useMock) setWorkspace({ root: project.path, name: project.name });
+}
+
+function samePath(first: string, second: string): boolean {
+  const normal = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  return normal(first) === normal(second);
+}
 
 let nextId = 0;
 
 onHostMessage(raw => {
+  if (raw.type === 'editorOpen' || raw.type === 'editorDiff') {
+    for (const listener of editorListeners) listener(raw);
+    return;
+  }
   const message = raw as unknown as FilesReply;
   if (message.type === 'workspaceState') {
     setWorkspace({ root: message.root, name: message.name });
     return;
   }
   if (message.type === 'fileChanged') {
+    // The engine watches every project the screen has shown; only the one on screen matters.
+    if (message.root && workspace().root && !samePath(message.root, workspace().root)) return;
     for (const listener of changeListeners) listener(message);
     return;
   }
@@ -112,7 +147,8 @@ function request(body: RequestBody<FilesRequest>): Promise<FilesReply | undefine
       window.clearTimeout(timer);
       resolve(reply);
     });
-    post({ ...body, requestId } as unknown as SidebarWebviewMessage);
+    const project = filesProject()?.path;
+    post({ ...body, requestId, ...(project ? { project } : {}) } as unknown as SidebarWebviewMessage);
   });
 }
 
@@ -164,9 +200,90 @@ export async function findFiles(query: string, limit = 50): Promise<string[]> {
   return [];
 }
 
+function entryResult(reply: FilesReply | undefined): string {
+  if (reply?.type === 'entryDone') return reply.path;
+  throw new Error(reply?.type === 'filesError' ? reply.message : 'The engine did not answer');
+}
+
+/** Creates an empty file or a folder; resolves with its project-relative path. */
+export async function createEntry(path: string, kind: 'file' | 'dir'): Promise<string> {
+  if (useMock) return mock.create(path, kind);
+  return entryResult(await request({ type: 'createEntry', path, kind }));
+}
+
+/** Renames or moves a file or folder inside the project; resolves with the new path. */
+export async function renameEntry(from: string, to: string): Promise<string> {
+  if (useMock) return mock.rename(from, to);
+  return entryResult(await request({ type: 'renameEntry', from, to }));
+}
+
+/** Copies a file or folder into `toFolder` ('' = root); a taken name becomes "name copy.ext". Resolves the new path. */
+export async function copyEntry(from: string, toFolder: string): Promise<string> {
+  if (useMock) return mock.copy(from, toFolder);
+  return entryResult(await request({ type: 'copyEntry', from, toFolder }));
+}
+
+/** Copies files dropped from the OS (absolute paths) into `toFolder`. Resolves the new project-relative paths. */
+export async function importEntries(sources: string[], toFolder: string): Promise<string[]> {
+  if (useMock) return sources.map(source => mock.create(`${toFolder ? `${toFolder}/` : ''}${source.replace(/\\/g, '/').split('/').pop()}`, 'file'));
+  const reply = await request({ type: 'importEntries', sources, toFolder });
+  entryResult(reply);
+  return reply?.type === 'entryDone' ? reply.paths ?? [reply.path] : [];
+}
+
+/** Absolute paths of files dropped from the OS; empty outside Electron or for non-disk files. */
+export function droppedPaths(files: FileList | undefined | null): string[] {
+  const toPath = bridge().pathForFile;
+  if (!files) return [];
+  if (useMock) return [...files].map(file => file.name);
+  if (!toPath) return [];
+  return [...files].map(file => toPath(file)).filter(Boolean);
+}
+
+export function canReveal(): boolean {
+  return !!bridge().revealItem && !!workspace().root;
+}
+
+/** Shows the entry selected in the OS file manager. */
+export function revealEntry(path: string): void {
+  const reveal = bridge().revealItem;
+  if (reveal && workspace().root) void reveal(workspace().root, path);
+}
+
+/** The entry's absolute path, for "Copy path". */
+export function absoluteEntryPath(path: string): string {
+  const root = workspace().root.replace(/[\\/]+$/, '');
+  if (!root) return path;
+  const separator = root.includes('\\') ? '\\' : '/';
+  return `${root}${separator}${path.split('/').join(separator)}`;
+}
+
+/** True when deletes go to the OS trash (Electron); otherwise they are permanent. */
+export function deletesToTrash(): boolean {
+  return useMock || (!!bridge().trashItem && !!workspace().root);
+}
+
+/** Moves a file or folder to the OS trash, or deletes it for good when there is no trash (see deletesToTrash). */
+export async function deleteEntry(path: string): Promise<void> {
+  if (useMock) return mock.remove(path);
+  const trash = bridge().trashItem;
+  const root = workspace().root;
+  if (trash && root) {
+    await trash(root, path);
+    return;
+  }
+  entryResult(await request({ type: 'deleteEntry', path }));
+}
+
 export function onFileChanged(listener: (change: Extract<FilesReply, { type: 'fileChanged' }>) => void): () => void {
   changeListeners.add(listener);
   return () => changeListeners.delete(listener);
+}
+
+/** `editorOpen` / `editorDiff` from the engine. Paths are as sent (absolute or relative); see relativePath. */
+export function onEditorRequest(listener: (request: EditorRequest) => void): () => void {
+  editorListeners.add(listener);
+  return () => editorListeners.delete(listener);
 }
 
 /** Opens the file in the OS / external editor (existing engine message). */
@@ -186,7 +303,8 @@ export function parentPath(path: string): string {
   return index < 0 ? '' : path.slice(0, index);
 }
 
-function relativePath(path: string): string {
+/** Workspace-relative with forward slashes; a path outside the workspace comes back absolute (slashes fixed). */
+export function relativePath(path: string): string {
   const normal = path.replace(/\\/g, '/');
   const root = workspace().root.replace(/\\/g, '/').replace(/\/$/, '');
   if (root && normal.toLowerCase().startsWith(root.toLowerCase() + '/')) return normal.slice(root.length + 1);
@@ -387,6 +505,45 @@ const mock = {
       }
     }
     return all.filter(path => path.toLowerCase().includes(needle));
+  },
+  create(path: string, kind: 'file' | 'dir'): string {
+    const folder = parentPath(path);
+    const entries = mockTree[folder] ?? [];
+    if (entries.some(entry => entry.name === baseName(path))) throw new Error(`${path} already exists.`);
+    mockTree[folder] = [...entries, { name: baseName(path), kind }];
+    if (kind === 'dir') mockTree[path] = [];
+    else mockContent.set(path, '');
+    return path;
+  },
+  rename(from: string, to: string): string {
+    const entry = (mockTree[parentPath(from)] ?? []).find(item => item.name === baseName(from));
+    if (!entry) throw new Error(`No file at ${from}.`);
+    mockTree[parentPath(from)] = mockTree[parentPath(from)].filter(item => item !== entry);
+    mockTree[parentPath(to)] = [...(mockTree[parentPath(to)] ?? []), { ...entry, name: baseName(to) }];
+    if (mockContent.has(from)) {
+      mockContent.set(to, mockContent.get(from)!);
+      mockContent.delete(from);
+    }
+    return to;
+  },
+  copy(from: string, toFolder: string): string {
+    const entry = (mockTree[parentPath(from)] ?? []).find(item => item.name === baseName(from));
+    if (!entry) throw new Error(`No file at ${from}.`);
+    const taken = new Set((mockTree[toFolder] ?? []).map(item => item.name));
+    const dot = entry.name.lastIndexOf('.');
+    const stem = dot > 0 ? entry.name.slice(0, dot) : entry.name;
+    const extension = dot > 0 ? entry.name.slice(dot) : '';
+    let name = entry.name;
+    for (let index = 1; taken.has(name); index += 1) name = `${stem} copy${index > 1 ? ` ${index}` : ''}${extension}`;
+    const to = toFolder ? `${toFolder}/${name}` : name;
+    mockTree[toFolder] = [...(mockTree[toFolder] ?? []), { name, kind: entry.kind }];
+    if (mockContent.has(from)) mockContent.set(to, mockContent.get(from)!);
+    if (entry.kind === 'dir') mockTree[to] = [...(mockTree[from] ?? [])];
+    return to;
+  },
+  remove(path: string): void {
+    mockTree[parentPath(path)] = (mockTree[parentPath(path)] ?? []).filter(item => item.name !== baseName(path));
+    mockContent.delete(path);
   },
 };
 

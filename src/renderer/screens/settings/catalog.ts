@@ -11,8 +11,9 @@
  * Children are found by id prefix (`motion.organic.rename` hangs under `motion.organic`) plus `extraParents`.
  */
 import { post } from '../../bridge';
+import type { JSX } from 'solid-js';
 import type { SidebarFeatures } from '../../protocol';
-import { setShutdownArmed, shutdownArmed, viewState } from '../../store';
+import { viewState } from '../../store';
 import { feature, featureDefinitions, setFeature, type FeatureDefinition, type FeatureId, type FeatureValue } from '../../store/features';
 
 export type SectionId =
@@ -52,7 +53,7 @@ export const sections: SectionInfo[] = [
   { id: 'usage', title: 'Usage', lede: 'Plan limits and the usage meter.' },
   { id: 'toolpacks', title: 'Toolpacks', lede: 'Toolpacks and the Hub.' },
   { id: 'notifications', title: 'Notifications', lede: 'When Unify gets your attention.' },
-  { id: 'power', title: 'Power', lede: 'Shut the PC down when agents finish.', keywords: 'shutdown shut down idle sleep' },
+  { id: 'power', title: 'Power', lede: 'Send /shutdown in a chat to turn the PC off once agents finish.', keywords: 'shutdown shut down idle sleep' },
   { id: 'accessibility', title: 'Accessibility', lede: 'Reading comfort and larger targets.' },
   { id: 'accounts', title: 'Accounts', lede: 'Provider accounts Unify can run agents with.', keywords: 'provider sign in login api key claude codex cursor setup' },
   { id: 'sync', title: 'Sync', lede: 'Back up settings, rules and memory to a private GitHub repository.', keywords: 'github backup upload download token sign in login' },
@@ -71,7 +72,13 @@ export interface SettingRow {
   section: SectionId;
   label: string;
   description: string;
-  kind: 'toggle' | 'select' | 'number';
+  /** 'custom' rows (Agents screen) draw `control` instead of a built-in one; read and write go unused. */
+  kind: 'toggle' | 'select' | 'number' | 'custom';
+  control?: () => JSX.Element;
+  /** Id of the control the label names (`<label for>`), for custom rows with a text field. */
+  labelFor?: string;
+  /** Extra condition for showing the row, on top of its parents (e.g. Effort only when the model has efforts). */
+  shown?: () => boolean;
   options?: SettingOption[];
   min?: number;
   max?: number;
@@ -113,20 +120,14 @@ const numberRanges: Partial<Record<FeatureId, { min: number; max: number; step?:
 
 /** Shorter Settings wording where the definition's own text is long. */
 const descriptionOverrides: Partial<Record<FeatureId, string>> = {
-  'power.shutdownWhenIdle': 'Once every chat and subagent is idle, counts down 60 s and turns the PC off. Turns itself off after.',
-  'power.rememberArmed': 'Keep it armed if Unify restarts.',
+  'power.rememberArmed': 'Keep /shutdown armed if Unify restarts.',
 };
 
 /**
- * Features whose switch shows live engine state instead of the stored value. Turning on
- * `power.shutdownWhenIdle` is what arms the shutdown, so its switch follows the armed state.
+ * Features with no switch of their own. `power.shutdownWhenIdle` is armed with the `/shutdown` command and
+ * cancelled from the bar it shows by the composer.
  */
-const liveFeatures: Partial<Record<FeatureId, Pick<SettingRow, 'read' | 'write'>>> = {
-  'power.shutdownWhenIdle': {
-    read: () => shutdownArmed(),
-    write: value => setShutdownArmed(!!value),
-  },
-};
+const commandOnlyFeatures = new Set<FeatureId>(['power.shutdownWhenIdle']);
 
 /** Labels for option values; anything missing is humanised ("same-chat" → "Same chat"). */
 const optionLabels: Record<string, string> = {
@@ -153,7 +154,7 @@ function featureParent(id: FeatureId): string | undefined {
 }
 
 function featureRows(): SettingRow[] {
-  return (Object.keys(featureDefinitions) as FeatureId[]).map(id => {
+  return (Object.keys(featureDefinitions) as FeatureId[]).filter(id => !commandOnlyFeatures.has(id)).map(id => {
     const definition = featureDefinitions[id] as FeatureDefinition;
     const kind: SettingRow['kind'] =
       typeof definition.defaultValue === 'boolean' ? 'toggle' : typeof definition.defaultValue === 'number' ? 'number' : 'select';
@@ -171,7 +172,6 @@ function featureRows(): SettingRow[] {
       parent: featureParent(id),
       read: () => feature<FeatureValue>(id),
       write: value => setFeature(id, value),
-      ...liveFeatures[id],
     };
   });
 }

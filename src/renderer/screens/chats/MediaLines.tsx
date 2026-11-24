@@ -89,10 +89,10 @@ export function SubagentStrip(props: { media: MediaItem[]; sender: string }): JS
   const visible = () => props.media.slice(0, stripLimit);
   const more = () => Math.max(0, props.media.length - stripLimit);
   const imageCount = () => props.media.filter(isImage).length;
+  // Images speak for themselves, like a user's bubble; a count only helps when files are mixed in.
   const label = () => {
-    const count = imageCount();
-    if (count === props.media.length) {
-      return count === 1 ? '1 image' : `${count} images`;
+    if (imageCount() === props.media.length) {
+      return '';
     }
     return props.media.length === 1 ? '1 file' : `${props.media.length} files`;
   };
@@ -131,7 +131,9 @@ export function SubagentStrip(props: { media: MediaItem[]; sender: string }): JS
       onClick={event => event.stopPropagation()}
     >
       <div class="subagent-strip-line">
-        <span class="subagent-strip-label">{label()}</span>
+        <Show when={label()}>
+          <span class="subagent-strip-label">{label()}</span>
+        </Show>
         <div class="media-prints">
           <For each={visible()}>
             {media => {
@@ -150,7 +152,7 @@ export function SubagentStrip(props: { media: MediaItem[]; sender: string }): JS
                 >
                   <MediaThumb
                     media={media}
-                    size="strip"
+                    size={isImage(media) ? 'sent' : 'strip'}
                     active={expand.expandedKey() === key}
                     hidden={expand.standIns().has(key)}
                     ref={element => expand.prints.set(key, element)}

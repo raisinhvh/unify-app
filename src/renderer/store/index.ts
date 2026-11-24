@@ -126,6 +126,42 @@ export function onHostMessage(listener: Listener): () => void {
   return () => extraListeners.delete(listener);
 }
 
+/**
+ * Chat history on demand. The engine only pushes a timeline when a chat is selected, so a pane that shows a chat
+ * at startup (persisted layout) or in a pop-out asks for it with `loadChat`; the engine answers with its history
+ * and then `chatLoaded`. Requests made before `connectStore` wait for `ready`.
+ */
+const [loadingChats, setLoadingChats] = createSignal<ReadonlySet<string>>(new Set());
+const requestedChats = new Set<string>();
+const chatLoadTimers = new Map<string, number>();
+let connected = false;
+/** An engine that never answers must not leave a pane loading forever. */
+const chatLoadTimeoutMs = 10000;
+
+export const isChatLoading = (chatId: string): boolean => loadingChats().has(chatId);
+
+function finishChatLoad(chatId: string): void {
+  window.clearTimeout(chatLoadTimers.get(chatId));
+  chatLoadTimers.delete(chatId);
+  if (!loadingChats().has(chatId)) return;
+  const next = new Set(loadingChats());
+  next.delete(chatId);
+  setLoadingChats(next);
+}
+
+function postChatLoad(chatId: string): void {
+  post({ type: 'loadChat', sessionId: chatId });
+  chatLoadTimers.set(chatId, window.setTimeout(() => finishChatLoad(chatId), chatLoadTimeoutMs));
+}
+
+/** Makes sure a chat on screen has its history. Asks once per chat per window; safe to call on every mount. */
+export function requestChatHistory(chatId: string): void {
+  if (!chatId || requestedChats.has(chatId)) return;
+  requestedChats.add(chatId);
+  setLoadingChats(new Set(loadingChats()).add(chatId));
+  if (connected) postChatLoad(chatId);
+}
+
 function timelineOf(state: SidebarViewState, sessionId: string): SidebarTimelineItem[] {
   return (state.timeline[sessionId] ||= []);
 }
@@ -142,15 +178,20 @@ export function applyHostMessage(message: SidebarHostMessage): void {
         break;
       case 'modelState':
         setViewState(produce(state => {
-          state.models = message.models || [];
+          state.models = reconcile(message.models || [], { key: 'id' })(state.models);
           state.cursorBackends = message.cursorBackends || [];
           state.selectedModelId = message.selectedModelId;
           state.selectedSpeed = message.selectedSpeed;
           state.selectedEffort = message.selectedEffort;
         }));
         break;
+      case 'chatLoaded':
+        finishChatLoad(message.sessionId);
+        break;
       case 'sessionDeleted':
         markRead(message.sessionId);
+        finishChatLoad(message.sessionId);
+        requestedChats.delete(message.sessionId);
         setViewState(produce(state => {
           for (const table of [state.timeline, state.messages, state.subagents, state.runStates, state.queues, state.jobs]) {
             delete (table as Record<string, unknown>)[message.sessionId];
@@ -174,7 +215,7 @@ export function applyHostMessage(message: SidebarHostMessage): void {
         break;
       }
       case 'slashCommandsState':
-        setViewState('slashCommands', message.commands || []);
+        setViewState('slashCommands', reconcile(message.commands || [], { key: 'name' }));
         break;
       case 'scheduledPromptsState':
         setScheduledPrompts(message.prompts || []);
@@ -197,7 +238,7 @@ export function applyHostMessage(message: SidebarHostMessage): void {
         break;
       case 'accountsState':
         setViewState(produce(state => {
-          state.accounts = message.accounts || [];
+          state.accounts = reconcile(message.accounts || [], { key: 'id' })(state.accounts);
           state.cursor = message.cursor || state.cursor;
         }));
         break;
@@ -205,20 +246,20 @@ export function applyHostMessage(message: SidebarHostMessage): void {
         setViewState('usage', reconcile(message.usage || {}));
         break;
       case 'subagentProfilesState':
-        setViewState('subagentProfiles', message.profiles || []);
+        setViewState('subagentProfiles', reconcile(message.profiles || [], { key: 'name' }));
         break;
       case 'toolpacksState':
         setViewState(produce(state => {
-          state.toolpacks = message.packs || [];
+          state.toolpacks = reconcile(message.packs || [], { key: 'id' })(state.toolpacks);
           state.toolpackError = message.error;
         }));
         break;
       case 'instructionsState':
-        setViewState('instructions', message.items || []);
+        setViewState('instructions', reconcile(message.items || [], { key: 'id' }));
         break;
       case 'customizeState':
         setViewState(produce(state => {
-          state.features = message.features || state.features;
+          if (message.features) state.features = reconcile(message.features)(state.features);
           state.nameModel = message.nameModel || {};
           state.reviewModel = message.reviewModel || {};
           state.summaryModel = message.summaryModel || {};
@@ -285,7 +326,8 @@ export function applyHostMessage(message: SidebarHostMessage): void {
           if (!event.detail && previous?.detail) event.detail = previous.detail;
           state.tools = state.tools.filter(item => item.id !== event.id).concat(event);
           const sessionId = message.sessionId || state.activeSessionId;
-          if (sessionId && event.kind !== 'edit' && event.kind !== 'subagent') {
+          // Edit calls get their own row (live edit preview); the Timeline batches them like other tools when that feature is off.
+          if (sessionId && event.kind !== 'subagent') {
             const timeline = timelineOf(state, sessionId);
             const id = message.entryId || `tool:${event.id}`;
             const entry = timeline.find(item => item.id === id);
@@ -311,17 +353,24 @@ export function applyHostMessage(message: SidebarHostMessage): void {
           const extras = message as SubagentEventExtras;
           if (extras.effort) agent.effort = extras.effort;
           if (extras.speed) agent.speed = extras.speed;
-          if (message.text || message.media?.length) {
+          if (message.text || message.media?.length || message.tool?.edit || message.tool?.state) {
             const id = message.messageId || `message:${agent.messages.length}`;
             const entry = agent.messages.find(item => item.id === id);
             if (entry) {
               entry.text += message.text || '';
               if (message.media?.length) entry.media = [...(entry.media || []), ...message.media];
+              // Live edit preview: later events for the same call carry the grown diff and the final state.
+              // Undefined fields (a media-only update has no detail) keep what the row already shows.
+              if (message.tool) {
+                const defined = Object.fromEntries(Object.entries(message.tool).filter(([, value]) => value !== undefined));
+                entry.tool = { ...entry.tool, ...defined } as typeof message.tool;
+              }
             } else {
               agent.messages.push({
                 id,
                 role: message.role || 'assistant',
                 text: message.text || '',
+                ...(message.from ? { from: message.from } : {}),
                 ...(message.tool ? { tool: message.tool } : {}),
                 ...(message.media?.length ? { media: message.media } : {}),
               });
@@ -390,25 +439,31 @@ export function applyHostMessage(message: SidebarHostMessage): void {
         }));
         break;
       case 'toolState':
-        setViewState('tools', message.tools || []);
+        setViewState('tools', reconcile(message.tools || [], { key: 'id' }));
         break;
       case 'diff':
         setViewState('diffs', diffs => diffs.filter(item => item.id !== message.diff.id).concat(message.diff));
         break;
       case 'diffState':
-        setViewState('diffs', message.diffs || []);
+        setViewState('diffs', reconcile(message.diffs || [], { key: 'id' }));
+        break;
+      case 'chatDiffState':
+        // Reconcile keeps unchanged rows' proxies so their <For> rows don't remount on every push.
+        if (!viewState.chatDiffs) setViewState('chatDiffs', { [message.sessionId]: message.diffs || [] });
+        else setViewState('chatDiffs', message.sessionId, reconcile(message.diffs || [], { key: 'id' }));
         break;
       case 'timelineState':
-        setViewState(produce(state => {
-          // The engine does not save agent messages in a chat's history, so a replay or compaction would drop them.
-          const timeline = message.timeline || [];
-          const kept = (state.timeline[message.sessionId] || []).filter(
-            item => item.kind === 'agentMessage' && !timeline.some(entry => entry.id === item.id),
-          );
-          state.timeline[message.sessionId] = [...timeline, ...kept];
-          state.subagents[message.sessionId] = message.subagents || {};
-          state.tools = [];
-        }));
+      {
+        // The engine does not save agent messages in a chat's history, so a replay or compaction would drop them.
+        const timeline = message.timeline || [];
+        const kept = (viewState.timeline[message.sessionId] || []).filter(
+          item => item.kind === 'agentMessage' && !timeline.some(entry => entry.id === item.id),
+        );
+        // Reconcile by id: a resent timeline only touches entries that changed, so rows don't remount.
+        setViewState('timeline', message.sessionId, reconcile([...timeline, ...kept], { key: 'id' }));
+        setViewState('subagents', message.sessionId, reconcile(message.subagents || {}));
+        setViewState('tools', []);
+      }
         break;
       case 'approvalState':
         setViewState('approvalMode', message.mode);
@@ -486,5 +541,10 @@ export const isRunning = (sessionId: string): boolean => (viewState.runStates[se
 export function connectStore(): () => void {
   const stop = bridge().onMessage(applyHostMessage);
   post({ type: 'ready' });
-  return stop;
+  connected = true;
+  for (const chatId of loadingChats()) postChatLoad(chatId);
+  return () => {
+    connected = false;
+    stop();
+  };
 }

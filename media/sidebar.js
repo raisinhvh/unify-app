@@ -1389,13 +1389,13 @@
   let memoryKey = '';
   function renderMemory() {
     const root = el('memory-settings');
-    const memory = state.memory || { enabled: true, folder: '~/.dsh/memory', notes: 0, synced: false };
+    const memory = state.memory || { enabled: true, folder: '~/.unify/memory', notes: 0, synced: false };
     const key = JSON.stringify(memory);
     if (key === memoryKey && root.childElementCount) return;
     memoryKey = key;
     rebuild(root, () => {
       const row = settingRow('memory', { icon: 'neurology', title: 'Memory',
-        desc: 'Agents read and save notes, conventions and reusable code: global ones for every project, and each project\'s own in .dsh/memory. They update them without asking and save only what a future task could reuse.' },
+        desc: 'Agents read and save notes, conventions and reusable code: global ones for every project, and each project\'s own in .unify/memory. They update them without asking and save only what a future task could reuse.' },
         memory.enabled, () => send({ type: 'setMemory', enabled: !memory.enabled }));
       const detail = document.createElement('div'); detail.className = 'feature-detail memory-detail';
       const where = document.createElement('p'); where.className = 'helper';
@@ -2037,7 +2037,7 @@
   }
 
   const experimentalInfo = [
-    { key: 'autoCompact', icon: 'compress', title: 'Auto compaction', desc: 'Once a chat\'s conversation passes the limit below (not counting the system prompt and tools), your next message starts a fresh session. Earlier messages are split by topic into parts saved in .dsh/transcripts. The agent always sees each part\'s summary and reads a part when it needs the detail.' },
+    { key: 'autoCompact', icon: 'compress', title: 'Auto compaction', desc: 'Once a chat\'s conversation passes the limit below (not counting the system prompt and tools), your next message starts a fresh session. Earlier messages are split by topic into parts saved in .unify/transcripts. The agent always sees each part\'s summary and reads a part when it needs the detail.' },
     { key: 'trimTools', icon: 'content_cut', title: 'Trim built-in tools', desc: 'Leaves out Claude Code tools that cannot work in DSH or that DSH replaces: native subagents and workflows, scheduled wake-ups, worktrees, and claude.ai artifacts and cards. Saves several thousand tokens on every request. Turn off to get them back.' },
     { key: 'batching', icon: 'stacks', title: 'Advanced batching', desc: 'Gives agents a batch tool: several DSH tool calls (subagents, file summaries, chat history, toolpacks) and batch-only file reads and searches run in parallel and come back as one result. A call can also use an earlier call\'s result, such as finding something and then changing it. Shown as one card with a row per call.' },
   ];

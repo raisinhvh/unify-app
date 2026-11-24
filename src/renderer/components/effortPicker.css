@@ -1,0 +1,22 @@
+/* EffortPicker: the pill reuses ModelPicker's compact line; this narrows the popover to a short vertical list. */
+
+.effort-picker {
+  /* Short labels never need to truncate, so the model line gives up space first. */
+  flex-shrink: 0;
+}
+
+.popover.effort-picker-popover {
+  width: auto;
+  min-width: 160px;
+}
+
+.effort-picker-list {
+  padding: 4px;
+  outline: none;
+}
+
+.effort-picker-divider {
+  height: 1px;
+  margin: 4px -4px;
+  background: var(--border);
+}

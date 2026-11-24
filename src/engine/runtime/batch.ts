@@ -28,11 +28,11 @@ const SKIP_DIRS = new Set(['.git', 'node_modules', '.unify', '.hg', '.svn', '__p
 export const MAX_FOREACH_RUNS = 50;
 const FOREACH_CONCURRENCY = 4;
 
-export const BATCH_INSTRUCTIONS = `Unify batch: ${BATCH_TOOL} runs several calls in one go and returns one combined result. From the first step of a task, put any two or more file reads, searches or listings in one ${BATCH_TOOL} instead of separate native read, grep, glob or shell calls. Read the part you are about to edit right before editing it: a range read with read_file ranges counts, so you need not read the whole file (edit tools require that). Use the shell only to run commands. Do the same for two or more Unify or toolpack calls, including chains: an argument "{{1.id}}" is a field of call 1's result (the call waits for it), after:[1] only orders, and forEach:"{{1.nodes}}" runs a call once per item ({{item.id}}). Inside a batch only, read_file {path, offset?, limit?, ranges?}, search {pattern, path?, glob?, ignore_case?, max_results?} and list_dir {path?} read the working copy; paths outside it need the user's approval unless Unify has full access, and read_file returns png, jpg and webp files as images.`;
+export const BATCH_INSTRUCTIONS = `From the first step, put two or more reads, searches or listings in one ${BATCH_TOOL} instead of separate native calls; do the same for two or more Unify or toolpack calls, including chains. Use the shell only to run commands. Read the part you are about to edit right before editing it; a ranges read counts.`;
 
 export const BATCH_TOOL_SCHEMA = {
   name: BATCH_TOOL,
-  description: `Run up to ${MAX_BATCH_CALLS} calls; one combined result, one entry per call in order. A call may name any other Unify tool (toolpack tools included), or a batch-only file tool: read_file {path, offset? (first line, 1-based), limit? (lines, default ${DEFAULT_READ_LINES}), ranges? (one or more {startLine, endLine}; 2 lines of context, merged when they overlap, with a short hash for edit_range)}, search {pattern (JS regex), path?, glob? (e.g. "*.ts"), ignore_case?, max_results? (default 100)}, list_dir {path?}. Paths are relative to the working copy; paths outside it ask the user first unless Unify has full access. read_file returns png, jpg and webp files as images. Calls run in parallel unless they depend on earlier ones:
+  description: `Run up to ${MAX_BATCH_CALLS} calls; one combined result, one entry per call in order. A call may name any other Unify tool (toolpack tools included), or a batch-only file tool: read_file {path, offset? (first line, 1-based), limit? (lines, default ${DEFAULT_READ_LINES}), ranges? (one or more {startLine, endLine}; 2 lines of context, merged when they overlap, with a short hash for edit_range; a ranges read counts as reading before editing)}, search {pattern (JS regex), path?, glob? (e.g. "*.ts"), ignore_case?, max_results? (default 100)}, list_dir {path?}. Paths are relative to the working copy; paths outside it ask the user first unless Unify has full access. read_file returns png, jpg and webp files as images. Calls run in parallel unless they depend on earlier ones:
 - "{{N.path}}" in any argument string is part of call N's JSON result, e.g. "{{1.id}}", "{{1.nodes[0].id}}", "{{1.nodes[*].id}}" (a list). As the whole string it keeps its type; inside a longer string it becomes text. "{{N}}" is the whole result, or its text when it is not JSON.
 - after: [N, ...] waits for those calls without using their results (e.g. a write, then a read).
 - forEach: "{{N.path}}" runs the call once per item of that list (at most ${MAX_FOREACH_RUNS}); "{{item}}" or "{{item.id}}" is the current item.
@@ -512,6 +512,8 @@ async function searchTool(cwd: string, args: Record<string, unknown>, options: B
   const max = Math.max(1, Math.min(Math.floor(Number(args.max_results) || 100), 500));
   const start = await insidePath(cwd, args.path, options.outside);
   const hits: string[] = [];
+  const groups: string[] = [];
+  let lastFile: string | undefined;
   let scanned = 0;
   let truncated = false;
   const visit = async (path: string): Promise<void> => {
@@ -537,13 +539,19 @@ async function searchTool(cwd: string, args: Record<string, unknown>, options: B
     for (let index = 0; index < lines.length; index += 1) {
       if (!regex.test(lines[index])) continue;
       const line = lines[index].trim();
-      hits.push(`${rel}:${index + 1}: ${line.length > 200 ? `${line.slice(0, 200)}…` : line}`);
+      if (lastFile !== rel) {
+        if (groups.length) groups.push('');
+        groups.push(rel);
+        lastFile = rel;
+      }
+      hits.push(`${index + 1}: ${line.length > 200 ? `${line.slice(0, 200)}…` : line}`);
+      groups.push(`  ${hits[hits.length - 1]}`);
       if (hits.length >= max) { truncated = true; return; }
     }
   };
   await visit(start);
   if (!hits.length) return { text: 'No matches.' };
-  return { text: `${hits.join('\n')}${truncated ? `\n[stopped at ${hits.length} matches; narrow path or glob]` : ''}` };
+  return { text: `${groups.join('\n')}${truncated ? `\n[stopped at ${hits.length} matches; narrow path or glob]` : ''}` };
 }
 
 async function listDirTool(cwd: string, args: Record<string, unknown>, options: BatchFileOptions): Promise<BatchOutcome> {

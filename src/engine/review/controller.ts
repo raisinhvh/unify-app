@@ -202,7 +202,8 @@ export class ReviewController implements vscode.TextDocumentContentProvider, vsc
   }
 
   public async openAll(): Promise<void> {
-    const pending = this.pending();
+    // Auto-applied edits stay listed until kept or undone, so they are reviewable too.
+    const pending = this.list().filter(item => item.state !== 'rejected');
     if (!pending.length) return;
     const resources = pending.map(proposal => [
       vscode.Uri.file(join(this.root.fsPath, proposal.path)),

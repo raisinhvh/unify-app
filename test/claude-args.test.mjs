@@ -34,7 +34,7 @@ const bundled = await build({
       : 'export const cliCommand = provider => provider; export const cliEnv = () => ({ HOME: "home" });' }));
   } }],
 });
-const { ClaudeCliRuntime, LEAN_SYSTEM, OAuthCliRuntime, claudeArgs, parseUsage, resetUnifySettingsCache } = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
+const { ClaudeCliRuntime, LEAN_SYSTEM, OAuthCliRuntime, claudeArgs, parseUsage, resetUnifySettingsCache, userContent } = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
 resetUnifySettingsCache();
 after(async () => {
   if (originalUnifyHome === undefined) delete process.env.UNIFY_HOME;
@@ -71,6 +71,46 @@ test('a lean turn loads no Claude Code prompt, tools, MCP servers or session', (
   assert.equal(args[args.indexOf('--system-prompt') + 1], LEAN_SYSTEM);
   assert.equal(args[args.indexOf('--model') + 1], 'configured-model');
   assert.equal(args[args.indexOf('--effort') + 1], 'low');
+});
+
+test('an explorer turn gets read-only tools, only the Unify bridge and a short prompt', () => {
+  const args = claudeArgs(turn({ explorer: true, delegate, system: 'Brief' }));
+  assert.equal(args[args.indexOf('--tools') + 1], 'Read,Grep,Glob');
+  assert.ok(args.includes('--strict-mcp-config'));
+  assert.ok(args.includes('--disable-slash-commands'));
+  assert.ok(!args.includes('--safe-mode'), '--safe-mode would drop the Unify bridge');
+  assert.ok(!args.includes('--append-system-prompt'));
+  assert.equal(args[args.indexOf('--mcp-config') + 1], JSON.stringify({ mcpServers: { unify: delegate } }));
+  assert.match(args[args.indexOf('--system-prompt') + 1], /Brief/);
+});
+
+test('claude.ai connectors are off for every turn; explorers also skip CLAUDE.md, memory and skills', async () => {
+  for (const explorer of [false, true]) {
+    const result = new ClaudeCliRuntime().prompt(turn({ explorer }));
+    const { env } = launches.at(-1).options;
+    assert.equal(env.ENABLE_CLAUDEAI_MCP_SERVERS, 'false');
+    assert.equal(env.CLAUDE_CODE_DISABLE_CLAUDE_MDS, explorer ? '1' : undefined);
+    assert.equal(env.CLAUDE_CODE_DISABLE_AUTO_MEMORY, explorer ? '1' : undefined);
+    launches.at(-1).child.emit('close', 0);
+    await result;
+  }
+});
+
+test('attached images go inline as base64 blocks; unreadable or unsupported ones as paths', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const png = join(isolatedUnifyHome, 'shot.png');
+  await writeFile(png, Buffer.from([1, 2, 3]));
+  const blocks = userContent('Look', [{ path: png, mimeType: 'image/png' }, { path: join(isolatedUnifyHome, 'x.bmp'), mimeType: 'image/bmp' }]);
+  assert.deepEqual(blocks[0], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AQID' } });
+  assert.equal(blocks.length, 2);
+  assert.match(blocks[1].text, /^Look
+
+Attached images (shown above; saved at):
+.*shot.png
+
+Attached images (view these files):
+.*x.bmp$/);
+  assert.deepEqual(userContent('Hi', undefined), [{ type: 'text', text: 'Hi' }]);
 });
 
 test('lean turns use the five-minute cache, other turns only when asked', async () => {

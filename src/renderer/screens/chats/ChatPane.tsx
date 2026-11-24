@@ -5,7 +5,7 @@
  *   job       JobBar.tsx: the chat's /job run (round, phase, criteria), only while it has one
  *   timeline  Timeline.tsx
  *   status    what the agent is doing right now (loader + label) while it runs
- *   changes   files this turn edited, with review / apply / reject (DSH renderChanges)
+ *   changes   files this chat edited, with review / keep / undo (DSH renderChanges); every pane shows its own chat's
  *   composer  Composer.tsx, bound to this chat
  *
  * Pop out (only where the bridge has `popOut`) moves the chat into its own window and closes this pane.
@@ -21,6 +21,7 @@ import { ModelPicker } from '../../components/ModelPicker';
 import { Composer } from './Composer';
 import { JobBar } from './JobBar';
 import { ScheduleBar } from './ScheduleBar';
+import { ShutdownBar } from './ShutdownBar';
 import { Timeline } from './Timeline';
 import './chat-pane.css';
 
@@ -43,14 +44,20 @@ function StatusLine(props: { chatId: string }): JSX.Element {
 
 const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
 
-/** Pending edits from the engine (DSH renderChanges). Diffs are global in the protocol, so only the focused pane shows them. */
-function ChangesBar(props: { visible: boolean }): JSX.Element {
+/**
+ * This chat's edits (DSH renderChanges), from the engine's per-chat `chatDiffState`. Edits are applied as the agent
+ * makes them, so most rows are "applied": Keep settles one, Undo reverts it. Rows not applied yet offer Apply / Reject.
+ */
+function ChangesBar(props: { chatId: string }): JSX.Element {
   const [expanded, setExpanded] = createSignal(false);
-  const pending = () => viewState.diffs.filter(diff => (diff.state || 'pending') === 'pending');
+  const pending = () => (viewState.chatDiffs?.[props.chatId] ?? []).filter(diff => diff.state !== 'rejected');
+  const allApplied = () => pending().every(diff => diff.state === 'applied');
+  const send = (message: { type: 'reviewAll' | 'rejectAll' | 'applyAll' } | { type: 'openDiff' | 'applyDiff' | 'rejectDiff'; diffId: string }) =>
+    post({ ...message, chatId: props.chatId });
   const additions = () => pending().reduce((sum, diff) => sum + (diff.additions || 0), 0);
   const deletions = () => pending().reduce((sum, diff) => sum + (diff.deletions || 0), 0);
   return (
-    <Collapse open={props.visible && pending().length > 0}>
+    <Collapse open={pending().length > 0}>
       <div class="changes">
         <div class="changes-head">
           <button type="button" class="changes-toggle" aria-expanded={expanded()} onClick={() => setExpanded(!expanded())}>
@@ -76,24 +83,27 @@ function ChangesBar(props: { visible: boolean }): JSX.Element {
               </For>
             </Show>
           </button>
-          <Button variant="text" onClick={() => post({ type: 'reviewAll' })}>Review</Button>
-          <Button variant="text" onClick={() => post({ type: 'rejectAll' })}>Reject all</Button>
-          <Button variant="secondary" onClick={() => post({ type: 'applyAll' })}>Apply all</Button>
+          <Button variant="text" onClick={() => send({ type: 'reviewAll' })}>Review</Button>
+          <Button variant="text" onClick={() => send({ type: 'rejectAll' })}>{allApplied() ? 'Undo all' : 'Reject all'}</Button>
+          <Button variant="secondary" onClick={() => send({ type: 'applyAll' })}>{allApplied() ? 'Keep all' : 'Apply all'}</Button>
         </div>
         <Collapse open={expanded()}>
           <div class="changes-list">
             <For each={pending()}>
-              {diff => (
-                <div class="changes-row">
-                  <button type="button" class="changes-path" title={diff.summary} onClick={() => post({ type: 'openDiff', diffId: diff.id })}>
-                    {diff.path}
-                  </button>
-                  <span class="diff-add">+{diff.additions || 0}</span>
-                  <span class="diff-del">−{diff.deletions || 0}</span>
-                  <IconButton icon="close" label="Reject" size="small" onClick={() => post({ type: 'rejectDiff', diffId: diff.id })} />
-                  <IconButton icon="check" label="Apply" size="small" onClick={() => post({ type: 'applyDiff', diffId: diff.id })} />
-                </div>
-              )}
+              {diff => {
+                const applied = () => diff.state === 'applied';
+                return (
+                  <div class="changes-row">
+                    <button type="button" class="changes-path" title={diff.summary} onClick={() => send({ type: 'openDiff', diffId: diff.id })}>
+                      {diff.path}
+                    </button>
+                    <span class="diff-add">+{diff.additions || 0}</span>
+                    <span class="diff-del">−{diff.deletions || 0}</span>
+                    <IconButton icon="close" label={applied() ? 'Undo' : 'Reject'} size="small" onClick={() => send({ type: 'rejectDiff', diffId: diff.id })} />
+                    <IconButton icon="check" label={applied() ? 'Keep' : 'Apply'} size="small" onClick={() => send({ type: 'applyDiff', diffId: diff.id })} />
+                  </div>
+                );
+              }}
             </For>
           </div>
         </Collapse>
@@ -177,7 +187,6 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
           class="chat-pane-model"
           chatId={chatId()}
           variant="compact"
-          effortSpeed={false}
           placement="bottom-end"
           title="Model"
         />
@@ -199,8 +208,9 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
       <Timeline chatId={chatId()} />
       <div class="chat-pane-bottom">
         <StatusLine chatId={chatId()} />
-        <ChangesBar visible={props.context.focused()} />
+        <ChangesBar chatId={chatId()} />
         <ScheduleBar chatId={chatId()} />
+        <ShutdownBar />
         <Composer chatId={chatId()} placeholder="Reply, @ to mention a file" />
       </div>
       <Menu anchor={moreAnchor()} open={moreOpen()} onClose={() => setMoreOpen(false)} placement="bottom-end" items={moreItems()} onSelect={onMore} />

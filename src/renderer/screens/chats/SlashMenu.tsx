@@ -37,6 +37,7 @@ const builtInCommands: SlashCommand[] = [
   { name: 'job', description: 'Plan a checklist from your spec, then work and review until it passes', usage: '/job <spec>' },
   { name: 'permissions', description: 'Show or change the approval mode for this workspace', usage: '/permissions [ask | auto | full]' },
   { name: 'schedule', description: 'Send a prompt later, after a delay or at a time', usage: '/schedule <when> <prompt>' },
+  { name: 'shutdown', description: 'Shut the PC down once every chat and subagent finishes', usage: '/shutdown' },
 ];
 
 /** Quick "when" picks after "/schedule " (forms the engine's parser accepts), with the time each stands for. */

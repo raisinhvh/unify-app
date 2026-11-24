@@ -1,8 +1,11 @@
 /**
  * A chat's timeline (Figma 12 Chat pane 306:3030). Port of DSH renderFeed (media/sidebar.js ~922-1153):
  *
- *   - consecutive tool entries form one batch (edit and subagent tools are skipped, diffs are not shown here);
+ *   - consecutive tool entries form one batch (subagent tools are skipped, diff entries are not shown here);
  *     a batch shows its latest call with a count and expands into every call, nested batch children included
+ *   - edit calls are their own row with the change streaming in as a small diff (EditPreview), in subagent chats
+ *     too; a running subagent's row shows the line its current edit is writing. With `chats.liveEditPreview` off
+ *     edit calls are plain tool rows in the batch
  *   - user messages: bubble with attached images; an edit button while idle; editing posts editMessage
  *   - assistant messages: markdown
  *   - approvals and questions are flat rows on a guide line, resolved ones collapse to a summary
@@ -15,16 +18,24 @@
  *
  * Rows are keyed by timeline id, so streaming text and state changes update in place instead of remounting.
  */
-import { createMemo, createSignal, For, Match, Show, Switch, type Accessor, type JSX } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch, type Accessor, type JSX } from 'solid-js';
 import { Button, Icon, Loader, actionLoader, toolAction, tooltip, type IconName } from '../../components';
 import { isImage, mediaKey, openMediaViewer, thumbSource, uniqueMedia, type MediaItem } from '../../components/media';
 import { Collapse, Presence } from '../../motion';
 import { post } from '../../bridge';
-import type { SidebarInternalTool, SidebarMedia, SidebarSubagent, SidebarTimelineItem, SidebarToolEvent } from '../../protocol';
-import { isRunning, userImages, viewState } from '../../store';
+import type {
+  SidebarEditPreview,
+  SidebarInternalTool,
+  SidebarMedia,
+  SidebarSubagent,
+  SidebarTimelineItem,
+  SidebarToolEvent,
+} from '../../protocol';
+import { isChatLoading, isRunning, requestChatHistory, userImages, viewState } from '../../store';
 import { feature } from '../../store/features';
 import { AgentMessageRow } from './AgentMessageRow';
 import { ExplorerRow } from './ExplorerRow';
+import { EditRow, LiveEditDetail } from './EditPreview';
 import { InternalIcon, internalLoader } from './internalTools';
 import { SubagentStrip, ToolMediaLine } from './MediaLines';
 import { QuestionRow } from './QuestionRow';
@@ -46,7 +57,8 @@ function isExplorer(chatId: string, agentId: string): boolean {
 
 type FeedItem =
   | Exclude<SidebarTimelineItem, { kind: 'tool' } | { kind: 'diff' }>
-  | { id: string; kind: 'toolbatch'; tools: SidebarToolEvent[] };
+  | { id: string; kind: 'toolbatch'; tools: SidebarToolEvent[] }
+  | { id: string; kind: 'edit'; event: SidebarToolEvent };
 
 /**
  * Attachments arrive as their own `mediaMessage` entry (`user-media:<turn>` or `history-media:<index>`), not on the
@@ -76,9 +88,14 @@ function pairUserMedia(timeline: SidebarTimelineItem[]): {
 
 function feedItems(timeline: SidebarTimelineItem[], hiddenMedia: ReadonlySet<string>): FeedItem[] {
   const items: FeedItem[] = [];
+  const editRows = feature('chats.liveEditPreview');
   for (const entry of timeline) {
     if (entry.kind === 'tool') {
-      if (entry.event.kind === 'edit' || entry.event.kind === 'subagent') continue;
+      if (entry.event.kind === 'subagent') continue;
+      if (entry.event.kind === 'edit' && editRows) {
+        items.push({ id: entry.id, kind: 'edit', event: entry.event });
+        continue;
+      }
       const last = items[items.length - 1];
       if (last?.kind === 'toolbatch') last.tools.push(entry.event);
       else items.push({ id: `batch:${entry.id}`, kind: 'toolbatch', tools: [entry.event] });
@@ -548,6 +565,7 @@ function SubagentRow(props: {
     }
     return uniqueMedia(props.agent.sentToParent ?? [], props.parentMedia());
   });
+  const liveEdit = createMemo(() => (feature('chats.liveEditPreview') ? subagentLiveEdit(props.agent) : undefined));
   return (
     <div class="feed-entry subagent-entry">
       <button type="button" class="subagent-row" onClick={() => props.onOpen()}>
@@ -568,7 +586,10 @@ function SubagentRow(props: {
         <Show when={props.agent.model}>
           <span class="subagent-model">{props.agent.model}</span>
         </Show>
-        <span class="subagent-detail">{subagentDetail(props.agent)}</span>
+        <LiveEditDetail
+          edit={liveEdit()}
+          text={subagentDetail(props.agent)}
+        />
         <Icon name="chevronRight" size={12} />
       </button>
       <Collapse open={strip().length > 0}>
@@ -582,6 +603,31 @@ function SubagentRow(props: {
 }
 
 type SubagentMessage = SidebarSubagent['messages'][number];
+
+/** The edit a running subagent is making right now: its latest tool call, while that call is an edit still running. */
+function subagentLiveEdit(agent: SidebarSubagent): SidebarEditPreview | undefined {
+  if (agent.state !== 'running') return undefined;
+  for (let index = agent.messages.length - 1; index >= 0; index -= 1) {
+    const message = agent.messages[index];
+    if (message.role !== 'tool' || !message.tool) continue;
+    const edit = message.tool.edit;
+    if (!edit) return undefined;
+    return message.tool.state === 'running' || (message.tool.state === undefined && edit.streaming) ? edit : undefined;
+  }
+  return undefined;
+}
+
+/** A subagent tool call's state: only edit calls send one; a call still "running" when the agent stopped did not finish. */
+function subagentToolState(agent: SidebarSubagent, tool: NonNullable<SubagentMessage['tool']>): SidebarToolEvent['state'] {
+  const state = tool.state ?? (tool.edit?.streaming ? 'running' : 'complete');
+  if (state !== 'running' || agent.state === 'running') return state;
+  return agent.state === 'cancelled' || agent.state === 'error' ? 'cancelled' : 'complete';
+}
+
+/** Edit calls get the live edit row when `chats.liveEditPreview` is on. */
+function isEditRow(tool: NonNullable<SubagentMessage['tool']>): boolean {
+  return tool.kind === 'edit' && feature('chats.liveEditPreview');
+}
 
 /** A message's images as an inline media entry (send_media and the like), captioned by its text. */
 function messageMedia(message: SubagentMessage, caption: boolean): Extract<FeedItem, { kind: 'media' }> {
@@ -624,10 +670,26 @@ function SubagentFeed(props: { agent: SidebarSubagent; onBack: () => void }): JS
       <For each={props.agent.messages}>
         {message => (
           <Switch fallback={<AssistantMessage text={message.text} />}>
+            <Match when={message.role === 'user'}>
+              <div class="feed-entry bubble user">
+                <Show when={message.from}>
+                  <div class="bubble-from type-caption">From {message.from}</div>
+                </Show>
+                <div class="message-content">{message.text}</div>
+              </div>
+            </Match>
             <Match when={message.role === 'tool' && message.tool}>
               {tool => (
                 <>
-                  <SubagentToolEntry tool={{ ...tool(), state: 'complete' }} />
+                  <Show
+                    when={isEditRow(tool())}
+                    fallback={<SubagentToolEntry tool={{ ...tool(), state: subagentToolState(props.agent, tool()) }} />}
+                  >
+                    <EditRow
+                      id={`${props.agent.id}:${message.id}`}
+                      tool={{ ...tool(), state: subagentToolState(props.agent, tool()) }}
+                    />
+                  </Show>
                   <Show when={message.media?.length}>
                     <MediaEntry
                       item={messageMedia(message, false)}
@@ -687,6 +749,14 @@ function FeedRow(props: {
           <Match when={item().kind === 'toolbatch' && (item() as Extract<FeedItem, { kind: 'toolbatch' }>)}>
             {batch => <ToolBatch item={batch()} />}
           </Match>
+          <Match when={item().kind === 'edit' && (item() as Extract<FeedItem, { kind: 'edit' }>)}>
+            {edit => (
+              <EditRow
+                id={edit().event.id}
+                tool={edit().event}
+              />
+            )}
+          </Match>
           <Match when={item().kind === 'approval' && (item() as Extract<FeedItem, { kind: 'approval' }>)}>
             {approval => <ApprovalRow item={approval()} />}
           </Match>
@@ -742,6 +812,11 @@ function inlineMediaKeys(timeline: SidebarTimelineItem[]): ReadonlySet<string> {
 
 export function Timeline(props: { chatId: string }): JSX.Element {
   const [openedSubagent, setOpenedSubagent] = createSignal('');
+  // DEV: `?subagent=<agentId>` opens that subagent's feed so tools/shot.mjs can capture it.
+  if (import.meta.env.DEV) {
+    const subagent = new URLSearchParams(window.location.search).get('subagent');
+    if (subagent) window.setTimeout(() => setOpenedSubagent(subagent), 300);
+  }
   let scroller: HTMLDivElement | undefined;
   let stickToBottom = true;
 
@@ -755,6 +830,20 @@ export function Timeline(props: { chatId: string }): JSX.Element {
   });
 
   const parentMedia = createMemo(() => inlineMediaKeys(viewState.timeline[props.chatId] || []));
+
+  // A chat restored on screen (app start, pop-out) asks the engine for its history.
+  createEffect(() => requestChatHistory(props.chatId));
+  const loading = () => isChatLoading(props.chatId) && !feed().order.length;
+  // The loader waits a beat so a history that arrives at once does not flash it.
+  const [showLoader, setShowLoader] = createSignal(false);
+  createEffect(() => {
+    if (!loading()) {
+      setShowLoader(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowLoader(true), 150);
+    onCleanup(() => window.clearTimeout(timer));
+  });
 
   const openedAgent = () => (openedSubagent() ? viewState.subagents[props.chatId]?.[openedSubagent()] : undefined);
 
@@ -780,9 +869,15 @@ export function Timeline(props: { chatId: string }): JSX.Element {
         when={openedAgent()}
         fallback={
           <div class="feed">
-            <Show when={!feed().order.length}>
+            <Show when={!feed().order.length && !loading()}>
               <div class="feed-empty type-caption">Ask about your workspace or request an edit.</div>
             </Show>
+            <Presence when={showLoader()} from={0.96}>
+              <div class="feed-loading type-caption" role="status">
+                <Loader id={actionLoader.loading} size={16} />
+                <span>Loading history</span>
+              </div>
+            </Presence>
             <For each={feed().order}>
               {id => (
                 <FeedRow

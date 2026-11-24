@@ -25,6 +25,11 @@ export interface ToolpackRegistryOptions {
     compile(source: string): Promise<string>;
     callTimeoutMs?: number;
     maxOutputChars?: number;
+    /**
+     * Runs after the pack stopped and before its folder is deleted (the pack's uninstall script). It reports its
+     * own failures; the folder is deleted either way.
+     */
+    beforeRemove?: (id: string, folder: string) => Promise<void>;
 }
 
 interface Entry {
@@ -119,7 +124,9 @@ export class ToolpackRegistry {
         if (!this.entries.has(id)) return;
         await this.halt(id);
         this.entries.delete(id);
-        await fs.rm(join(this.options.dir, basename(id)), { recursive: true, force: true });
+        const folder = join(this.options.dir, basename(id));
+        await this.options.beforeRemove?.(id, folder).catch(() => undefined);
+        await fs.rm(folder, { recursive: true, force: true });
         this.emit();
     }
 

@@ -1,0 +1,61 @@
+/* "Shutting down on finish" by the composer (ShutdownBar.tsx). Same card as the schedule bar. */
+
+/* Inside a flex column the bar keeps its height. */
+.shutdown-bar-slot {
+  flex: none;
+}
+
+/* Padding, not margin: the slot is a Collapse that measures its content's offsetHeight. */
+.shutdown-bar-frame {
+  padding: 0 0 2px;
+}
+
+.shutdown-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 4px 0 10px;
+  box-sizing: border-box;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.shutdown-bar-glyph {
+  display: grid;
+  flex: none;
+  place-items: center;
+  color: var(--text3);
+}
+
+.shutdown-bar-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The last minute before the PC goes off reads as a warning. */
+.shutdown-bar.counting .shutdown-bar-glyph,
+.shutdown-bar.counting .shutdown-bar-label {
+  color: var(--warn, var(--text));
+}
+
+.shutdown-bar-cancel.button {
+  flex: none;
+  height: 22px;
+  padding: 0 6px;
+  color: var(--text2);
+  font-size: 12px;
+  border-radius: var(--radius-row);
+}
+
+.shutdown-bar-cancel.button:hover {
+  color: var(--text);
+  background: var(--hover);
+}

@@ -147,6 +147,7 @@ function createTestRegistry() {
           "const fs = require('node:fs');\nfs.writeFileSync('install-ran.txt', 'ok', 'utf8');\n",
           'utf8',
         );
+        await writeFile(join(destination, 'uninstall.js'), "console.log('cleaned up');\n", 'utf8');
       }
     },
     async publish() {
@@ -198,6 +199,9 @@ test('installHubPack returns the script without consent and runs it only when al
     { ok: false, needsScriptConsent: true, scriptName: 'install.js' },
   );
   assert.match(blocked.scriptText, /install-ran\.txt/);
+  // The uninstall script, which runs when the pack is removed, is shown on the same consent.
+  assert.equal(blocked.uninstallScriptName, 'uninstall.js');
+  assert.match(blocked.uninstallScriptText, /cleaned up/);
   assert.equal(blocked.error, undefined);
   assert.equal(existsSync(join(toolpacksDir, 'notes')), false, 'nothing was installed');
   assert.ok(!firstReplies.some(step => step.state === 'done'));

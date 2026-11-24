@@ -1,0 +1,55 @@
+/* Which project folder a panel shows (name, then a dimmer short path that gives way first when narrow). */
+.project-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  color: var(--text2);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+
+.project-switch:hover,
+.project-switch.open {
+  color: var(--text);
+  border-color: var(--text3);
+}
+
+.project-switch > svg {
+  flex: none;
+  color: var(--text3);
+}
+
+.project-switch-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.project-switch-path {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text3);
+}
+
+.project-switch-chevron {
+  margin-left: auto;
+  transition: rotate 200ms ease;
+}
+
+.project-switch.open .project-switch-chevron {
+  rotate: 180deg;
+}

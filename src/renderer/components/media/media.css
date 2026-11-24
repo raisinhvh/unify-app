@@ -32,6 +32,29 @@
   max-width: 56px;
 }
 
+/* A subagent's image in the parent chat: like a user bubble's image (180×112), at half the size, uncropped. */
+.media-print-sent {
+  height: auto;
+  min-width: 0;
+  max-width: 100%;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  cursor: zoom-in;
+}
+
+.media-print.media-print-sent img {
+  height: auto;
+  max-width: min(90px, 100%);
+  max-height: 56px;
+  border-radius: var(--radius-control);
+}
+
+.media-print-sent.media-print-active {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .media-print img {
   display: block;
   height: 100%;

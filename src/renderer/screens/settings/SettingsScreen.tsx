@@ -1,7 +1,8 @@
 /**
  * Settings (Figma 25 Settings 306:4645, 25b Themes 306:12078), extended to every option that exists.
  *
- *   nav         "Settings", a search field (Ctrl F) and one row per section; the highlight slides between rows
+ *   nav         "Settings", a search field (Ctrl F) and one folder row per section (Files tree look); the highlight
+ *               slides between rows
  *   page        one section at a time: title, lede, then flat rows with hairlines (file-system look, no pills)
  *   search      while the field has text, a results page lists matching rows from every section, plus links to
  *               hand-drawn sections whose keywords match ("walnut" → Appearance)
@@ -76,7 +77,8 @@ function focusSearch(): void {
 
 /* Nav */
 
-const navRowPitch = 34;
+/** Row height (28) plus the 2px gap; must match .settings-nav-row in settings.css. */
+const navRowPitch = 30;
 
 function SettingsNav(): JSX.Element {
   const index = () => sectionIds.indexOf(activeSection());
@@ -142,7 +144,8 @@ function SettingsNav(): JSX.Element {
               ref={element => pressable(element, 0.98)}
               onClick={() => openSettingsSection(section.id)}
             >
-              {section.title}
+              <Icon name="folder" class="tree-folder-icon" />
+              <span class="tree-label">{section.title}</span>
             </button>
           )}
         </For>
@@ -496,15 +499,15 @@ function shutdownStatus(): ShutdownStatus | undefined {
     case 'shuttingDown':
       return { label: 'Shutting down', caption: 'Saving chats, then turning the PC off.', warn: true };
     case 'failed':
-      return { label: 'The shutdown did not go through', caption: 'The system refused it. Turn the switch on again to retry.', warn: true };
+      return { label: 'The shutdown did not go through', caption: 'The system refused it. Send /shutdown again to retry.', warn: true };
     default:
       return shutdown.armed ? { label: 'Armed', caption: 'Waiting for every chat and subagent to finish.' } : undefined;
   }
 }
 
 function PowerPage(): JSX.Element {
-  // While it only waits, the switch above disarms; a countdown gets its own Cancel.
-  const cancellable = () => viewState.shutdown?.phase === 'countdown';
+  // Armed with /shutdown in a chat; there is no switch, so any armed state gets Cancel.
+  const cancellable = () => viewState.shutdown?.armed === true;
   return (
     <>
       <SettingRows rows={rowsIn('power')} />

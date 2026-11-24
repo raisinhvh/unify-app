@@ -58,8 +58,15 @@ export type HubInstallTarget = 'this' | 'all';
 export interface HubInstallRequest {
   id: string;
   target?: HubInstallTarget;
-  /** Set once the user was shown `scriptName`/`scriptText` and agreed to run the pack's install script. */
+  /** Set once the user was shown the pack's install/uninstall scripts and agreed to run them. */
   allowScript?: boolean;
+}
+
+/** A program a pack's setup will install, shown on the Hub's consent dialog. */
+export interface HubInstallPackage {
+  title: string;
+  /** Exactly what runs, e.g. `winget install --id ImageMagick.ImageMagick --exact`. */
+  command: string;
 }
 
 export interface HubInstallProgress {
@@ -77,6 +84,13 @@ export interface HubInstallProgress {
  * a Roblox Studio plugin into the Plugins folder. `setup.json` lists every step, automatic or not, so Unify can
  * show a "Finish setup" checklist: automatic steps report whether they worked, manual steps tell the user exactly
  * what to do (with a path to copy or a link to open) and can be ticked off.
+ *
+ * Steps can also name a package (`install`) that Unify installs itself with winget, brew or pip.
+ *
+ * A pack whose install script puts anything outside the pack folder (a plugin in another app's folder, a
+ * registry value, an app preference) ships an uninstall script (uninstall.js / uninstall.ps1 / uninstall.sh) that
+ * undoes exactly that. Unify runs it when the pack is removed, after the pack stopped and before its folder
+ * (`data/` included) is deleted. Programs installed through `install` stay: other apps may use them.
  *
  * Strings in `detail`, `copy`, `open` and `check.exists` expand `${PACK}` (the installed pack folder), `${HOME}`
  * and any environment variable (`${LOCALAPPDATA}`, `${APPDATA}`, ...). Paths use forward slashes in the file.
@@ -96,10 +110,37 @@ export interface PackSetupStepDefinition {
   copy?: string;
   /** A URL or folder to open (shown as an Open button). */
   open?: string;
-  /** Done when this path exists. Without a check, auto steps are done when the script succeeded, manual steps when ticked. */
-  check?: { exists: string };
+  /**
+   * Done when this path exists (`exists`) or this program is found (`command`, a bare name like "magick": PATH,
+   * the system PATH saved in the registry on Windows, and WinGet's Links folder). Without a check, auto steps are
+   * done when the script succeeded, manual steps when ticked.
+   */
+  check?: PackSetupCheck;
+  /**
+   * A package Unify installs by itself (see PackSetupInstall). Required steps install during the pack install,
+   * after the user agreed to the listed commands; optional ones get an Install button on the checklist.
+   */
+  install?: PackSetupInstall;
+  /** Not needed for the pack to work: never installed without a click, and never shown as failed. */
+  optional?: boolean;
   /** Only on these platforms (`process.platform` values). All platforms when missing. */
   platforms?: string[];
+}
+
+export interface PackSetupCheck {
+  /** A path, or several: done when any exists. */
+  exists?: string | string[];
+  command?: string;
+}
+
+/**
+ * Package ids per installer. Unify uses the first one that fits the platform: Windows `winget`, macOS `brew`,
+ * then `pip` anywhere (`python -m pip install --user`). Give a `check` so a package already installed is skipped.
+ */
+export interface PackSetupInstall {
+  winget?: string;
+  brew?: string;
+  pip?: string;
 }
 
 export interface PackSetupDefinition {
@@ -121,6 +162,9 @@ export interface PackSetupStep {
   status: PackSetupStepStatus;
   /** Why an automatic step failed (the script's last output line, or a missing path). */
   error?: string;
+  /** The command Unify runs for this step's package on this platform (shown on its Install button). */
+  install?: string;
+  optional?: boolean;
 }
 
 /** The checklist for one installed pack. `pending` counts steps that are not done. */

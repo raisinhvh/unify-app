@@ -20,7 +20,7 @@ import type { AudienceTarget } from './unify/knowledgeAudience';
 import { chatTitlePrompt, firstMessageTitle, parseChatName, uniqueChatIcon } from './runtime/naming';
 import { isUsageLimit } from './runtime/limits';
 import { SELF_HOSTED, SELF_HOSTED_ENV, normalizeBaseURL, parseModelIds } from './runtime/selfHosted';
-import { MAX_MEDIA_BYTES, MAX_MEDIA_FILES, MEDIA_INSTRUCTIONS, SEND_MEDIA, SEND_MEDIA_TOOL, SHOW_YOUR_WORK_INSTRUCTIONS } from './runtime/media';
+import { linkedImagePaths, MAX_MEDIA_BYTES, MAX_MEDIA_FILES, MEDIA_INSTRUCTIONS, SEND_MEDIA, SEND_MEDIA_TOOL, SHOW_YOUR_WORK_INSTRUCTIONS } from './runtime/media';
 import { GENERATE_IMAGE, GENERATE_IMAGE_TOOL, generateImage, IMAGE_INSTRUCTIONS, imageFileName, inputImageProblem, MAX_INPUT_BYTES, parseImageRequest, pngSize } from './runtime/imageGen';
 import { DiskMediaStore, MediaRecord, createShownMediaTracker } from './unify/media';
 import { ToolpackRegistry } from './toolpacks/registry';
@@ -54,6 +54,7 @@ import { shouldKeepAlive } from './runtime/keepAlive';
 import { Checkpoint, checkpointHandoff, parseCheckpoint } from './runtime/checkpoint';
 import { displayTool, internalToolOf } from './runtime/toolDisplay';
 import type { InternalToolPlaces } from './unify/internalRows';
+import { LiveEdits } from './unify/liveEdits';
 import { applyRangeEdit } from './runtime/rangeEdit';
 import { chatCompactRequest, compactStep, CompactWatch, CONTINUE_AFTER_CHECKPOINT, MAX_SUBAGENT_SEGMENTS, sendCompactRequest, subagentCheckpoint, subagentCompactRequest, subagentResumeTask, takeFollowUp, TurnChannel } from './runtime/midTurnCompact';
 import { trimSessionImages } from './runtime/imageTrim';
@@ -76,6 +77,7 @@ import { requestPaths } from './unify/requests/state';
 import { searchWorkspaceFiles } from './unify/requests/workspace';
 import { getGithubAuth, clearGithubToken, onGithubAuthChange, refreshGithubAuth, setGithubToken } from './unify/github';
 import type { GithubAuth } from './unify/github';
+import { runPackUninstallScript } from './hub/setup';
 import { createShutdownController, ShutdownActivity, ShutdownController } from './unify/power';
 import { nativeAgentsBlocked } from './runtime/nativeAgents';
 import { addAllowRule, commandPrefix, isAlwaysAllowed } from './sidebar/allowRules';
@@ -122,6 +124,8 @@ interface SessionRecord {
   pendingMirror?: boolean;
   /** The agent edits the real workspace instead of a private copy (unify.runtime.mirror off when the chat was created). */
   direct?: boolean;
+  /** Started with no project folder: the agent works in its own empty scratch folder (see scratchRoot). */
+  noFolder?: boolean;
   effort?: string;
   /** Smart Auto picks this chat's model for each message the user sends. */
   smartAuto?: boolean;
@@ -131,6 +135,8 @@ interface SessionRecord {
 }
 
 const SESSIONS_KEY = 'unify.ide.sessions.v1';
+/** Chats kept per project folder; creating one more deletes the folder's oldest idle chat. */
+const MAX_CHATS_PER_PROJECT = 25;
 const SELECTED_MODEL_KEY = 'unify.ide.selectedModel.v1';
 const ACTIVE_SESSION_KEY = 'unify.ide.activeSession.v1';
 const CURSOR_MODELS_KEY = 'unify.ide.cursorModels.v1';
@@ -199,8 +205,6 @@ interface ChildRun {
   files: string[];
   /** Images sent to the parent while it runs, in order; the parent's own chat id is the store ref. */
   sentToParent: MediaItem[];
-  /** Images already delivered inline to the parent, so the sentToParent strip can omit them. */
-  inlineInParent: Set<string>;
   /** Images to hand the parent as content blocks when this run's result is returned. */
   queuedForParent: { item: MediaItem; shownBy: string }[];
   /** Started with background: true, so it outlives an interrupted parent turn. */
@@ -259,6 +263,8 @@ interface Chat {
   turnEntryId: string;
   segment: number;
   startedTools: Set<string>;
+  /** Live edit preview of this turn's edit calls (spec "Live edit preview in chat"); reset when a turn starts. */
+  liveEdits?: LiveEdits;
   subagentIds: Set<string>;
   delegationToolIds: Set<string>;
   subagentText: Map<string, string>;
@@ -362,6 +368,11 @@ class ExtensionHost implements vscode.Disposable {
       workerPath: join(context.extensionPath, 'dist', 'toolpack-worker.js'),
       nodePath: () => vscode.workspace.getConfiguration('unify').get<string>('runtime.nodePath') || undefined,
       compile: async source => (await (await import('esbuild')).transform(source, { loader: 'ts', format: 'cjs', target: 'node20' })).code,
+      // Undo what the pack's install script put outside its folder (plugins, add-ons, registry values).
+      beforeRemove: async (_id, folder) => {
+        await runPackUninstallScript(folder, { unifyHome: unifyHome() })
+          .catch(error => this.output.appendLine(`Uninstall script for ${folder} failed: ${error instanceof Error ? error.message : String(error)}`));
+      },
     });
     this.sidebar = new UnifySidebarProvider(context.extensionUri, message => this.onSidebarMessage(message), (id, timeline, subagents) => {
       if (this.deletedSessions.has(id)) return;
@@ -369,7 +380,7 @@ class ExtensionHost implements vscode.Disposable {
       if (!this.timelineTimer) this.timelineTimer = setTimeout(() => {
         this.timelineTimer = undefined;
         void this.context.workspaceState.update(TIMELINES_KEY, this.timelines);
-      }, 300);
+      }, 1500); // Streaming changes the timeline constantly; dispose and shutdown flush the rest.
     }, vscode.Uri.joinPath(context.globalStorageUri, 'media'));
     this.sync = new ConfigSync(context, {
       roots: () => ({ ...this.instructionRoots(), toolpacks: join(context.globalStorageUri.fsPath, 'toolpacks'), memory: this.memorySettings().global }),
@@ -423,6 +434,8 @@ class ExtensionHost implements vscode.Disposable {
       { dispose: agentBus.onEvent(event => this.onAgentBusEvent(event)) },
       { dispose: onUnifyFeatureChange(() => { this.postUnifyFeatures(); this.refreshCustomize(); }) },
       ...this.watchGlobalInstructions(),
+      ...this.watchKnowledge(),
+      { dispose: () => { if (this.knowledgeTimer) clearTimeout(this.knowledgeTimer); } },
       // Before the write, so a watcher scan cannot see the save first; after it, for format-on-save output.
       vscode.workspace.onWillSaveTextDocument(event => this.adoptSave(event.document)),
       vscode.workspace.onDidSaveTextDocument(document => this.adoptSave(document)),
@@ -598,6 +611,8 @@ class ExtensionHost implements vscode.Disposable {
     this.sidebar.postMessage({ type: 'runState', sessionId: chatId, state, label });
     // Keep the agent roster's state in step with the chat's turn.
     if (this.chats.has(chatId)) agentBus.update(chatId, { state: state === 'idle' ? 'idle' : 'running' });
+    // A turn may have written rules or notes the watchers missed (e.g. a folder created mid-turn).
+    if (state === 'idle') this.pushKnowledge();
   }
 
   /** Desktop notification for a request or a finished turn, shown only while the window is unfocused. */
@@ -617,7 +632,7 @@ class ExtensionHost implements vscode.Disposable {
     };
     add(chat.mirror.cwd);
     add(chat.record.project?.path);
-    for (const folder of vscode.workspace.workspaceFolders || []) if (folder.uri.scheme === 'file') add(folder.uri.fsPath);
+    if (!chat.record.noFolder) for (const folder of vscode.workspace.workspaceFolders || []) if (folder.uri.scheme === 'file') add(folder.uri.fsPath);
     const vault = this.memorySettings().global;
     let dataHome = unifyHome();
     try { dataHome = realpathSync(dataHome); } catch { /* the data folder may not exist yet */ }
@@ -643,6 +658,8 @@ class ExtensionHost implements vscode.Disposable {
       pendingApprovals: this.pendingApprovals.size,
       pendingQuestions: this.pendingQuestions.size,
       runningProcesses,
+      // Only this project's prompts: others never fire here, so they must not hold the PC on forever.
+      pendingScheduled: this.scheduled?.list().length ?? 0,
     };
   }
 
@@ -685,6 +702,19 @@ class ExtensionHost implements vscode.Disposable {
     const message: AgentMessage = event.message;
     const chatId = this.agentRoster.get(message.toId)?.chatId ?? this.agentRoster.get(message.fromId)?.chatId ?? message.toId;
     this.sidebar.postMessage({ type: 'agentMessage', chatId, message });
+    // A message to a subagent also lands in that subagent's own feed, as an incoming bubble.
+    const recipient = [...this.childRuns].find(run => run.agentId === message.toId);
+    if (recipient) {
+      this.sidebar.postMessage({
+        type: 'subagentEvent',
+        sessionId: recipient.parent.record.id,
+        agentId: recipient.agentId,
+        messageId: `agentMessage:${message.id}`,
+        role: 'user',
+        text: message.text,
+        ...(message.fromId === recipient.parent.record.id ? {} : { from: message.fromName }),
+      });
+    }
   }
 
   /** Undelivered messages from other agents, formatted to lead the chat's next turn. */
@@ -738,6 +768,17 @@ class ExtensionHost implements vscode.Disposable {
     if (!folder || folder.uri.scheme !== 'file') throw new Error('Open a local workspace folder to use Unify.');
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace to run Unify tools.');
     return folder;
+  }
+
+  /** The empty folder a no-folder chat works in, kept in extension storage. */
+  private scratchPath(id: string): string { return join(this.context.globalStorageUri.fsPath, 'scratch', id); }
+
+  /** The folder a chat's agent works on: the workspace, or a no-folder chat's scratch folder (created on demand). */
+  private async chatRoot(record: SessionRecord): Promise<vscode.Uri> {
+    if (!record.noFolder) return this.root().uri;
+    const path = this.scratchPath(record.id);
+    await mkdir(path, { recursive: true });
+    return vscode.Uri.file(path);
   }
 
   private sessions(): SessionRecord[] { return this.context.workspaceState.get<SessionRecord[]>(SESSIONS_KEY, []); }
@@ -852,6 +893,8 @@ class ExtensionHost implements vscode.Disposable {
     this.shownMedia?.forget(id);
     this.pendingParentMedia?.delete(id);
     await rm(join(this.context.globalStorageUri.fsPath, 'media', id), { recursive: true, force: true }).catch(() => undefined);
+    // A no-folder chat's files are all in its scratch folder.
+    if (record.noFolder) { await rm(this.scratchPath(id), { recursive: true, force: true }).catch(() => undefined); return; }
     const folder = vscode.workspace.workspaceFolders?.[0];
     // Direct chats save transcript parts in the real workspace; a mirror's go with the mirror.
     if (folder?.uri.scheme === 'file' && record.parts) await rm(join(folder.uri.fsPath, ...partsDir(id).split('/')), { recursive: true, force: true }).catch(() => undefined);
@@ -861,7 +904,7 @@ class ExtensionHost implements vscode.Disposable {
   private refreshSessions(): void {
     this.sidebar.postMessage({
       type: 'sessionState',
-      sessions: this.sessions().map(item => ({ id: item.id, name: item.name, icon: item.icon, project: item.project || this.currentProject(), updatedAt: item.updatedAt, contextTokens: item.contextTokens, explorerTokens: item.explorerTokens })),
+      sessions: this.sessions().map(item => ({ id: item.id, name: item.name, icon: item.icon, project: item.noFolder ? undefined : item.project || this.currentProject(), updatedAt: item.updatedAt, contextTokens: item.contextTokens, explorerTokens: item.explorerTokens })),
       activeSessionId: this.active?.id || this.context.workspaceState.get<string>(ACTIVE_SESSION_KEY),
     });
   }
@@ -1237,7 +1280,8 @@ class ExtensionHost implements vscode.Disposable {
    */
   private askInChat(sessionId: string | undefined, title: string, detail: string, background = false, prefix?: string): Promise<boolean> {
     if (!sessionId) return Promise.resolve(false);
-    const project = this.sessions().find(item => item.id === sessionId)?.project?.path || this.currentProject()?.path;
+    const asking = this.sessions().find(item => item.id === sessionId);
+    const project = asking?.noFolder ? undefined : asking?.project?.path || this.currentProject()?.path;
     // A remembered "Always allow" answers before the user is asked.
     if (prefix && project && isAlwaysAllowed(project, prefix)) return Promise.resolve(true);
     const id = randomUUID();
@@ -1490,8 +1534,8 @@ class ExtensionHost implements vscode.Disposable {
     this.refreshSessions();
   }
 
-  private async newChat(project?: SidebarProject): Promise<void> {
-    this.root();
+  private async newChat(project?: SidebarProject, noFolder = false): Promise<void> {
+    if (!noFolder) this.root();
     // A Smart Auto chat starts on its smartest model; the decider replaces it when the first message is sent.
     const auto = this.selectedModel === SMART_AUTO;
     const first = auto ? this.smartAutoCandidates()[0] : undefined;
@@ -1504,9 +1548,11 @@ class ExtensionHost implements vscode.Disposable {
     // provider only when the chat is used, rather than blocking the New button.
     const record: SessionRecord = {
       id: randomUUID(), mirrorId: randomUUID(), pendingMirror: true, name: 'New chat',
-      project: project || this.currentProject(),
+      project: noFolder ? undefined : project || this.currentProject(),
       // Fixed per chat: the provider session is tied to its working directory.
-      direct: vscode.workspace.getConfiguration('unify').get<boolean>('runtime.mirror', true) ? undefined : true,
+      // A no-folder chat's scratch folder has nothing to protect, so it is edited directly.
+      direct: noFolder || !vscode.workspace.getConfiguration('unify').get<boolean>('runtime.mirror', true) ? true : undefined,
+      ...(noFolder ? { noFolder: true } : {}),
       modelName: model.name, provider: model.provider, backend: model.backend,
       codexRuntime: getUnifyFeature('agents.codexRuntime'),
       effort: auto ? first?.effort : this.choiceFor(selected).effort, accountId: account?.id || 'cursor-login', updatedAt: Date.now(),
@@ -1519,6 +1565,28 @@ class ExtensionHost implements vscode.Disposable {
     this.postRun(record.id, 'idle', 'Ready');
     this.trimChats();
     await saved;
+    await this.pruneProjectChats(record);
+  }
+
+  /**
+   * Keeps at most MAX_CHATS_PER_PROJECT chats per project folder: a new chat deletes that folder's oldest
+   * chats beyond the limit. Chats still working (turn, job, background agents) are never pruned.
+   */
+  private async pruneProjectChats(created: SessionRecord): Promise<void> {
+    const projectPath = (record: SessionRecord): string | undefined => record.noFolder ? undefined : (record.project || this.currentProject())?.path;
+    const path = projectPath(created);
+    const busy = (id: string): boolean => {
+      const chat = this.chats.get(id);
+      return !!chat && (chat.running || chat.jobActive || chat.background.size > 0);
+    };
+    const inProject = this.sessions()
+      .filter(item => projectPath(item) === path)
+      .sort((first, second) => (second.updatedAt || 0) - (first.updatedAt || 0));
+    const excess = inProject.slice(MAX_CHATS_PER_PROJECT).filter(item => item.id !== created.id && !busy(item.id));
+    for (const item of excess) {
+      try { await this.deleteSession(item.id); }
+      catch (error) { this.output.appendLine(`Pruning old chat ${item.id} failed: ${String(error)}`); }
+    }
   }
 
   private addChat(record: SessionRecord, mirror: WorkspaceMirror, review: ReviewController, ownerId: string, slot?: { runtime: AcpRuntime; key: string }): Chat {
@@ -1581,7 +1649,7 @@ class ExtensionHost implements vscode.Disposable {
 
   private async prepareChat(record: SessionRecord): Promise<Chat> {
     this.restoreJob(record);
-    const root = this.root();
+    const root = { uri: await this.chatRoot(record) };
     let route: ResolvedRoute;
     if (record.provider === 'cursor-acp') {
       route = { model: { name: record.modelName, provider: record.provider, backend: record.backend, account: 'cursor-login', enabled: true } };
@@ -1750,6 +1818,36 @@ class ExtensionHost implements vscode.Disposable {
     });
   }
 
+  /**
+   * Rules, skills and memory notes changed on disk (by an agent, another window or an editor) refresh the
+   * Knowledge screen. Bases are folders that already exist (the shim cannot watch a missing folder), so the
+   * memory folder is watched through its parent.
+   */
+  private watchKnowledge(): vscode.Disposable[] {
+    const { unifyHome, agentsHome, workspace } = this.instructionRoots();
+    const targets: [string, string][] = [];
+    if (unifyHome) targets.push([unifyHome, '{AGENTS.md,skills/**,memory/**}']);
+    if (agentsHome) targets.push([agentsHome, 'skills/**']);
+    if (workspace) targets.push([workspace, '{AGENTS.md,.unify/memory/**,.agents/skills/**}']);
+    return targets.flatMap(([base, pattern]) => {
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(base), pattern));
+      const push = (): void => this.pushKnowledge();
+      return [watcher, watcher.onDidCreate(push), watcher.onDidChange(push), watcher.onDidDelete(push)];
+    });
+  }
+
+  private knowledgeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Sends a fresh Knowledge list (debounced), so the screen shows new or removed items without a restart. */
+  private pushKnowledge(): void {
+    if (this.knowledgeTimer) clearTimeout(this.knowledgeTimer);
+    this.knowledgeTimer = setTimeout(() => {
+      this.knowledgeTimer = undefined;
+      void this.handleUnhandledSidebarMessage({ type: 'knowledgeList' } as unknown as SidebarWebviewMessage)
+        .catch(error => this.output.appendLine(`Knowledge refresh failed: ${error instanceof Error ? error.message : String(error)}`));
+    }, 250);
+  }
+
   private async syncAction(action: Extract<SidebarWebviewMessage, { type: 'syncAction' }>['action']): Promise<void> {
     if (action === 'connect') await this.connectSync();
     else if (action === 'upload') await this.sync.uploadNow();
@@ -1886,17 +1984,8 @@ class ExtensionHost implements vscode.Disposable {
     const pending = this.pendingParentMedia?.get(chatId);
     if (!pending?.length) return result;
     this.pendingParentMedia?.delete(chatId);
-    const { blocks, hashes } = await this.agentImageBlocks(chatId, pending);
+    const { blocks } = await this.agentImageBlocks(chatId, pending);
     if (!blocks.length) return result;
-    // Images that went inline leave the run's sentToParent strip; the run object is kept here even
-    // after the subagent finished, so its card still updates.
-    const delivered = new Set<ChildRun>();
-    for (const entry of pending) {
-      if (!entry.run || !hashes.includes(entry.item.hash)) continue;
-      entry.run.inlineInParent.add(entry.item.hash);
-      delivered.add(entry.run);
-    }
-    for (const run of delivered) this.publishSentToParent(run);
     return { ...result, content: [{ type: 'text', text: result.text }, ...blocks] };
   }
 
@@ -1915,9 +2004,7 @@ class ExtensionHost implements vscode.Disposable {
       this.pendingParentMedia?.set(chatId, pending);
       return [];
     }
-    const { blocks, hashes } = await this.agentImageBlocks(chatId, queued);
-    for (const hash of hashes) run.inlineInParent.add(hash);
-    this.publishSentToParent(run);
+    const { blocks } = await this.agentImageBlocks(chatId, queued);
     return blocks;
   }
 
@@ -2236,7 +2323,8 @@ class ExtensionHost implements vscode.Disposable {
     const breakMessage = (): void => { if (segmentHasText) { segment++; segmentHasText = false; } };
     const loggedTools = new Set<string>();
     const places = this.internalPlaces(chat);
-    const postTool = (id: string, title: string, detail: string | undefined, state: 'running' | 'complete' | 'error'): void => {
+    const liveEdits = chat.liveEdits = new LiveEdits(chat.mirror.cwd);
+    const postTool =(id: string, title: string, detail: string | undefined, state: 'running' | 'complete' | 'error', error?: string): void => {
       const batch = isBatchTool(title) || (title === 'MCP tool' && isBatchTool(detail || ''));
       // Batch sub-calls are logged one by one by runBatch.
       if (!batch && !loggedTools.has(id)) { loggedTools.add(id); this.logTool(chat, title, detail); }
@@ -2244,11 +2332,38 @@ class ExtensionHost implements vscode.Disposable {
       if (chat.delegationToolIds.has(id)) return;
       if (state === 'running') this.noteRead(chat.mirror.cwd, readToolPath(title, detail));
       const shown = displayTool(title, detail);
-      this.sidebar.postMessage({ type: 'toolEvent', sessionId: record.id, entryId: `tool:${turnEntryId}:${id}`, event: {
+      const edit = state === 'running' ? liveEdits.current(id) : liveEdits.finish(id, state === 'error' ? error || 'The edit failed.' : undefined);
+      const event: SidebarToolEvent = {
         id, kind: shown.kind, title: shown.title, detail: shown.detail, full: shown.full, state,
         internal: internalToolOf({ tool: title, input: detail }, places),
-      } });
+        ...(edit ? { edit } : {}),
+      };
+      // A finished call reports no detail; the copy kept for the image repost keeps the one it started with.
+      const previous = postedTools.get(id);
+      postedTools.set(id, { ...event, detail: event.detail ?? previous?.detail, full: event.full ?? previous?.full, internal: event.internal ?? previous?.internal });
+      this.sidebar.postMessage({ type: 'toolEvent', sessionId: record.id, entryId: `tool:${turnEntryId}:${id}`, event });
       if (state === 'running') { segment++; segmentHasText = false; }
+    };
+    const postedTools = new Map<string, SidebarToolEvent>();
+    // Images a tool returned (Read of a screenshot) go on the same row once stored, as on the ACP path.
+    const postToolImages = (id: string, _title: string, content: unknown[]): void => {
+      if (chat.delegationToolIds.has(id)) return;
+      const images = this.incomingImages(content);
+      if (!images.length) return;
+      void this.storeIncomingImages(record.id, images, 'the main agent').then(items => {
+        const event = postedTools.get(id);
+        if (!items.length || !event || this.deletedSessions.has(record.id)) return;
+        this.sidebar.postMessage({ type: 'toolEvent', sessionId: record.id, entryId: `tool:${turnEntryId}:${id}`, event: { ...event, media: items } });
+      });
+    };
+    // Live edit preview: the edit row appears and its diff grows while the call's input is still streaming.
+    const postToolInput = (event: { id: string; name: string; input: Record<string, unknown>; streaming: boolean }): void => {
+      const edit = liveEdits.update(event.id, event.name, event.input, event.streaming);
+      if (!edit || this.deletedSessions.has(record.id)) return;
+      const shown = displayTool(event.name, JSON.stringify(event.input).slice(0, 500));
+      this.sidebar.postMessage({ type: 'toolEvent', sessionId: record.id, entryId: `tool:${turnEntryId}:${event.id}`, event: {
+        id: event.id, kind: 'edit', title: shown.title, detail: shown.detail, full: shown.full, state: 'running', edit,
+      } });
     };
     const postSubagent = (event: { id: string; title?: string; model?: string; prompt?: string; state?: 'running' | 'complete' | 'error'; text?: string; messageId?: string; role?: 'assistant' | 'tool' }): void => {
       // Harnesses report a subagent's tool call as "Title: detail" or "Title detail". A lazy title keeps a
@@ -2439,6 +2554,8 @@ class ExtensionHost implements vscode.Disposable {
           onText: postText,
           onMessageBreak: breakMessage,
           onTool: postTool,
+          onToolImages: postToolImages,
+          onToolInput: postToolInput,
           onSubagent: postSubagent,
           images: imageAttachments,
           delegate: this.delegateConfig(chat.ownerId),
@@ -2502,6 +2619,7 @@ class ExtensionHost implements vscode.Disposable {
       const reply = chat.turnReply;
       const cancelled = chat.cancelRequested;
       chat.turnReply = '';
+      if (!cancelled && reply) await this.showLinkedImages(chat, reply).catch(error => this.output.appendLine(`Linked images failed: ${String(error)}`));
       await this.saveTranscripts();
       // The agent is done; a slow scan of the working copy should not read as the agent still thinking.
       const scanStarted = Date.now();
@@ -2716,7 +2834,9 @@ class ExtensionHost implements vscode.Disposable {
       ? 'You edit the user\'s files directly; they and other agents may change files between turns, so re-read before editing.'
       : 'Edits stay in this working copy until the user reviews them.';
     return [
-      `Unify IDE, workspace ${this.root().name}. ${scope}`,
+      chat.record.noFolder
+        ? `Unify IDE, no project folder: this chat works in its own empty scratch folder (${chat.mirror.cwd}). Write any files there.`
+        : `Unify IDE, workspace ${this.root().name}. ${scope}`,
       'End a turn only when everything the user asked for is done, or you are blocked on a question only they can answer. Answering the latest message, a checkpoint, a compaction or a resumed session is not a stopping point: carry on with any unfinished requests in the same turn.',
       BACKGROUND_CLEANUP,
       shellInstructions(),
@@ -2797,7 +2917,7 @@ class ExtensionHost implements vscode.Disposable {
       if (result.skipped) this.output.appendLine(`Global memory not synced: ${result.skipped}.`);
       const changed = [...result.saved, ...result.conflicts];
       // Notes agents saved reach GitHub a few seconds later, as one commit.
-      if (changed.length) this.sync.schedule();
+      if (changed.length) { this.sync.schedule(); this.pushKnowledge(); }
       if (after && changed.length) {
         const conflicts = result.conflicts.length ? `; kept both versions of ${result.conflicts.length} edited elsewhere` : '';
         this.sidebar.postMessage({ type: 'toolEvent', sessionId: chat.record.id, entryId: `tool:${chat.turnEntryId}:memory`, event: {
@@ -3570,7 +3690,9 @@ class ExtensionHost implements vscode.Disposable {
         const item = this.mediaItem(record, basename(source));
         // A generated image's own box is already a new visual: fill it even if the bytes are familiar.
         const already = into ? undefined : this.shownMedia.shownBy(chatId, record.hash);
-        if (already) { duplicates.push(already); continue; }
+        // A subagent may pass on an image only it has shown (one it read); its parent has not seen it yet.
+        if (from && from.sentToParent.some(sent => sent.hash === record.hash)) { duplicates.push(by); continue; }
+        if (already && !(from && already === by)) { duplicates.push(already); continue; }
         items.push(item);
         candidates.push({ item, record });
       } catch (error) { problems.push(`${raw}: ${error instanceof Error ? error.message : String(error)}`); }
@@ -3604,10 +3726,46 @@ class ExtensionHost implements vscode.Disposable {
     return { text: [sent, duplicateNote, problems.length ? `Not sent: ${problems.join('; ')}` : ''].filter(Boolean).join(' ') };
   }
 
-  /** Sends the subagent's sentToParent strip, omitting images that are already inline in the parent. */
+  /**
+   * Sends the subagent's sentToParent strip. Images handed to the parent agent as tool-result blocks
+   * stay in it: the user never sees those blocks. The renderer leaves out images the chat already shows.
+   */
   private publishSentToParent(run: ChildRun): void {
-    const strip = run.sentToParent.filter(item => !run.inlineInParent.has(item.hash));
-    this.sidebar.postMessage({ type: 'subagentEvent', sessionId: run.parent.record.id, agentId: run.agentId, sentToParent: strip });
+    this.sidebar.postMessage({ type: 'subagentEvent', sessionId: run.parent.record.id, agentId: run.agentId, sentToParent: [...run.sentToParent] });
+  }
+
+  /**
+   * Agents sometimes answer with the path or a link to an image they saved instead of showing it.
+   * Shows those images after the reply; ones this chat already shows are skipped by sendMedia.
+   */
+  private async showLinkedImages(chat: Chat, reply: string): Promise<void> {
+    const paths = await this.linkedImageFiles(chat, reply);
+    if (!paths.length) return;
+    const result = await this.sendMedia(chat, { paths });
+    if (result.isError) this.output.appendLine(`Linked images not shown: ${result.text}`);
+  }
+
+  /**
+   * Images a subagent names in its report are handed to its parent, like a user attaching them: they show
+   * under its row and reach the parent agent as image blocks. Ones already sent or shown are skipped.
+   */
+  private async attachReportImages(chat: Chat, run: ChildRun, report: string): Promise<void> {
+    const paths = await this.linkedImageFiles(chat, report);
+    if (!paths.length) return;
+    const result = await this.sendMedia(chat, { paths }, run);
+    if (result.isError) this.output.appendLine(`Report images not sent: ${result.text}`);
+  }
+
+  /** Existing image files a reply names by path or link, resolved in the agent's working copy, then the workspace. */
+  private async linkedImageFiles(chat: Chat, text: string): Promise<string[]> {
+    const found: string[] = [];
+    for (const raw of linkedImagePaths(text)) {
+      const candidates = isAbsolute(raw) ? [raw] : [resolvePath(chat.mirror.cwd, raw), resolvePath(this.root().uri.fsPath, raw)];
+      for (const candidate of candidates) {
+        if ((await stat(candidate).catch(() => undefined))?.isFile()) { found.push(candidate); break; }
+      }
+    }
+    return [...new Set(found)].slice(0, MAX_MEDIA_FILES);
   }
 
   /** Generates an image with the chat's ChatGPT (Codex) account, or the default one, saves it under .unify/images in the real workspace and shows it in the chat. */
@@ -3702,7 +3860,7 @@ class ExtensionHost implements vscode.Disposable {
       if (event.state) setSubagentState(agentId, event.state === 'running' ? 'running' : 'idle');
       this.sidebar.postMessage({ type: 'subagentEvent', sessionId: chat.record.id, agentId, ...event });
     };
-    const run: ChildRun = { parent: chat, owner, label: profile.name, agentId, readOnly, changed: new Set(), outOfScope: new Set(), files: readOnly ? [] : files, sentToParent: [], inlineInParent: new Set(), queuedForParent: [], background: !!onBackground, cancel: () => undefined };
+    const run: ChildRun = { parent: chat, owner, label: profile.name, agentId, readOnly, changed: new Set(), outOfScope: new Set(), files: readOnly ? [] : files, sentToParent: [],queuedForParent: [], background: !!onBackground, cancel: () => undefined };
     this.childRuns.add(run); chat.children.add(run);
     registerSubagentAgent({ id: agentId, owner, name, task, chatId: chat.record.id, parentId: chat.record.id });
     onBackground?.(run);
@@ -3743,15 +3901,45 @@ class ExtensionHost implements vscode.Disposable {
     // The latest tool calls, reported if the subagent is cancelled or fails.
     const toolLog: string[] = [];
     let toolCount = 0;
-    const onTool = (id: string, title: string, detail: string | undefined, state: 'running' | 'complete' | 'error'): void => {
-      if (state !== 'running') return;
+    // Live edit preview: edit calls whose row exists (posted from streamed input or a running event).
+    const liveEdits = new LiveEdits(chat.mirror.cwd);
+    // How each edit row was last shown, so its finished event keeps the same title.
+    const editRows = new Map<string, ReturnType<typeof displayTool>>();
+    const onTool = (id: string, title: string, detail: string | undefined, state: 'running' | 'complete' | 'error', error?: string): void => {
+      if (state !== 'running') {
+        // Only edit rows show a finished state; other subagent tools have none.
+        const shownRow = editRows.get(id);
+        if (!shownRow) return;
+        editRows.delete(id);
+        const edit = liveEdits.finish(id, state === 'error' ? error || 'The edit failed.' : undefined);
+        post({ messageId: `tool:${id}`, role: 'tool', tool: { ...shownRow, state, ...(edit ? { edit } : {}) } });
+        return;
+      }
       gap = true;
       toolCount += 1;
       toolLog.push(`- ${title}${detail ? `: ${detail.replace(/\s+/g, ' ').slice(0, 150)}` : ''}`);
       if (toolLog.length > 30) toolLog.shift();
       if (segmentStarted) { replySegment += 1; segmentStarted = false; }
-      post({ text: `${title}${detail ? `: ${detail.slice(0, 300)}` : ''}`, messageId: `tool:${id}`, role: 'tool', tool: { ...displayTool(title, detail), internal: internalToolOf({ tool: title, input: detail }, places) } });
+      const shown = displayTool(title, detail);
+      const edit = shown.kind === 'edit' ? liveEdits.current(id) : undefined;
+      if (shown.kind === 'edit') editRows.set(id, shown);
+      post({ text: `${title}${detail ? `: ${detail.slice(0, 300)}` : ''}`, messageId: `tool:${id}`, role: 'tool', tool: {
+        ...shown, internal: internalToolOf({ tool: title, input: detail }, places),
+        ...(shown.kind === 'edit' ? { state: 'running' as const } : {}), ...(edit ? { edit } : {}),
+      } });
       this.noteRead(chat.mirror.cwd, readToolPath(title, detail));
+    };
+    const onToolInput = (event: { id: string; name: string; input: Record<string, unknown>; streaming: boolean }): void => {
+      const edit = liveEdits.update(event.id, event.name, event.input, event.streaming);
+      if (!edit) return;
+      const shown = { ...displayTool(event.name, JSON.stringify(event.input).slice(0, 500)), kind: 'edit' as const };
+      if (!editRows.has(event.id)) {
+        // The row starts before the call's running event, so later text opens a new message after it.
+        gap = true;
+        if (segmentStarted) { replySegment += 1; segmentStarted = false; }
+      }
+      editRows.set(event.id, shown);
+      post({ messageId: `tool:${event.id}`, role: 'tool', tool: { ...shown, state: 'running', edit } });
     };
     try {
       const route = await this.resolveRoute(model);
@@ -3803,6 +3991,7 @@ class ExtensionHost implements vscode.Disposable {
         runSession = async sessionTask => {
           await this.promptPooled(cli, { account, cwd: chat.mirror.cwd, backend, effort, speed, readOnly, fullAccess: this.approvalMode === 'full',
             cacheTtl: explorer ? '5m' : undefined,
+            explorer,
             onContext,
             onUsage: usage => {
               this.logUsage(chat.record.id, explorer ? 'explorer' : 'subagent', entry.name, usage);
@@ -3814,7 +4003,15 @@ class ExtensionHost implements vscode.Disposable {
                 void this.saveSession(chat.record).catch(error => this.output.appendLine(`Saving explorer usage failed: ${String(error)}`));
               }
             },
-            delegate: profile.tools === false ? undefined : this.delegateConfig(owner, true), prompt: promptFor(sessionTask, true), onText, onTool, onMessageBreak: () => { gap = true; }, onApproval: (description, info) => this.decideApproval(chat, { owner, label: profile.name, readOnly }, description, info) },
+            delegate: profile.tools === false ? undefined : this.delegateConfig(owner, true), prompt: promptFor(sessionTask, true), onText, onTool, onToolInput,
+            // Images a tool returned (Read of a screenshot) land on its row in the subagent feed, as on the ACP path.
+            onToolImages: (id, title, content) => {
+              const images = this.incomingImages(content);
+              if (images.length) void this.storeIncomingImages(chat.record.id, images, profile.name).then(items => {
+                if (items.length) post({ messageId: `tool:${id}`, role: 'tool', tool: displayTool(title, undefined), media: items });
+              });
+            },
+            onMessageBreak: () => { gap = true; }, onApproval: (description, info) => this.decideApproval(chat, { owner, label: profile.name, readOnly }, description, info) },
           () => cancelled, (next, failed) => { post({ text: `Account switch: ${failed.label} hit its usage limit; continuing on ${next.label}`, messageId: `account:${next.id}`, role: 'tool' }); gap = true; return {}; });
         };
       } else {
@@ -3830,7 +4027,25 @@ class ExtensionHost implements vscode.Disposable {
             if (content?.type === 'text' && typeof content.text === 'string') onText(content.text);
           } else if (kind === 'tool_call' && typeof update.toolCallId === 'string' && !toolTexts.has(update.toolCallId)) {
             toolTexts.add(update.toolCallId);
-            onTool(update.toolCallId, String(update.title || 'Tool'), undefined, 'running');
+            const title = String(update.title || 'Tool');
+            const rawInput = update.rawInput && typeof update.rawInput === 'object' ? update.rawInput as Record<string, unknown> : undefined;
+            const editName = rawInput ? LiveEdits.acpToolName(title, String(update.kind || ''), rawInput) : undefined;
+            if (rawInput && editName) onToolInput({ id: update.toolCallId, name: editName, input: rawInput, streaming: false });
+            onTool(update.toolCallId, editName || title, editName ? JSON.stringify(rawInput).slice(0, 500) : undefined, 'running');
+          } else if (kind === 'tool_call_update' && typeof update.toolCallId === 'string' && (update.status === 'completed' || update.status === 'failed')) {
+            const failed = update.status === 'failed';
+            const contents = Array.isArray(update.content) ? update.content as Record<string, unknown>[] : [];
+            const message = contents.map(item => (item.content as Record<string, unknown> | undefined)?.text ?? item.text).filter(text => typeof text === 'string').join('\n').trim();
+            // Only edit rows use this; onTool ignores finished states of other tools.
+            onTool(update.toolCallId, String(update.title || 'Edit'), undefined, failed ? 'error' : 'complete', failed ? message.slice(0, 300) || undefined : undefined);
+            const images = this.incomingImages(update.content);
+            if (images.length) {
+              const id = update.toolCallId;
+              const title = String(update.title || 'Tool');
+              void this.storeIncomingImages(chat.record.id, images, profile.name).then(items => {
+                if (items.length) post({ messageId: `tool:${id}`, role: 'tool', tool: displayTool(title, undefined), media: items });
+              });
+            }
           } else if (kind === 'tool_call_update' && typeof update.toolCallId === 'string') {
             // Images a tool returned land on its row, so the subagent feed shows them too.
             const images = this.incomingImages(update.content);
@@ -3900,6 +4115,7 @@ class ExtensionHost implements vscode.Disposable {
       } else if (!readOnly) {
         result += '\n\n---\nNo files were changed by this subagent.';
       }
+      await this.attachReportImages(chat, run, parsed.text).catch(error => this.output.appendLine(`Report images failed: ${String(error)}`));
       const mediaBlocks = await this.deliverRunMediaToParent(run);
       if (mediaBlocks.length) return { text: result, content: [{ type: 'text', text: result }, ...mediaBlocks] };
       return { text: result };
@@ -3913,6 +4129,7 @@ class ExtensionHost implements vscode.Disposable {
       if (toolLog.length) result += `\n\nTools it ran${toolCount > toolLog.length ? ` (last ${toolLog.length} of ${toolCount})` : ''}:\n${toolLog.join('\n')}`;
       if (run.changed.size) result += `\n\n---\nFiles changed by this subagent: ${[...run.changed].join(', ')}`;
       // Images it already sent still reach the parent, even when the run failed.
+      if (partial && !cancelled) await this.attachReportImages(chat, run, partial).catch(failure => this.output.appendLine(`Report images failed: ${String(failure)}`));
       const mediaBlocks = await this.deliverRunMediaToParent(run);
       if (mediaBlocks.length) return { text: result, isError: true, content: [{ type: 'text', text: result }, ...mediaBlocks] };
       return { text: result, isError: true };
@@ -4098,8 +4315,16 @@ class ExtensionHost implements vscode.Disposable {
   }
 
   private onProposalsChanged(chatId: string, items: ReviewProposal[]): void {
-    if (this.active?.id !== chatId) return;
-    this.sidebar.postMessage({ type: 'diffState', diffs: this.diffItems(items) });
+    const diffs = this.diffItems(items);
+    // Every chat pane shows its own edits; the global list (Files tree badges) follows the active chat.
+    this.sidebar.postMessage({ type: 'chatDiffState', sessionId: chatId, diffs });
+    if (this.active?.id === chatId) this.sidebar.postMessage({ type: 'diffState', diffs });
+  }
+
+  /** Re-sends one loaded chat's edits (a pane or window that just opened asks for its chat). */
+  private postChatDiffs(chatId: string): void {
+    const chat = this.chats.get(chatId);
+    if (chat) this.sidebar.postMessage({ type: 'chatDiffState', sessionId: chatId, diffs: this.diffItems(chat.review.list()) });
   }
 
   private diffItems(items: ReviewProposal[]): { id: string; path: string; summary: string; additions: number; deletions: number; state: ReviewProposal['state'] }[] {
@@ -4184,9 +4409,18 @@ class ExtensionHost implements vscode.Disposable {
       const shown = displayTool(title, rawInput || detail);
       const state = update.status === 'failed' ? 'error' : kind === 'tool_call' || update.status === 'in_progress' ? 'running' : 'complete';
       const entryId = `tool:${chat.turnEntryId}:${id}`;
+      // Live edit preview: ACP sends an edit's whole input with the call, so the diff shows at once rather than streaming.
+      const liveEdits = chat.liveEdits ??= new LiveEdits(chat.mirror.cwd);
+      const editInput = update.rawInput && typeof update.rawInput === 'object' ? update.rawInput as Record<string, unknown> : undefined;
+      const editName = editInput ? LiveEdits.acpToolName(title, rawKind, editInput) : undefined;
+      if (editInput && editName && state === 'running') liveEdits.update(id, editName, editInput, false);
+      const contents = Array.isArray(update.content) ? update.content as Record<string, unknown>[] : [];
+      const failure = contents.map(item => (item.content as Record<string, unknown> | undefined)?.text ?? item.text).filter(text => typeof text === 'string').join('\n').trim().slice(0, 300);
+      const edit = state === 'running' ? liveEdits.current(id) : liveEdits.finish(id, state === 'error' ? failure || 'The edit failed.' : undefined);
       const shownEvent = {
         id, kind: (shown.kind === 'other' ? toolKind : shown.kind) as SidebarToolEvent['kind'], title: shown.title, detail: shown.detail, full: shown.full, state: state as SidebarToolEvent['state'],
         internal: internalToolOf({ tool: title, input: update.rawInput ?? detail }, places),
+        ...(edit ? { edit } : {}),
       };
       this.sidebar.postMessage({ type: 'toolEvent', sessionId: chatId, entryId, event: shownEvent });
       // Images a tool returned (batch read_file, screenshots) go on the same row once stored.
@@ -4341,7 +4575,7 @@ class ExtensionHost implements vscode.Disposable {
         case 'checkDependencies': await this.refreshDependencies(); break;
         case 'installProvider': await this.installProvider(message.provider); break;
         case 'pageChanged': this.sidebar.setPage(message.page); if (message.page === 'accounts') this.refreshUsage(); if (message.page === 'instructions') await this.refreshInstructions(); break;
-        case 'ready': this.sidebar.setShutdown(this.shutdown.getStatus()); this.sidebar.postMessage({ type: 'usageState', usage: this.usage.snapshot() }); this.refreshUsage(); if (this.active) { this.restoreJob(this.active); this.postJob(this.active); } await this.refreshInstructions(); this.postToolpacks(); this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode }); this.sidebar.postMessage({ type: 'slashCommandsState', commands: SLASH_COMMANDS }); this.scheduled.refresh(); this.postScheduledPrompts(); this.refreshCustomize(); this.postUnifyFeatures(); if (this.agentRoster.size) this.sidebar.postMessage({ type: 'agentRoster', agents: [...this.agentRoster.values()] }); this.refreshMemory(); this.sync.post(); this.refreshSubagents(); this.refreshModels(); this.refreshSessions(); await this.refreshAccount(); await this.refreshAccounts(); break;
+        case 'ready': this.sidebar.setShutdown(this.shutdown.getStatus()); this.sidebar.postMessage({ type: 'usageState', usage: this.usage.snapshot() }); this.refreshUsage(); if (this.active) { this.restoreJob(this.active); this.postJob(this.active); } for (const id of this.chats.keys()) this.postChatDiffs(id); await this.refreshInstructions(); this.postToolpacks(); this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode }); this.sidebar.postMessage({ type: 'slashCommandsState', commands: SLASH_COMMANDS }); this.scheduled.refresh(); this.postScheduledPrompts(); this.refreshCustomize(); this.postUnifyFeatures(); if (this.agentRoster.size) this.sidebar.postMessage({ type: 'agentRoster', agents: [...this.agentRoster.values()] }); this.refreshMemory(); this.sync.post(); this.refreshSubagents(); this.refreshModels(); this.refreshSessions(); await this.refreshAccount(); await this.refreshAccounts(); break;
         case 'sendPrompt': {
           const slash = parseSlash(message.prompt);
           if (slash?.name === 'job') await this.startJob(slash.args, message.images, message.chatId);
@@ -4357,6 +4591,10 @@ class ExtensionHost implements vscode.Disposable {
             }
             // With no or an unknown mode the UI opens its own picker.
             this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode });
+          } else if (slash?.name === 'shutdown') {
+            // Arms the one-shot shutdown; the controller answers with shutdownArmed and the chat shows its bar.
+            setUnifyFeature('power.shutdownWhenIdle', true);
+            this.postUnifyFeatures();
           } else {
             await this.sendPrompt(message.prompt, message.images, undefined, undefined, message.mode === 'queue' ? 'queue' : 'interrupt', { chatId: message.chatId });
           }
@@ -4366,12 +4604,15 @@ class ExtensionHost implements vscode.Disposable {
         case 'cancelProgress': (vscode.window as unknown as { __unifyCancelProgress?: (id: string) => boolean }).__unifyCancelProgress?.(message.id); break;
         case 'cancelScheduledPrompt': this.scheduled.cancel(message.id); break;
         case 'loadChat': {
-          // A pop-out window asks for its chat's history; the active chat stays as it is.
+          // A pane or pop-out window asks for its chat's history (on app start, or when it opens); the active chat stays as it is.
           if (!this.sidebar.resendChat(message.sessionId)) {
             this.replayTranscript(message.sessionId);
             const record = this.sessions().find(item => item.id === message.sessionId);
             if (record?.job) this.postJob(record);
           }
+          this.postChatDiffs(message.sessionId);
+          // Always answer, so the pane's loading state ends even for a chat with no history.
+          this.sidebar.postMessage({ type: 'chatLoaded', sessionId: message.sessionId });
           break;
         }
         case 'sendScheduledPromptNow': {
@@ -4459,7 +4700,7 @@ class ExtensionHost implements vscode.Disposable {
         case 'applyAll': await this.chatForMessage(message.chatId)?.review.applyAll(); break;
         case 'rejectAll': await this.chatForMessage(message.chatId)?.review.rejectAll(); break;
         case 'cancel': this.cancel(true, message.chatId); break;
-        case 'newSession': await this.newChat(message.project); break;
+        case 'newSession': await this.newChat(message.project, !!message.noFolder); break;
         case 'selectSession': await this.continueChat(message.sessionId); break;
         case 'deleteSession': await this.deleteSession(message.sessionId); break;
         case 'renameSession': {

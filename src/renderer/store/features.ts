@@ -58,6 +58,7 @@ export const featureDefinitions = {
 	'chats.maxPerProject': { group: 'Chats', label: 'Chats shown per project', description: 'Before "Show N more".', defaultValue: 5, scope: 'ui' },
 	'chats.imagesInBubble': { group: 'Chats', label: 'Images in my messages', description: 'Show attached images in your own bubble.', defaultValue: true, scope: 'ui' },
 	'chats.toolImages': { group: 'Chats', label: 'Images agents look at', description: 'Show a thumbnail on any tool call that gave an agent an image (screenshots, renders, image files).', defaultValue: true, scope: 'ui' },
+	'chats.liveEditPreview': { group: 'Chats', label: 'Live edit preview', description: 'While an agent edits a file, its row shows the change streaming in as a small diff. Off shows plain tool rows.', defaultValue: true, scope: 'ui' },
 	'chats.subagentImageStrip': { group: 'Chats', label: 'Subagent images in the main chat', description: 'When a subagent finishes, its row shows the images it sent to the main agent.', defaultValue: true, scope: 'ui' },
 	'chat.friendlyInternalRows': { group: 'Chats', label: 'Plain-language memory rows', description: 'When an agent reads or saves memory or earlier conversation with a file tool, the row says so instead of showing a file path.', defaultValue: true, scope: 'engine' },
 

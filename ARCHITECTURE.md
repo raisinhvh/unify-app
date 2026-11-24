@@ -1,6 +1,6 @@
 # Unify architecture (shared contract)
 
-Unify is the Electron successor to the DSH VS Code extension. Product spec: `../DSH/.dsh/mockups/UNIFY_SPEC.md`.
+Unify is the Electron successor to the DSH VS Code extension. Product spec: `docs/UNIFY_SPEC.md`.
 Designs: Figma page "Unify" (screens 10–27). Behaviour must match DSH: we keep its engine and change the shell and the UI.
 
 ## Layout
@@ -104,7 +104,7 @@ export interface SidebarViewState {
 | { type: 'customizeState'; /* ...existing fields... */ unifyFeatures?: Record<string, boolean | number | string> }
 ```
 `unifyFeatures` is intentionally not named `features`: `features` is DSH's own toggle record (`SidebarFeatures`) and
-stays as is. Values persist in `~/.dsh/unify/settings.json` as `{ "features": Record<string, value> }`, are shared by
+stays as is. Values persist in `~/.unify/settings.json` as `{ "features": Record<string, value> }`, are shared by
 every window (the engine re-pushes `unifyFeaturesState` on change), and only ids in `ENGINE_FEATURE_DEFAULTS` default;
 other ids are stored and mirrored as-is so UI-only toggles survive restarts.
 
@@ -135,7 +135,7 @@ needed; if a future renderer-build wants to raise notifications itself, add a `n
 `always: true` with `allow: true` stores a rule for the command's prefix in the request's project folder; later
 requests whose command has the same prefix are approved without asking. Only shell commands can be remembered.
 The prefix is the first two whitespace-separated words (`git status --short` -> `git status`; `commandPrefix` in
-`src/engine/sidebar/allowRules.ts`). Rules persist in `~/.dsh/unify/approvals.json`:
+`src/engine/sidebar/allowRules.ts`). Rules persist in `~/.unify/approvals.json`:
 ```json
 {
   "rules": [
@@ -210,5 +210,5 @@ window.unify = {
 - `UNIFY_LEGACY=1` (or when the new renderer build is missing) loads DSH's own sidebar HTML so the app always works.
 
 ## Data
-Shares `~/.dsh` with DSH (accounts, rules, memory, toolpacks, chats). VS Code `globalState`/`secrets` map to
-`~/.dsh/unify/state.json` and the OS keychain via Electron `safeStorage`.
+Own data folder `~/.unify` (accounts, rules, memory, toolpacks, chats); nothing is shared with DSH's `~/.dsh`.
+VS Code `globalState`/`secrets` map to `~/.unify/state.json` and `~/.unify/secrets.json` (Electron `safeStorage`).

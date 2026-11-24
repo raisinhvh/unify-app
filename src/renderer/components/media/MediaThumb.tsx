@@ -12,7 +12,8 @@ import './media.css';
 
 export interface MediaThumbProps {
   media: MediaItem;
-  size?: 'row' | 'strip';
+  /** row 40px and strip 32px are framed, cropped prints; sent is a subagent's image shown like a chat bubble's, at half its size. */
+  size?: 'row' | 'strip' | 'sent';
   /** This thumbnail's image is expanded somewhere else right now. */
   active?: boolean;
   hidden?: boolean;

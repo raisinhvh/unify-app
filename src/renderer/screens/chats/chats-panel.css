@@ -16,6 +16,51 @@
   margin: 0;
 }
 
+/* Chat rows: the time and the delete button share one cell; hover (or an armed delete) swaps them. */
+.chat-row .tree-trailing {
+  display: grid;
+  justify-items: end;
+  align-items: center;
+}
+
+.chat-row-time,
+.chat-row-delete {
+  grid-area: 1 / 1;
+  transition: opacity 120ms ease-out;
+}
+
+.chat-row-delete {
+  display: flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 4px;
+  margin-right: -4px;
+  border-radius: 4px;
+  color: var(--text3);
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 120ms ease-out, color 120ms ease-out;
+}
+
+.chat-row:hover .chat-row-time,
+.chat-row.delete-armed .chat-row-time {
+  opacity: 0;
+  /* A see-through element still takes clicks and is painted above the delete button in the shared cell. */
+  pointer-events: none;
+}
+
+.chat-row:hover .chat-row-delete,
+.chat-row.delete-armed .chat-row-delete {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.chat-row-delete:hover,
+.chat-row.delete-armed .chat-row-delete {
+  color: var(--del);
+}
+
 .chats-search {
   display: flex;
   align-items: center;

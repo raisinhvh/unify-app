@@ -1,7 +1,7 @@
 /**
  * DEV ONLY. The organic motion gallery (see gallery.tsx). One card per primitive with trigger buttons,
  * a "Spam" button per card for interruption, and global toggles (reduced motion, each motion.organic feature,
- * theme). Elements carry data-motion names for .dsh/tools/motion-audit.mjs; buttons have ids for scenarios.
+ * theme). Elements carry data-motion names for .unify/tools/motion-audit.mjs; buttons have ids for scenarios.
  */
 import { createSignal, For, Index, onCleanup, type JSX } from 'solid-js';
 import { render } from 'solid-js/web';

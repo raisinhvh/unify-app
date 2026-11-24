@@ -60,7 +60,7 @@ export const kindLabels: Record<KnowledgeKind, { one: string; many: string }> = 
 
 export const scopeLabels: Record<KnowledgeScope, string> = {
   global: 'Global',
-  project: 'This project',
+  project: 'Project',
 };
 
 export function audienceLabel(audience: Audience): string {

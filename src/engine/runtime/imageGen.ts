@@ -45,7 +45,7 @@ export const GENERATE_IMAGE_TOOL: DelegateToolInfo = {
   },
 };
 
-export const IMAGE_INSTRUCTIONS = `Unify images: ${GENERATE_IMAGE} creates images, or edits ones passed as input images.`;
+export const IMAGE_INSTRUCTIONS = '';
 
 /** Validated generation options, or an error message for the agent. */
 export function parseImageRequest(args: Record<string, unknown>): ImageRequest | string {

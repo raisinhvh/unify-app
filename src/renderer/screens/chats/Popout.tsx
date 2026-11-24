@@ -15,7 +15,7 @@
  */
 import { createEffect, onCleanup, type JSX } from 'solid-js';
 import { render } from 'solid-js/web';
-import { bridge, post } from '../../bridge';
+import { bridge } from '../../bridge';
 import { TitleBar, TooltipHost } from '../../components';
 import { setAppReducedMotion } from '../../motion';
 import type { PaneContext } from '../../shell/PaneGrid';
@@ -85,9 +85,8 @@ export function startPopout(root: HTMLElement, chatId: string): void {
     ),
     root,
   );
+  // The chat's pane asks for its history (store requestChatHistory), so the chat is not selected in the engine.
   const stopListening = connectStore();
-  // The engine only sends a timeline when a chat is selected; ask for this one without selecting it.
-  post({ type: 'loadChat', sessionId: chatId });
   import.meta.hot?.dispose(() => {
     stopListening();
     disconnect();

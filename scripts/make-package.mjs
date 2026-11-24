@@ -12,7 +12,7 @@ const pkg = {
   version: '0.1.0',
   license: 'MIT',
   private: true,
-  repository: { type: 'git', url: 'https://github.com/raisinhvh/Unify.git' },
+  repository: { type: 'git', url: 'https://github.com/raisinhvh/unify-app.git' },
   main: 'dist/main.js',
   scripts: {
     build: 'node scripts/build.mjs',

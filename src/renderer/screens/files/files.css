@@ -44,6 +44,11 @@
   height: 28px;
 }
 
+.files-project {
+  flex: none;
+  margin-bottom: 8px;
+}
+
 .files-search {
   display: flex;
   align-items: center;
@@ -121,6 +126,154 @@
 
 .files-panel .tree-row.selected:hover {
   background: color-mix(in srgb, var(--hover) 60%, var(--accent-tint));
+}
+
+/* Cut (waiting for a paste): dimmed like a file manager. */
+.files-entry.cut {
+  opacity: 0.5;
+}
+
+/* Drag and drop: the folder a drag would land in, or the whole tree for the project root. */
+.files-dir.drop-target > .tree-folder-row,
+.files-dir.drop-target > .tree-folder-row:hover {
+  background: var(--accent-tint);
+}
+
+.files-dir.drop-target > .tree-children {
+  background: color-mix(in srgb, var(--accent-tint) 40%, transparent);
+  border-radius: var(--radius-control);
+}
+
+.files-tree.drop-root {
+  background: color-mix(in srgb, var(--accent-tint) 40%, transparent);
+}
+
+/* Rows: +N −M and the hover delete share one cell; hover (or an armed delete) swaps them. */
+.files-entry .tree-trailing {
+  overflow: visible;
+}
+
+.files-row-trailing {
+  display: grid;
+  justify-items: end;
+  align-items: center;
+}
+
+.files-row-info,
+.files-row-delete {
+  grid-area: 1 / 1;
+  transition: opacity 120ms ease-out, color 120ms ease-out;
+}
+
+.files-row-delete {
+  display: flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 4px;
+  margin-right: -4px;
+  border-radius: 4px;
+  color: var(--text3);
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+}
+
+/* The hidden info must not take the click meant for the delete button (it is painted above it). */
+.files-entry:hover .files-row-info,
+.files-entry.delete-armed .files-row-info {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.files-entry:hover .files-row-delete,
+.files-entry.delete-armed .files-row-delete {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.files-row-delete:hover,
+.files-entry.delete-armed .files-row-delete {
+  color: var(--del);
+}
+
+/* New / rename name box. */
+.files-name-edit {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.files-name-input {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 0 5px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  background: var(--bg);
+  border: 1px solid var(--text3);
+  border-radius: 4px;
+  outline: none;
+}
+
+.files-name-input.invalid {
+  border-color: var(--del);
+}
+
+.files-name-input::placeholder {
+  color: var(--text3);
+}
+
+/* A row grows to fit the error under its name box. */
+.files-entry:has(.files-name-error) {
+  height: auto;
+  min-height: 28px;
+}
+
+.files-name-error {
+  white-space: normal;
+  color: var(--del);
+  padding: 2px 0;
+}
+
+.files-new-row {
+  height: auto;
+  min-height: 28px;
+  padding-left: 24px;
+  color: var(--text2);
+  cursor: default;
+}
+
+.files-new-row:hover {
+  background: transparent;
+}
+
+/* Top-aligned so the icon stays beside the name box when an error line appears under it. */
+.files-new-row {
+  align-items: flex-start;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.files-new-row > svg {
+  flex: none;
+  margin-top: 4px;
+}
+
+.files-name-input::selection {
+  background: color-mix(in srgb, var(--accent, #c9a465) 35%, transparent);
+}
+
+.files-action-error {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  color: var(--del);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  border: 1px solid color-mix(in srgb, var(--del) 40%, transparent);
+  border-radius: var(--radius-control);
 }
 
 .files-results .tree-trailing {
@@ -222,6 +375,17 @@
 .files-tab-name {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Diff tabs (review): a small quiet label after the name. */
+.files-tab-badge {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--text3);
+  background: var(--hover);
 }
 
 .files-tab-dirty {

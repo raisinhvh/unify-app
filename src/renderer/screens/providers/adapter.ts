@@ -453,6 +453,8 @@ export function modelIdPlaceholder(provider: string): string {
       return 'e.g. codestral-latest';
     case 'openrouter':
       return 'e.g. anthropic/claude-opus-4-1';
+    case 'opencode-go':
+      return 'An OpenCode Go model ID';
     default:
       return 'Provider model ID';
   }
@@ -556,11 +558,14 @@ export interface AddProviderOption {
   method: ProviderMethod;
 }
 
-/** Figma "24b Â· Providers Â· Add provider", plus Cursor (OAuth is how Cursor connects). */
+/** Figma "24b Â· Providers Â· Add provider", plus Cursor and every API provider the engine's addAccount accepts. */
 export const addProviderOptions: AddProviderOption[] = [
   { id: 'anthropic', provider: 'claude-cli', title: 'Anthropic', hint: 'Sign in with Claude', method: 'oauth' },
   { id: 'openai', provider: 'codex-cli', title: 'OpenAI', hint: 'Sign in with ChatGPT', method: 'oauth' },
+  { id: 'opencode-go', provider: 'opencode-go', title: 'OpenCode Go', hint: 'API key', method: 'api-key' },
   { id: 'mistral', provider: 'mistral', title: 'Mistral', hint: 'API key', method: 'api-key' },
+  { id: 'deepseek', provider: 'deepseek-official', title: 'DeepSeek', hint: 'API key', method: 'api-key' },
+  { id: 'openrouter', provider: 'openrouter', title: 'OpenRouter', hint: 'API key', method: 'api-key' },
   { id: 'gemini', provider: 'google-gemini', title: 'Google Gemini', hint: 'API key', method: 'api-key' },
   { id: 'cursor', provider: 'cursor-acp', title: 'Cursor', hint: 'Sign in with Cursor', method: 'oauth' },
   { id: 'self-hosted', provider: 'self-hosted', title: 'Self-hosted', hint: 'Any OpenAI-compatible server', method: 'self-hosted' },

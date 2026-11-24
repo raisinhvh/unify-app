@@ -6,6 +6,7 @@
  * (state pushes and simple switches) answer without one, exactly as their adapters expect.
  */
 import * as path from 'node:path';
+import * as fs from 'node:fs';
 import { promises as fsp } from 'node:fs';
 import type { Dirent } from 'node:fs';
 import {
@@ -13,6 +14,11 @@ import {
   readWorkspaceFile,
   findWorkspaceFiles,
   writeWorkspaceFile,
+  createWorkspaceEntry,
+  renameWorkspaceEntry,
+  deleteWorkspaceEntry,
+  copyWorkspaceEntry,
+  importWorkspaceEntries,
   setActiveUnifyReply,
   watchWorkspace,
   disposeUnifyRequestWatchers,
@@ -36,7 +42,7 @@ import {
   signOutAccount,
 } from './providers';
 import { installedHubPacks, setToolpackPermission, setToolpackToolEnabled } from './toolpacks';
-import { openSetupTarget, readPackSetup, rerunPackSetupScript, setPackSetupStepDone } from '../../hub/setup';
+import { installSetupPackages, openSetupTarget, readPackSetup, rerunPackSetupScript, setPackSetupStepDone } from '../../hub/setup';
 import { appInfoReply, updateInstallUnavailable } from './settings';
 import {
   checkTools,
@@ -53,9 +59,10 @@ export { disposeUnifyRequestWatchers } from './workspace';
 
 let announcedWorkspace: string | undefined;
 
-function announceWorkspace(context: UnifyRequestContext, reply: (message: unknown) => void): void {
+/** Tells the Files screen its root when it changes, and on every top-level listing (a reloaded screen forgets it). */
+function announceWorkspace(context: UnifyRequestContext, reply: (message: unknown) => void, force = false): void {
   if (!context.workspaceRoot) return;
-  if (announcedWorkspace === context.workspaceRoot) return;
+  if (announcedWorkspace === context.workspaceRoot && !force) return;
   announcedWorkspace = context.workspaceRoot;
   reply({ type: 'workspaceState', root: path.resolve(context.workspaceRoot), name: path.basename(context.workspaceRoot) });
 }
@@ -88,8 +95,94 @@ async function packDisplayName(paths: RequestPaths, packId: string): Promise<str
   return titleFromId(packId);
 }
 
+const knowledgeTypes = new Set([
+  'knowledgeList', 'readKnowledge', 'saveKnowledge', 'removeKnowledge', 'setKnowledgeAudience', 'importSkillFolder', 'undoKnowledgeChange', 'openKnowledge',
+]);
+
+/**
+ * The project a Files or Knowledge request is about. The screen may name any project folder (`message.project`);
+ * without one, or when that folder no longer exists, it is the open workspace.
+ */
+function projectContext(message: UnifyRequestMessage, context: UnifyRequestContext): UnifyRequestContext {
+  const project = typeof message.project === 'string' ? message.project.trim() : '';
+  if (!project || !path.isAbsolute(project)) return context;
+  try {
+    if (!fs.statSync(project).isDirectory()) return context;
+  } catch {
+    return context;
+  }
+  return { ...context, workspaceRoot: project };
+}
+
 function isFilesType(type: string): boolean {
-  return type === 'listDir' || type === 'readFile' || type === 'writeFile' || type === 'findFiles';
+  return type === 'listDir' || type === 'readFile' || type === 'writeFile' || type === 'findFiles'
+    || type === 'createEntry' || type === 'renameEntry' || type === 'deleteEntry' || type === 'copyEntry' || type === 'importEntries';
+}
+
+/** Files requests, read from `context.workspaceRoot` (the project the screen picked, else the open folder). */
+async function handleFilesRequest(
+  message: UnifyRequestMessage,
+  type: string,
+  send: (payload: unknown) => void,
+  reply: (message: unknown) => void,
+  context: UnifyRequestContext,
+): Promise<boolean> {
+  setActiveUnifyReply(reply);
+  watchWorkspace([context.workspaceRoot, ...(context.workspaceRoots ?? [])], reply);
+  announceWorkspace(context, reply, type === 'listDir' && !stringField(message, 'path'));
+  try {
+    if (type === 'listDir') {
+      const relative = stringField(message, 'path');
+      send({ type: 'dirListing', path: relative, entries: listWorkspaceDirectory(context.workspaceRoot, relative) });
+      return true;
+    }
+    if (type === 'readFile') {
+      const relative = stringField(message, 'path');
+      send({ type: 'fileContent', file: readWorkspaceFile(context.workspaceRoot, relative) });
+      return true;
+    }
+    if (type === 'writeFile') {
+      const relative = stringField(message, 'path');
+      const content = stringField(message, 'content');
+      const version = stringField(message, 'version');
+      const result = writeWorkspaceFile(context.workspaceRoot, relative, content, version);
+      if (result.ok) send({ type: 'fileSaved', path: relative, version: result.version });
+      else send({ type: 'fileConflict', current: result.conflict });
+      return true;
+    }
+    if (type === 'createEntry') {
+      const kind = message.kind === 'dir' ? 'dir' : 'file';
+      send({ type: 'entryDone', path: createWorkspaceEntry(context.workspaceRoot, stringField(message, 'path'), kind) });
+      return true;
+    }
+    if (type === 'renameEntry') {
+      send({ type: 'entryDone', path: renameWorkspaceEntry(context.workspaceRoot, stringField(message, 'from'), stringField(message, 'to')) });
+      return true;
+    }
+    if (type === 'copyEntry') {
+      send({ type: 'entryDone', path: copyWorkspaceEntry(context.workspaceRoot, stringField(message, 'from'), stringField(message, 'toFolder')) });
+      return true;
+    }
+    if (type === 'importEntries') {
+      const sources = Array.isArray(message.sources) ? message.sources.filter((item): item is string => typeof item === 'string') : [];
+      const paths = importWorkspaceEntries(context.workspaceRoot, sources, stringField(message, 'toFolder'));
+      send({ type: 'entryDone', path: paths[0] ?? '', paths });
+      return true;
+    }
+    if (type === 'deleteEntry') {
+      const relative = stringField(message, 'path');
+      deleteWorkspaceEntry(context.workspaceRoot, relative);
+      send({ type: 'entryDone', path: relative });
+      return true;
+    }
+    const query = stringField(message, 'query');
+    const limit = typeof message.limit === 'number' ? message.limit : undefined;
+    send({ type: 'fileMatches', query, paths: findWorkspaceFiles(context.workspaceRoot, query, limit) });
+    return true;
+  } catch (error) {
+    send({ type: 'filesError', message: error instanceof Error ? error.message : String(error) });
+    return true;
+  }
 }
 
 /**
@@ -113,118 +206,105 @@ export async function handleUnifyRequest(
   /* Files ------------------------------------------------------------------------------------------------- */
 
   if (isFilesType(type)) {
-    setActiveUnifyReply(reply);
-    watchWorkspace([context.workspaceRoot, ...(context.workspaceRoots ?? [])], reply);
-    announceWorkspace(context, reply);
-    try {
-      if (type === 'listDir') {
-        const relative = stringField(message, 'path');
-        send({ type: 'dirListing', path: relative, entries: listWorkspaceDirectory(context.workspaceRoot, relative) });
-        return true;
-      }
-      if (type === 'readFile') {
-        const relative = stringField(message, 'path');
-        send({ type: 'fileContent', file: readWorkspaceFile(context.workspaceRoot, relative) });
-        return true;
-      }
-      if (type === 'writeFile') {
-        const relative = stringField(message, 'path');
-        const content = stringField(message, 'content');
-        const version = stringField(message, 'version');
-        const result = writeWorkspaceFile(context.workspaceRoot, relative, content, version);
-        if (result.ok) send({ type: 'fileSaved', path: relative, version: result.version });
-        else send({ type: 'fileConflict', current: result.conflict });
-        return true;
-      }
-      const query = stringField(message, 'query');
-      const limit = typeof message.limit === 'number' ? message.limit : undefined;
-      send({ type: 'fileMatches', query, paths: findWorkspaceFiles(context.workspaceRoot, query, limit) });
-      return true;
-    } catch (error) {
-      send({ type: 'filesError', message: error instanceof Error ? error.message : String(error) });
-      return true;
-    }
+    return handleFilesRequest(message, type, send, reply, projectContext(message, context));
   }
 
   /* Knowledge --------------------------------------------------------------------------------------------- */
 
-  if (type === 'knowledgeList') {
-    try {
-      send({ type: 'knowledgeState', items: await listKnowledge(context, paths) });
-    } catch (error) {
-      send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+  const outerContext = context;
+  if (knowledgeTypes.has(type)) {
+    // Shadows the outer context: "project" knowledge belongs to the folder the screen picked.
+    const context = projectContext(message, outerContext);
+    const paths = requestPaths(context);
+    // `project` tells the screen which folder the project items come from, so it can drop lists for another one.
+    const knowledgeState = async (items?: unknown[]) => ({
+      type: 'knowledgeState',
+      ...(paths.workspaceRoot ? { project: paths.workspaceRoot } : {}),
+      items: items ?? await listKnowledge(context, paths),
+    });
+
+    if (type === 'knowledgeList') {
+      try {
+        send(await knowledgeState());
+      } catch (error) {
+        send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
     }
-    return true;
-  }
-  if (type === 'readKnowledge') {
-    try {
-      const id = stringField(message, 'id');
-      const file = typeof message.file === 'string' ? message.file : undefined;
-      const result = await readKnowledge(context, paths, id, file);
-      send({ type: 'knowledgeContent', id, ...(result.file ? { file: result.file } : {}), content: result.content });
-    } catch (error) {
-      send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+    if (type === 'readKnowledge') {
+      try {
+        const id = stringField(message, 'id');
+        const file = typeof message.file === 'string' ? message.file : undefined;
+        const result = await readKnowledge(context, paths, id, file);
+        send({ type: 'knowledgeContent', id, ...(result.file ? { file: result.file } : {}), content: result.content });
+      } catch (error) {
+        send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
     }
-    return true;
-  }
-  if (type === 'saveKnowledge') {
-    try {
-      const item = message.item as KnowledgeDraft;
-      const content = stringField(message, 'content');
-      const file = typeof message.file === 'string' ? message.file : undefined;
-      const saved = await saveKnowledge(context, paths, item, content, file);
-      send({ type: 'knowledgeSaved', item: saved });
-    } catch (error) {
-      send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+    if (type === 'saveKnowledge') {
+      try {
+        const item = message.item as KnowledgeDraft;
+        const content = stringField(message, 'content');
+        const file = typeof message.file === 'string' ? message.file : undefined;
+        const saved = await saveKnowledge(context, paths, item, content, file);
+        send({ type: 'knowledgeSaved', item: saved });
+        reply(await knowledgeState());
+      } catch (error) {
+        send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
     }
-    return true;
-  }
-  if (type === 'removeKnowledge') {
-    try {
-      const id = stringField(message, 'id');
-      await removeKnowledge(context, paths, id);
-      send({ type: 'knowledgeRemoved', id });
-    } catch (error) {
-      send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+    if (type === 'removeKnowledge') {
+      try {
+        const id = stringField(message, 'id');
+        await removeKnowledge(context, paths, id);
+        send({ type: 'knowledgeRemoved', id });
+        // The screen's list comes from knowledgeState; without a fresh one the removed item stays listed.
+        reply(await knowledgeState());
+      } catch (error) {
+        send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
     }
-    return true;
-  }
-  if (type === 'setKnowledgeAudience') {
-    try {
-      const audiences = Array.isArray(message.audiences) ? message.audiences as Audience[] : [];
-      setKnowledgeAudiences(paths, stringField(message, 'id'), audiences);
-      send({ type: 'knowledgeState', items: await listKnowledge(context, paths) });
-    } catch (error) {
-      send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+    if (type === 'setKnowledgeAudience') {
+      try {
+        const audiences = Array.isArray(message.audiences) ? message.audiences as Audience[] : [];
+        setKnowledgeAudiences(paths, stringField(message, 'id'), audiences);
+        send(await knowledgeState());
+      } catch (error) {
+        send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
     }
-    return true;
-  }
-  if (type === 'importSkillFolder') {
-    try {
-      const scope: KnowledgeScope = message.scope === 'project' ? 'project' : 'global';
-      const files = Array.isArray(message.files) ? message.files as { path: string; content: string; encoding?: 'utf8' | 'base64' }[] : [];
-      const item = await importSkillFolder(context, paths, scope, stringField(message, 'name'), files);
-      send({ type: 'knowledgeSaved', item });
-    } catch (error) {
-      send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+    if (type === 'importSkillFolder') {
+      try {
+        const scope: KnowledgeScope = message.scope === 'project' ? 'project' : 'global';
+        const files = Array.isArray(message.files) ? message.files as { path: string; content: string; encoding?: 'utf8' | 'base64' }[] : [];
+        const item = await importSkillFolder(context, paths, scope, stringField(message, 'name'), files);
+        send({ type: 'knowledgeSaved', item });
+      } catch (error) {
+        send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
     }
-    return true;
-  }
-  if (type === 'undoKnowledgeChange') {
-    try {
-      send({ type: 'knowledgeState', items: await undoKnowledgeChange(context, paths, stringField(message, 'id')) });
-    } catch (error) {
-      send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+    if (type === 'undoKnowledgeChange') {
+      try {
+        send(await knowledgeState(await undoKnowledgeChange(context, paths, stringField(message, 'id'))));
+      } catch (error) {
+        send({ type: 'knowledgeError', message: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
     }
-    return true;
-  }
-  if (type === 'openKnowledge') {
-    try {
-      await openKnowledge(paths, stringField(message, 'id'), typeof message.file === 'string' ? message.file : undefined);
-    } catch {
-      // Opening a file has no reply; a stale item simply does nothing.
+    if (type === 'openKnowledge') {
+      try {
+        await openKnowledge(paths, stringField(message, 'id'), typeof message.file === 'string' ? message.file : undefined);
+      } catch {
+        // Opening a file has no reply; a stale item simply does nothing.
+      }
+      return true;
     }
-    return true;
+    return false;
   }
 
   /* Toolpacks --------------------------------------------------------------------------------------------- */
@@ -299,6 +379,10 @@ export async function handleUnifyRequest(
         const step = setup?.steps.find(item => item.id === stepId);
         if (!step?.open) throw new Error('This setup step has nothing to open.');
         await openSetupTarget(step.open, context.openExternal, packDir);
+      } else if (action === 'install') {
+        const stepId = stringField(message, 'stepId');
+        if (!stepId) throw new Error('Choose a setup step first.');
+        await installSetupPackages(packDir, await packDisplayName(paths, id), stepId);
       } else if (action === 'rerunScript') {
         await rerunPackSetupScript(packDir, {
           packName: await packDisplayName(paths, id),

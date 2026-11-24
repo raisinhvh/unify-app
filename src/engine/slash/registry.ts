@@ -8,6 +8,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'job', description: 'Plan a checklist from your spec, then work and review until it passes', usage: '/job <spec>' },
   { name: 'permissions', description: 'Show or change the approval mode for this workspace', usage: '/permissions [ask | auto | full]' },
   { name: 'schedule', description: 'Send a prompt later, at a time or after a delay', usage: SCHEDULE_USAGE },
+  { name: 'shutdown', description: 'Shut the PC down once every chat and subagent finishes', usage: '/shutdown' },
 ];
 
 export const APPROVAL_MODES = {

@@ -189,7 +189,7 @@ function PackDetail(props: { pack: InstalledPack }): JSX.Element {
             </span>
           </Show>
           <Show when={!props.pack.version && !sourceLabel() && !props.pack.syncedDevices}>
-            <span class="tp-meta-item"><span class="tp-meta-value">{props.pack.status}</span></span>
+            <span class="tp-meta-item tp-meta-status"><span class="tp-meta-value">{props.pack.status}</span></span>
           </Show>
         </span>
         <span class="tp-meta-enabled">Enabled</span>

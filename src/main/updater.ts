@@ -1,7 +1,7 @@
 /**
  * App updater: electron-updater against the GitHub Releases of
- * `raisinhvh/unify`. Packaged builds only; errors are logged and never shown,
- * because the repository stays private until release.
+ * `raisinhvh/unify-app`. Packaged builds only; errors are logged and never
+ * shown, because being offline or rate-limited is normal.
  *
  * Checks run 10 s after startup and then every 6 h. Downloads happen in the
  * background and one notification per version announces a ready update.

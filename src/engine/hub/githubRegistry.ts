@@ -15,6 +15,7 @@ import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 import type { GithubAuth } from '../unify/github';
 import { HUB_BRANCH, HUB_PUBLISHERS_URL, HUB_REPOSITORY, publishHubPack } from './publish';
+import { PACK_SCRIPT_NAMES } from './scripts';
 import {
   HubCategory,
   HubDevice,
@@ -60,7 +61,7 @@ export function setupFileNames(setupText: string): string[] {
     return [];
   }
   if (!isRecord(parsed) || !Array.isArray(parsed.files)) return [];
-  const reserved = new Set(['pack.ts', 'pack.js', 'meta.json', 'setup.json', 'install.js', 'install.ps1', 'install.sh']);
+  const reserved = new Set(['pack.ts', 'pack.js', 'meta.json', 'setup.json', ...PACK_SCRIPT_NAMES]);
   return parsed.files.filter((name): name is string =>
     typeof name === 'string'
     && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name)
@@ -158,17 +159,37 @@ export class GithubHubRegistry implements HubRegistry {
     return { pack, ...(readme ? { readme } : {}) };
   }
 
+  /**
+   * The Hub branch's current commit id, or the branch name when GitHub can't be asked. raw.githubusercontent.com
+   * caches branch URLs for about 5 minutes, so a pack installed right after a push would get stale files; a commit
+   * URL is never stale, and every file of one install comes from the same commit.
+   */
+  private async latestCommit(): Promise<string> {
+    try {
+      const fetchImpl = this.fetchFn ?? globalThis.fetch;
+      const response = await fetchImpl(`${HUB_API}/commits/${HUB_BRANCH}`, {
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+        headers: { accept: 'application/vnd.github.sha', 'user-agent': 'unify-engine' },
+      });
+      const sha = response.ok ? (await response.text()).trim() : '';
+      return /^[0-9a-f]{40}$/.test(sha) ? sha : HUB_BRANCH;
+    } catch {
+      return HUB_BRANCH;
+    }
+  }
+
   public async download(id: string, destination: string): Promise<void> {
     await fsp.mkdir(destination, { recursive: true });
-    const base = `https://raw.githubusercontent.com/${HUB_REPOSITORY}/${HUB_BRANCH}/packs/${encodeURIComponent(id)}`;
+    const ref = await this.latestCommit();
+    const base = `https://raw.githubusercontent.com/${HUB_REPOSITORY}/${ref}/packs/${encodeURIComponent(id)}`;
     const source = await this.fetchText(`${base}/pack.ts`);
     await fsp.writeFile(path.join(destination, 'pack.ts'), source, 'utf8');
-    for (const script of ['install.js', 'install.ps1', 'install.sh']) {
+    for (const script of PACK_SCRIPT_NAMES) {
       try {
         const content = await this.fetchText(`${base}/${script}`);
         await fsp.writeFile(path.join(destination, script), content, 'utf8');
       } catch {
-        // Install scripts are optional.
+        // Install and uninstall scripts are optional.
       }
     }
     let setupText: string | undefined;

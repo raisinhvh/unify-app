@@ -100,9 +100,28 @@ const [extraProjects, setExtraProjects] = createSignal<SidebarProject[]>(readPer
 
 export { selectedProject };
 
+/** Home's "No folder" choice: chats start in their own empty scratch folder instead of a project. */
+export const noFolderProject: SidebarProject = { name: 'No folder', path: '' };
+
+export function isNoFolder(project: SidebarProject | undefined): boolean {
+  return !!project && !project.path;
+}
+
+/** The newSession fields that start a chat in `project` (or with no folder). */
+export function newSessionTarget(project: SidebarProject | undefined): { project?: SidebarProject; noFolder?: boolean } {
+  if (isNoFolder(project)) return { noFolder: true };
+  return project ? { project } : {};
+}
+
 export function selectProject(project: SidebarProject): void {
   setSelectedProjectSignal(project);
   writePersisted('project', project);
+  rememberProject(project);
+}
+
+/** Adds a folder opened through "Open folder…" to the recent projects, if it is not there yet. */
+export function rememberProject(project: SidebarProject): void {
+  if (isNoFolder(project)) return;
   const known = knownProjects().some(item => item.path === project.path);
   if (!known) {
     const next = [project, ...extraProjects()].slice(0, 20);

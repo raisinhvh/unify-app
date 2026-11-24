@@ -12,17 +12,18 @@
  * Active lifts, travels and settles, and the counts roll like an odometer.
  */
 import { createMemo, createSignal, onCleanup, onMount, Show, type JSX } from 'solid-js';
-import { ChatLoader, Icon, IconButton, tooltip, TreeFolder, TreeItem } from '../../components';
+import { ChatLoader, Icon, IconButton, Menu, tooltip, TreeFolder, TreeItem, type MenuEntry } from '../../components';
 import { AnimatedList, Collapse } from '../../motion';
 import { liftMoves, RetypeText, RollingNumber } from '../../motion/organic';
-import { post } from '../../bridge';
+import { bridge, post } from '../../bridge';
 import { readPersisted, writePersisted } from '../../persist';
-import type { SidebarSession } from '../../protocol';
+import type { SidebarProject, SidebarSession } from '../../protocol';
 import { markRead, viewState } from '../../store';
 import { activeChats, activityDetail, activityStatus, pendingInterrupt } from '../../store/activity';
 import { isChatOnScreen, layout, openChat } from '../../shell/layout';
 import { chatAction, actionLabel } from '../../components/loaders/actions';
-import { chatTime, projectGroups, projectName, shortPath } from './projects';
+import { openNextNewSession } from './Home';
+import { chatTime, knownProjects, newSessionTarget, noFolderProject, parentFolder, projectGroups, projectName, selectProject, shortPath } from './projects';
 import { feature } from '../../store/features';
 import './chats-panel.css';
 
@@ -94,19 +95,87 @@ function ChatTip(props: { session: SidebarSession }): JSX.Element {
   );
 }
 
+/** How long a first click on a row's delete button waits for the confirming second click. */
+const deleteArmMs = 3000;
+
+/**
+ * Hover shows a delete button in place of the time; the first click arms it ("Delete?"), a second deletes.
+ * Right-click opens a menu with "Delete chat" (no second step: the menu is the confirmation).
+ */
 function ChatRow(props: { session: SidebarSession; trailing: string; trailingWarn?: boolean; warn?: boolean }): JSX.Element {
+  const [row, setRow] = createSignal<HTMLButtonElement>();
+  const [menuOpen, setMenuOpen] = createSignal(false);
+  const [armed, setArmed] = createSignal(false);
+  let disarmTimer = 0;
+  onCleanup(() => window.clearTimeout(disarmTimer));
+
+  const deleteChat = () => post({ type: 'deleteSession', sessionId: props.session.id });
+
+  const onDeleteClick = (event: MouseEvent) => {
+    event.stopPropagation();
+    window.clearTimeout(disarmTimer);
+    if (armed()) {
+      setArmed(false);
+      deleteChat();
+      return;
+    }
+    setArmed(true);
+    disarmTimer = window.setTimeout(() => setArmed(false), deleteArmMs);
+  };
+
   return (
-    <TreeItem
-      ref={element => tooltip(element, () => <ChatTip session={props.session} />, { placement: 'right-start', delay: 600 })}
-      leading={<ChatLoader sessionId={props.session.id} size={12} />}
-      label={<RetypeText value={props.session.name || 'New chat'} data-motion="chat-title" />}
-      trailing={props.trailing}
-      trailingTone={props.trailingWarn ? 'warn' : undefined}
-      tone={props.warn ? 'warn' : undefined}
-      selected={isChatOnScreen(props.session.id) && layout().cells[layout().focused] === props.session.id}
-      onClick={event => onRowClick(event, props.session.id)}
-      onAuxClick={event => onRowAuxClick(event, props.session.id)}
-    />
+    <>
+      <TreeItem
+        ref={element => {
+          setRow(element);
+          tooltip(element, () => <ChatTip session={props.session} />, { placement: 'right-start', delay: 600 });
+        }}
+        class={armed() ? 'chat-row delete-armed' : 'chat-row'}
+        leading={<ChatLoader sessionId={props.session.id} size={12} />}
+        label={<RetypeText value={props.session.name || 'New chat'} data-motion="chat-title" />}
+        trailing={
+          <>
+            <span class="chat-row-time">{props.trailing}</span>
+            <span
+              class="chat-row-delete"
+              role="button"
+              tabIndex={-1}
+              aria-label={armed() ? 'Confirm delete' : 'Delete chat'}
+              onClick={onDeleteClick}
+              onPointerDown={event => event.stopPropagation()}
+            >
+              <Show when={armed()} fallback={<Icon name="trash" size={12} />}>
+                Delete?
+              </Show>
+            </span>
+          </>
+        }
+        trailingTone={props.trailingWarn ? 'warn' : undefined}
+        tone={props.warn ? 'warn' : undefined}
+        selected={isChatOnScreen(props.session.id) && layout().cells[layout().focused] === props.session.id}
+        onClick={event => onRowClick(event, props.session.id)}
+        onAuxClick={event => onRowAuxClick(event, props.session.id)}
+        onContextMenu={event => {
+          event.preventDefault();
+          setMenuOpen(true);
+        }}
+        onPointerLeave={() => {
+          window.clearTimeout(disarmTimer);
+          setArmed(false);
+        }}
+      />
+      <Menu
+        anchor={row()}
+        open={menuOpen()}
+        onClose={() => setMenuOpen(false)}
+        placement="bottom-end"
+        items={[{ id: 'delete', label: 'Delete chat', danger: true }]}
+        onSelect={() => {
+          setMenuOpen(false);
+          deleteChat();
+        }}
+      />
+    </>
   );
 }
 
@@ -114,6 +183,78 @@ function rowTrailing(session: SidebarSession): { text: string; warn: boolean } {
   const interrupt = pendingInterrupt(session.id);
   if (interrupt) return { text: interrupt.kind === 'question' ? 'needs answer' : 'needs approval', warn: true };
   return { text: chatTime(session), warn: false };
+}
+
+/** How many recent project folders the new chat menu offers before "Choose folder…". */
+const recentProjectLimit = 4;
+const chooseFolderId = '__choose__';
+const noFolderId = '__no_folder__';
+
+/** Starts a chat in a folder (or none) and opens it in a pane. The choice also becomes Home's project. */
+function startChatIn(project: SidebarProject): void {
+  selectProject(project);
+  openNextNewSession();
+  post({ type: 'newSession', ...newSessionTarget(project) });
+}
+
+/** "+" in the header: the most recent project folders, then the system folder picker. */
+function NewChatButton(): JSX.Element {
+  const [anchor, setAnchor] = createSignal<HTMLButtonElement>();
+  const [open, setOpen] = createSignal(false);
+  const recent = () => knownProjects().slice(0, recentProjectLimit);
+  // Dev screenshots (tools/shot.mjs "shell2x2?open=newChat") open the menu without a click.
+  onMount(() => {
+    if (import.meta.env.DEV && new URLSearchParams(window.location.search).get('open') === 'newChat') {
+      window.setTimeout(() => setOpen(true), 300);
+    }
+  });
+
+  // Dev screenshots (tools/shot.mjs "chatpane?open=newChat") open the menu without a click.
+  onMount(() => {
+    if (import.meta.env.DEV && new URLSearchParams(window.location.search).get('open') === 'newChat') {
+      window.setTimeout(() => setOpen(true), 300);
+    }
+  });
+
+  const items = (): MenuEntry[] => [
+    { kind: 'group', label: 'New chat in' },
+    ...recent().map(project => ({
+      id: project.path,
+      label: project.name,
+      hint: parentFolder(project.path),
+      icon: 'folder' as const,
+    })),
+    ...(recent().length ? [{ kind: 'separator' as const }] : []),
+    { id: noFolderId, label: 'No folder', icon: 'chats' },
+    { id: chooseFolderId, label: 'Choose folder…', icon: 'plus' },
+  ];
+
+  const onSelect = async (id: string) => {
+    setOpen(false);
+    if (id === noFolderId) { startChatIn(noFolderProject); return; }
+    if (id !== chooseFolderId) {
+      const project = recent().find(item => item.path === id);
+      if (project) startChatIn({ name: project.name, path: project.path });
+      return;
+    }
+    const path = await bridge().pickFolder();
+    if (path) startChatIn({ name: projectName(path), path });
+  };
+
+  return (
+    <>
+      <IconButton ref={setAnchor} icon="plus" label="New chat" active={open()} onClick={() => setOpen(!open())} />
+      <Menu
+        anchor={anchor()}
+        open={open()}
+        onClose={() => setOpen(false)}
+        onSelect={id => void onSelect(id)}
+        items={items()}
+        placement="bottom-end"
+        class="new-chat-menu"
+      />
+    </>
+  );
 }
 
 export function ChatsPanel(): JSX.Element {
@@ -148,7 +289,7 @@ export function ChatsPanel(): JSX.Element {
     <aside class="side-panel chats-panel" aria-label="Chats">
       <header class="chats-header">
         <h2 class="type-heading">Chats</h2>
-        <IconButton icon="plus" label="New chat" onClick={() => post({ type: 'newSession' })} />
+        <NewChatButton />
       </header>
       <label class="chats-search">
         <Icon name="search" size={14} />
@@ -209,7 +350,7 @@ export function ChatsPanel(): JSX.Element {
             return (
               <TreeFolder
                 icon="folder"
-                label={group().project ? group().project!.name : 'Chats'}
+                label={group().project ? group().project!.name : 'No folder'}
                 trailing={group().project ? shortPath(group().project!.path) : ''}
                 open={!closedFolders().includes(group().key)}
                 onToggle={open => setFolderOpen(group().key, open)}
