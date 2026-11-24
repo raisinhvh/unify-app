@@ -45,18 +45,33 @@ export interface HubPackDetail {
   readme?: string;
 }
 
-/** UI → engine `hubInstall`: retry with `allowScript` only after the user approved the shown script. */
+/**
+ * UI → engine `hubInstall`. Two consents, in order: `allowScript` once the user agreed to the pack's install and
+ * uninstall scripts, then `packages` once they agreed to its dependencies (the step ids of the optional ones they
+ * ticked; required ones always install). Without `packages` a pack with dependencies answers `needsDependencyConsent`.
+ */
 export interface HubInstallRequest {
   id: string;
   /** Set once the user was shown the pack's install/uninstall scripts and agreed to run them. */
   allowScript?: boolean;
+  /** Set once the user agreed to the dependencies: the optional ones they ticked (may be empty). */
+  packages?: string[];
 }
 
-/** A program a pack's setup will install, shown on the Hub's consent dialog. */
+/** Step id of the Python that Unify adds by itself when a pip package needs it and none is installed. */
+export const PYTHON_DEPENDENCY_ID = 'unify:python';
+
+/** A program a pack's setup will install, shown on the Hub's dependency dialog. */
 export interface HubInstallPackage {
+  /** The setup step it comes from (`PYTHON_DEPENDENCY_ID` for the Python Unify adds). */
+  stepId: string;
   title: string;
   /** Exactly what runs, e.g. `winget install --id ImageMagick.ImageMagick --exact`. */
   command: string;
+  /** Not needed for the pack to work: shown unticked, installed only when ticked. */
+  optional?: boolean;
+  /** For the Python Unify adds: the pip steps that need it. It installs when any of them does. */
+  neededBy?: string[];
 }
 
 export interface HubInstallProgress {

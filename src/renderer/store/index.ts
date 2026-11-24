@@ -17,6 +17,7 @@ import type {
   SidebarImage,
   SidebarScheduledPrompt,
   SidebarTimelineItem,
+  SidebarToolEvent,
   SidebarViewState,
 } from '../protocol';
 import { defaultViewState, readBootState } from './defaults';
@@ -542,16 +543,20 @@ export function applyHostMessage(message: SidebarHostMessage): void {
 function applyRunState(message: Extract<SidebarHostMessage, { type: 'runState' }>): void {
   const previous = viewState.runStates[message.sessionId]?.state || 'idle';
   setViewState(produce(state => {
-    if (previous === 'cancelling' && message.state === 'idle') {
+    // A finished turn has no running tools: calls it never reported back (interrupted, restarted, CLI exit) settle here.
+    if (previous !== 'idle' && message.state === 'idle') {
+      const cancelled = previous === 'cancelling';
       if (message.sessionId === state.activeSessionId) {
-        state.tools = state.tools.map(tool => (tool.state === 'running' ? { ...tool, state: 'cancelled' } : tool));
+        state.tools = state.tools.map(tool => settleTool(tool, cancelled));
       }
       for (const entry of state.timeline[message.sessionId] || []) {
-        if (entry.kind === 'tool' && entry.event.state === 'running') entry.event = { ...entry.event, state: 'cancelled' };
+        if (entry.kind === 'tool') entry.event = settleTool(entry.event, cancelled);
       }
       // Delegated subagents can outlive the turn; the host reports how they end.
-      for (const agent of Object.values(state.subagents[message.sessionId] || {})) {
-        if (agent.state === 'running' && !agent.delegated) agent.state = 'cancelled';
+      if (cancelled) {
+        for (const agent of Object.values(state.subagents[message.sessionId] || {})) {
+          if (agent.state === 'running' && !agent.delegated) agent.state = 'cancelled';
+        }
       }
     }
     state.runStates[message.sessionId] = { state: message.state, label: message.label };
@@ -562,6 +567,19 @@ function applyRunState(message: Extract<SidebarHostMessage, { type: 'runState' }
     saveUnread({ ...unread(), [message.sessionId]: Date.now() });
   }
   if (message.state === 'thinking') setEngineError(undefined);
+}
+
+/** A tool (and its batch calls) still running when the turn ended: cancelled if you stopped it, otherwise done. */
+function settleTool(tool: SidebarToolEvent, cancelled: boolean): SidebarToolEvent {
+  const children = tool.children?.some(child => child.state === 'running')
+    ? tool.children.map(child => (child.state === 'running' ? { ...child, state: 'complete' as const } : child))
+    : tool.children;
+  if (tool.state !== 'running' && children === tool.children) return tool;
+  return {
+    ...tool,
+    state: tool.state === 'running' ? (cancelled ? 'cancelled' : 'complete') : tool.state,
+    ...(children ? { children } : {}),
+  };
 }
 
 export const isRunning = (sessionId: string): boolean => (viewState.runStates[sessionId]?.state || 'idle') !== 'idle';

@@ -5,7 +5,8 @@
  *   Featured   three cards (All, no search)
  *   list       "All toolpacks" + Sort (Popular / New / Name); one row per pack with its install state
  *   detail     the picked pack: description, Install (+ inline confirmation), Version / Updated, Tools
- *   dialog     a pack that ships an install script shows it before anything runs (ScriptConsentDialog)
+ *   dialog     a pack that ships an install script shows it before anything runs (ScriptConsentDialog), then
+ *              the programs its setup installs, optional ones to tick (DependencyConsentDialog)
  *
  * Exports `HubContent` for the content card (the Shell draws `ToolpacksPanel` beside it), `HubScreen` as the
  * composite, and `hubEnabled()` (feature `toolpacks.hub`) for whoever links here.
@@ -35,6 +36,7 @@ import {
   publishToHub,
   type HubPack,
 } from './hubAdapter';
+import { DependencyConsentDialog } from './DependencyConsentDialog';
 import { ScriptConsentDialog } from './ScriptConsentDialog';
 import { Segmented } from './Segmented';
 import './hub.css';
@@ -464,6 +466,7 @@ export function HubContent(): JSX.Element {
         </Match>
       </Switch>
       <ScriptConsentDialog />
+      <DependencyConsentDialog />
     </main>
   );
 }

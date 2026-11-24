@@ -764,6 +764,120 @@
   overflow-wrap: anywhere;
 }
 
+/* ---------------------------------------------------------------- install dependencies (checkbox rows) */
+
+/* Rows space themselves with padding (not the list gap), so the collapsing Python row takes its gap with it. */
+.hub-deps {
+  gap: 0;
+}
+
+.hub-dep-item {
+  padding-bottom: 6px;
+}
+
+.hub-deps > .hub-dep-item:last-child {
+  padding-bottom: 0;
+}
+
+.hub-dep {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 10px;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.hub-dep:not(.locked):hover {
+  background: var(--hover);
+}
+
+.hub-dep.locked {
+  cursor: default;
+}
+
+.hub-dep:has(.hub-dep-input:focus-visible) {
+  outline: 1px solid var(--text3);
+  outline-offset: 1px;
+}
+
+/* The real checkbox stays for keyboard and screen readers; the box beside it is what shows. */
+.hub-dep-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.hub-dep-box {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  /* Centred on the title's first line. */
+  margin-top: calc((1lh - 16px) / 2);
+  border: 1px solid var(--text3);
+  border-radius: 4px;
+  transition: border-color 120ms ease-out;
+}
+
+.hub-dep:not(.locked):hover .hub-dep-box {
+  border-color: var(--text2);
+}
+
+.hub-dep.checked .hub-dep-box {
+  border-color: var(--accent);
+}
+
+.hub-dep-fill {
+  position: absolute;
+  inset: -1px;
+  background: var(--accent);
+  border-radius: inherit;
+}
+
+.hub-dep-check {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--on-accent);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Locked rows (required, or the Python a ticked program needs): ticked, but quieter than a choice. */
+.hub-dep.locked .hub-dep-box {
+  opacity: 0.5;
+}
+
+.hub-dep-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hub-dep-tag {
+  max-width: 200px;
+  /* 18px tall against the title's 20px line. */
+  margin-top: 1px;
+  padding: 0 8px;
+  overflow: hidden;
+  color: var(--text2);
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
 .hub-dialog-footer {
   display: flex;
   flex: none;

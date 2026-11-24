@@ -105,13 +105,16 @@ export type SidebarViewState = Omit<EngineViewState, 'sessions' | 'usage' | 'mod
 export type RunState = SidebarViewState['runStates'][string];
 
 /**
- * Toolpack Hub install (src/engine/unify/requests/hub.ts). A pack that ships an install script answers with
- * `needsScriptConsent` and the script; the UI resends with `allowScript: true` once the user agrees.
+ * Toolpack Hub install (src/engine/unify/requests/hub.ts). Two consents, in order: a pack that ships an install
+ * script answers with `needsScriptConsent` and the script; the UI resends with `allowScript: true` once the user
+ * agrees. A pack with dependencies then answers `needsDependencyConsent` with `packages`; the UI resends with
+ * `packages` (the optional step ids the user ticked) once they agree.
  */
 export interface HubInstallMessage {
   type: 'hubInstall';
   id: string;
   allowScript?: boolean;
+  packages?: string[];
   requestId?: string;
 }
 
@@ -125,7 +128,9 @@ export interface HubInstallResultMessage {
   /** The script that runs when the pack is removed (undoes what the install script put outside the pack). */
   uninstallScriptName?: string;
   uninstallScriptText?: string;
-  /** Programs the pack's setup installs (winget/brew/pip), shown with the script before anything runs. */
+  /** The pack's dependencies wait for the user's consent (the Hub's dependency dialog); see `packages`. */
+  needsDependencyConsent?: boolean;
+  /** With `needsDependencyConsent`: the programs the pack's setup installs (winget/brew/pip). */
   packages?: HubInstallPackage[];
   error?: string;
   requestId?: string;

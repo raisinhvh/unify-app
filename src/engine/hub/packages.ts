@@ -157,6 +157,46 @@ function run(command: string, args: string[], timeout: number): Promise<{ code: 
   });
 }
 
+/** The Python a pip package needs when none is installed, or undefined on platforms without an installer. */
+export function pythonCommandFor(platform: NodeJS.Platform = process.platform): PackageCommand | undefined {
+  if (platform === 'win32') return packageCommandFor({ winget: 'Python.Python.3.12' }, platform);
+  if (platform === 'darwin') return packageCommandFor({ brew: 'python@3.12' }, platform);
+  return undefined;
+}
+
+/** Whether a package command installs Python itself (a pack may list Python as its own step). */
+export function isPythonPackage(command: PackageCommand): boolean {
+  if (command.manager === 'winget') return /^Python\.Python\./i.test(command.id);
+  if (command.manager === 'brew') return /^python(@|$)/i.test(command.id);
+  return false;
+}
+
+/** Python installs winget puts outside PATH until the process restarts (per user, then for all users). */
+function windowsPythonInstalls(): string[] {
+  if (process.platform !== 'win32') return [];
+  const bases = [
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs', 'Python'),
+    process.env.ProgramFiles,
+  ].filter((item): item is string => !!item);
+  const found: string[] = [];
+  for (const base of bases) {
+    try {
+      const entries = readdirSync(base, { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && /^Python3\d*$/i.test(entry.name))
+        .map(entry => entry.name)
+        .sort()
+        .reverse();
+      for (const name of entries) {
+        const candidate = path.join(base, name, 'python.exe');
+        if (existsSync(candidate)) found.push(candidate);
+      }
+    } catch {
+      // No Python installed there.
+    }
+  }
+  return found;
+}
+
 /** A Python 3 that can run pip: the `py` launcher first on Windows. */
 function findPython(): { command: string; prefix: string[] } | undefined {
   const candidates: { name: string; prefix: string[] }[] = process.platform === 'win32'
@@ -167,7 +207,13 @@ function findPython(): { command: string; prefix: string[] } | undefined {
     // The Microsoft Store stub named python.exe only opens the Store.
     if (found && !/WindowsApps/i.test(found)) return { command: found, prefix: candidate.prefix };
   }
-  return undefined;
+  const installed = windowsPythonInstalls()[0];
+  return installed ? { command: installed, prefix: [] } : undefined;
+}
+
+/** Whether a Python 3 that can run pip is installed. */
+export function hasPython(): boolean {
+  return !!findPython();
 }
 
 /** Runs one package install. Failures are returned, never thrown. */

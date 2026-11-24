@@ -90,6 +90,27 @@ const SAMPLE_PACKS = [
     license: 'MIT',
     withScript: true,
   },
+  {
+    id: 'dep-pack',
+    name: 'Dep Pack',
+    author: 'tester',
+    category: 'media',
+    description: 'Needs an optional program.',
+    icon: 'recorder',
+    installs: 1,
+    tools: ['dep_pack_info'],
+    version: '1.0.0',
+    updatedAt: 1_793_000_000_000,
+    publishedAt: 1_783_000_000_000,
+    license: 'MIT',
+    withScript: false,
+    // Optional only, so installing without ticking it never runs a real installer.
+    setup: {
+      steps: [
+        { id: 'extra', title: 'Extra', kind: 'auto', optional: true, install: { pip: 'extra-tool' }, check: { command: 'unify-not-a-program' } },
+      ],
+    },
+  },
 ];
 
 function minimalPackSource(pack) {
@@ -118,7 +139,7 @@ function createTestRegistry() {
     id: 'test-in-memory',
     async state() {
       return {
-        packs: SAMPLE_PACKS.map(({ withScript: _ignored, ...pack }) => ({ ...pack, tools: [...pack.tools] })),
+        packs: SAMPLE_PACKS.map(({ withScript: _ignored, setup: _setup, ...pack }) => ({ ...pack, tools: [...pack.tools] })),
         categories: [
           { id: 'studio', label: 'Studio & 3D' },
           { id: 'dev', label: 'Dev' },
@@ -132,7 +153,7 @@ function createTestRegistry() {
     async detail(id) {
       const found = SAMPLE_PACKS.find(pack => pack.id === id);
       if (!found) return undefined;
-      const { withScript: _ignored, ...pack } = found;
+      const { withScript: _ignored, setup: _setup, ...pack } = found;
       return { pack, readme: `# ${pack.name}\n\n${pack.description}\n` };
     },
     async download(id, destination) {
@@ -148,6 +169,7 @@ function createTestRegistry() {
         );
         await writeFile(join(destination, 'uninstall.js'), "console.log('cleaned up');\n", 'utf8');
       }
+      if (found.setup) await writeFile(join(destination, 'setup.json'), JSON.stringify(found.setup), 'utf8');
     },
     async publish() {
       return { ok: false, message: 'Test registry does not publish.' };
@@ -183,6 +205,24 @@ test('hubBrowse answers with hubState from the injected registry', async () => {
   assert.equal(detail.pack.id, 'notes');
   assert.match(detail.readme, /Notes/);
   assert.equal(await registry.detail('missing-pack'), undefined);
+});
+
+test('installHubPack asks which dependencies to install, then installs with the chosen ones', async () => {
+  const blocked = await installHubPack({ registry, id: 'dep-pack', toolpacksDir, reply: () => {} });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.needsScriptConsent, undefined, 'no script, so no script consent');
+  assert.equal(blocked.needsDependencyConsent, true);
+  const extra = blocked.packages.find(item => item.stepId === 'extra');
+  assert.deepEqual(extra, { stepId: 'extra', title: 'Extra', command: 'python -m pip install --user "extra-tool"', optional: true });
+  // When Python is missing, Unify offers it too, optional like the only package needing it.
+  const python = blocked.packages.find(item => item.stepId === 'unify:python');
+  if (python) assert.deepEqual({ optional: python.optional, neededBy: python.neededBy }, { optional: true, neededBy: ['extra'] });
+  assert.equal(existsSync(join(toolpacksDir, 'dep_pack')), false, 'nothing was installed');
+
+  const installed = await installHubPack({ registry, id: 'dep-pack', toolpacksDir, reply: () => {}, packages: [] });
+  assert.equal(installed.ok, true);
+  assert.equal(installed.needsDependencyConsent, undefined);
+  assert.equal(installed.setup.steps.find(step => step.id === 'extra').status, 'todo');
 });
 
 test('installHubPack returns the script without consent and runs it only when allowed', async () => {

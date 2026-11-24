@@ -93,7 +93,7 @@ UI -> engine:
 
 ```ts
 | { type: 'hubBrowse'; refresh?: boolean }                     // reply: hubState
-| { type: 'hubInstall'; id: string; allowScript?: boolean } // reply: hubInstallProgress (repeated), hubInstallResult
+| { type: 'hubInstall'; id: string; allowScript?: boolean; packages?: string[] } // reply: hubInstallProgress (repeated), hubInstallResult
 | { type: 'hubPublish' }                                       // engine: folder picker, validation, confirm, upload
 ```
 
@@ -102,13 +102,19 @@ Engine -> UI:
 ```ts
 | { type: 'hubState'; hub: HubState }
 | ({ type: 'hubInstallProgress' } & HubInstallProgress)
-| { type: 'hubInstallResult'; ok: boolean; id: string; needsScriptConsent?: boolean; scriptName?: string; scriptText?: string; error?: string }
+| { type: 'hubInstallResult'; ok: boolean; id: string; needsScriptConsent?: boolean; scriptName?: string; scriptText?: string;
+    needsDependencyConsent?: boolean; packages?: HubInstallPackage[]; error?: string }
 ```
 
-A pack that ships an install script and was sent without `allowScript` answers `hubInstallResult` with
-`needsScriptConsent`, `scriptName` and `scriptText`; nothing is installed. The Hub shows the script in a dialog
-and, if the user agrees, resends `hubInstall` with `allowScript: true`. `ok: false` with `error` shows as the
-row's Failed / Retry state.
+Two consents, in order; nothing is installed until both are given:
+1. A pack that ships an install/uninstall script and was sent without `allowScript` answers with
+   `needsScriptConsent`, `scriptName` and `scriptText`. The Hub shows the script (ScriptConsentDialog) and, if the
+   user agrees, resends with `allowScript: true`.
+2. A pack whose setup.json installs programs and was sent without `packages` answers with `needsDependencyConsent`
+   and `packages` (required and optional, plus `unify:python` when a pip package needs Python that is missing).
+   DependencyConsentDialog resends with `packages`: the optional step ids the user ticked. Skip cancels the install.
+
+`ok: false` with `error` shows as the row's Failed / Retry state.
 
 Install downloads the pack and runs its install script (spec), then sends `toolpacksState` with the new pack and a
 final `hubInstallProgress` with `state: 'done'`. The UI never uploads anything itself: `hubPublish` is a request,

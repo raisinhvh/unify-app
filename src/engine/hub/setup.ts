@@ -18,7 +18,17 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { appendLog, postToRenderer } from '../../shim/vscode/host';
-import { findCommand, installPackage, isValidPackageId, packageCommandFor, type PackageCommand } from './packages';
+import {
+  findCommand,
+  hasPython,
+  installPackage,
+  isPythonPackage,
+  isValidPackageId,
+  packageCommandFor,
+  pythonCommandFor,
+  type PackageCommand,
+} from './packages';
+import { PYTHON_DEPENDENCY_ID } from './types';
 import type {
   PackSetupCheck,
   PackSetupDefinition,
@@ -476,40 +486,91 @@ export interface PendingPackage {
   stepId: string;
   title: string;
   command: PackageCommand;
+  optional?: boolean;
+  /** For the Python Unify adds (`PYTHON_DEPENDENCY_ID`): the pip steps that need it. */
+  neededBy?: string[];
 }
 
 /**
- * Packages the pack's setup would install on this machine: required steps (or just `stepId`) with a package for
- * this platform whose check does not pass yet. The Hub shows these commands before it installs anything.
+ * Adds Python (first) when a pending pip package needs it, none is installed and the pack does not install
+ * Python itself. It is optional only when every pip package needing it is optional.
  */
-export async function pendingPackages(packDir: string, name: string, stepId?: string): Promise<PendingPackage[]> {
+function withImplicitPython(pending: PendingPackage[]): PendingPackage[] {
+  const pip = pending.filter(item => item.command.manager === 'pip');
+  if (!pip.length || pending.some(item => isPythonPackage(item.command)) || hasPython()) return pending;
+  const command = pythonCommandFor();
+  if (!command) return pending;
+  const python: PendingPackage = {
+    stepId: PYTHON_DEPENDENCY_ID,
+    title: 'Python 3.12',
+    command,
+    ...(pip.every(item => item.optional) ? { optional: true } : {}),
+    neededBy: pip.map(item => item.stepId),
+  };
+  return [python, ...pending];
+}
+
+/**
+ * Packages the pack's setup would install on this machine: required steps (plus optional ones with
+ * `includeOptional`, or just `stepId`) with a package for this platform whose check does not pass yet, and the
+ * Python their pip packages need. The Hub shows these commands before it installs anything.
+ */
+export async function pendingPackages(
+  packDir: string,
+  name: string,
+  stepId?: string,
+  options: { includeOptional?: boolean } = {},
+): Promise<PendingPackage[]> {
   const definition = await readDefinition(packDir, name);
   if (!definition) return [];
   const pending: PendingPackage[] = [];
   for (const step of definition.steps) {
     if (!onThisPlatform(step)) continue;
-    if (stepId ? step.id !== stepId : step.optional) continue;
+    if (stepId ? step.id !== stepId : step.optional && !options.includeOptional) continue;
     const command = packageCommandFor(step.install);
     if (!command) continue;
     if (checkStep(step, packDir)?.passed) continue;
-    pending.push({ stepId: step.id, title: step.title, command });
+    pending.push({
+      stepId: step.id,
+      title: step.title,
+      command,
+      ...(step.optional ? { optional: true } : {}),
+    });
   }
-  return pending;
+  return withImplicitPython(pending);
+}
+
+/** Required packages plus the chosen optional ones, then Python only if a remaining pip package needs it. */
+function chosenPackages(pending: PendingPackage[], selectedOptional: string[]): PendingPackage[] {
+  const chosen = pending.filter(item => item.stepId !== PYTHON_DEPENDENCY_ID
+    && (!item.optional || selectedOptional.includes(item.stepId)));
+  const python = pending.find(item => item.stepId === PYTHON_DEPENDENCY_ID);
+  const needsPython = python && chosen.some(item => python.neededBy?.includes(item.stepId));
+  const ordered = [...chosen.filter(item => isPythonPackage(item.command)), ...chosen.filter(item => !isPythonPackage(item.command))];
+  return needsPython ? [python, ...ordered] : ordered;
 }
 
 /**
  * Installs the pending packages (see `pendingPackages`) one at a time, each with a progress notice, and records
- * every result in `setup-state.json`. Failures are recorded, not thrown; the checklist shows them.
+ * every result in `setup-state.json`: the required ones plus the optional `selectedOptional` step ids (or just
+ * `stepId`), with Python first when a pip package needs it. Failures are recorded, not thrown; the checklist
+ * shows them.
  */
-export async function installSetupPackages(packDir: string, name: string, stepId?: string): Promise<void> {
-  const pending = await pendingPackages(packDir, name, stepId);
+export async function installSetupPackages(
+  packDir: string,
+  name: string,
+  stepId?: string,
+  selectedOptional: string[] = [],
+): Promise<void> {
+  const pending = await pendingPackages(packDir, name, stepId, { includeOptional: selectedOptional.length > 0 });
   if (stepId && !pending.length) {
     const definition = await readDefinition(packDir, name);
     const step = definition?.steps.find(item => item.id === stepId);
     if (!step || !packageCommandFor(step.install)) throw new Error('This setup step has nothing to install on this computer.');
     return;
   }
-  for (const item of pending) {
+  const toInstall = stepId ? chosenPackages(pending, [stepId]) : chosenPackages(pending, selectedOptional);
+  for (const item of toInstall) {
     const id = `pack-package-${randomUUID()}`;
     const title = `${name}: ${item.title}`;
     postToRenderer({ type: 'progressNotice', id, title, message: item.command.display, state: 'running' });

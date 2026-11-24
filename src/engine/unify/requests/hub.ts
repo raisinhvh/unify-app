@@ -56,6 +56,9 @@ export async function handleHubRequest(
       toolpacksDir: paths.toolpacksDir,
       unifyHome: paths.unifyHome,
       allowScript: message.allowScript === true,
+      ...(Array.isArray(message.packages)
+        ? { packages: message.packages.filter((item: unknown): item is string => typeof item === 'string') }
+        : {}),
       reply: send,
       onInstalled: pack => recordHubInstall(paths, pack),
     });

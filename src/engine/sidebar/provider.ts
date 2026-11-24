@@ -7,9 +7,23 @@ import {
   SidebarWebviewMessage,
   SidebarTimelineItem,
   SidebarSubagent,
+  SidebarToolEvent,
 } from './view';
 
 export type SidebarMessageHandler = (message: SidebarWebviewMessage) => void | Promise<void>;
+
+/** A tool (and its batch calls) still running when the turn ended: cancelled if you stopped it, otherwise done. */
+function settleTool(tool: SidebarToolEvent, cancelled: boolean): SidebarToolEvent {
+  const children = tool.children?.some(child => child.state === 'running')
+    ? tool.children.map(child => (child.state === 'running' ? { ...child, state: 'complete' as const } : child))
+    : tool.children;
+  if (tool.state !== 'running' && children === tool.children) return tool;
+  return {
+    ...tool,
+    state: tool.state === 'running' ? (cancelled ? 'cancelled' : 'complete') : tool.state,
+    ...(children ? { children } : {}),
+  };
+}
 
 /** Host side of the Unify sidebar. Runtime integration is supplied via onMessage. */
 export class UnifySidebarProvider implements vscode.WebviewViewProvider {
@@ -159,10 +173,13 @@ export class UnifySidebarProvider implements vscode.WebviewViewProvider {
         break;
       }
       case 'runState': {
-        if (this.state.runStates[message.sessionId]?.state === 'cancelling' && message.state === 'idle') {
-          if (message.sessionId === this.state.activeSessionId) this.state.tools = this.state.tools.map(tool => tool.state === 'running' ? { ...tool, state: 'cancelled' } : tool);
-          for (const entry of this.state.timeline[message.sessionId] || []) if (entry.kind === 'tool' && entry.event.state === 'running') entry.event = { ...entry.event, state: 'cancelled' };
-          for (const agent of Object.values(this.state.subagents[message.sessionId] || {})) if (agent.state === 'running' && !agent.delegated) agent.state = 'cancelled';
+        const previous = this.state.runStates[message.sessionId]?.state || 'idle';
+        // A finished turn has no running tools: calls it never reported back (interrupted, restarted, CLI exit) settle here.
+        if (previous !== 'idle' && message.state === 'idle') {
+          const cancelled = previous === 'cancelling';
+          if (message.sessionId === this.state.activeSessionId) this.state.tools = this.state.tools.map(tool => settleTool(tool, cancelled));
+          for (const entry of this.state.timeline[message.sessionId] || []) if (entry.kind === 'tool') entry.event = settleTool(entry.event, cancelled);
+          if (cancelled) for (const agent of Object.values(this.state.subagents[message.sessionId] || {})) if (agent.state === 'running' && !agent.delegated) agent.state = 'cancelled';
         }
         this.state.runStates[message.sessionId] = { state: message.state, label: message.label };
         if (message.state === 'thinking') this.state.error = undefined;

@@ -67,15 +67,24 @@ export type HubReply =
   | HubInstallResultMessage
   | { type: 'hubPublishResult'; ok: boolean; message: string; url?: string };
 
-/** A pack whose install script waits for the user's consent (the Hub's script dialog). */
+/** A pack whose install script waits for the user's consent (the Hub's script dialog, shown first). */
 export interface ScriptConsent {
   id: string;
-  /** Empty when the pack only installs packages. */
+  /** Empty when the pack only has an uninstall script. */
   scriptName: string;
   scriptText: string;
   /** Empty when the pack has nothing to undo on removal. */
   uninstallScriptName: string;
   uninstallScriptText: string;
+}
+
+/**
+ * A pack whose dependencies wait for the user's consent (the Hub's dependency dialog, shown after the script one).
+ * Required packages always install; optional ones only when ticked. The Python Unify adds (`neededBy`) installs
+ * when any package it is needed by does, so the dialog ticks it by itself and never lets the user untick it.
+ */
+export interface DependencyConsent {
+  id: string;
   packages: HubInstallPackage[];
 }
 
@@ -88,7 +97,8 @@ const [hubState, setHubState] = createSignal<HubState | undefined>();
 const [installs, setInstalls] = createSignal<Record<string, HubInstallProgress>>({});
 const [requested, setRequested] = createSignal(false);
 const [scriptConsent, setScriptConsent] = createSignal<ScriptConsent | undefined>();
-export { hubState, installs, scriptConsent };
+const [dependencyConsent, setDependencyConsent] = createSignal<DependencyConsent | undefined>();
+export { dependencyConsent, hubState, installs, scriptConsent };
 
 /**
  * Publishing is answered calmly next to the Upload button, never as a Hub error. Today the engine replies to
@@ -125,8 +135,12 @@ function applyInstallResult(result: HubInstallResultMessage): void {
       scriptText: result.scriptText ?? '',
       uninstallScriptName: result.uninstallScriptName ?? '',
       uninstallScriptText: result.uninstallScriptText ?? '',
-      packages: result.packages ?? [],
     });
+    return;
+  }
+  if (result.needsDependencyConsent) {
+    setInstall(result.id, undefined);
+    setDependencyConsent({ id: result.id, packages: result.packages ?? [] });
     return;
   }
   if (result.ok) {
@@ -178,16 +192,16 @@ export function browseHub(refresh = false): void {
   send({ type: 'hubBrowse', refresh });
 }
 
-function requestInstall(id: string, allowScript?: boolean): void {
+function requestInstall(id: string, allowScript?: boolean, packages?: string[]): void {
   setInstall(id, { id, percent: 0, state: 'downloading' });
-  send({ type: 'hubInstall', id, ...(allowScript ? { allowScript } : {}) });
+  send({ type: 'hubInstall', id, ...(allowScript ? { allowScript } : {}), ...(packages ? { packages } : {}) });
 }
 
 export function installFromHub(id: string): void {
   requestInstall(id);
 }
 
-/** The user agreed to the pack's install script: install again, letting it run. */
+/** The user agreed to the pack's install script: install again, letting it run (dependencies are asked next). */
 export function runScriptAndInstall(): void {
   const consent = scriptConsent();
   if (!consent) return;
@@ -197,6 +211,19 @@ export function runScriptAndInstall(): void {
 
 export function cancelScriptConsent(): void {
   setScriptConsent(undefined);
+}
+
+/** The user agreed to the dependencies: install with the optional step ids they ticked (required ones always install). */
+export function installDependencies(selectedOptional: string[]): void {
+  const consent = dependencyConsent();
+  if (!consent) return;
+  setDependencyConsent(undefined);
+  requestInstall(consent.id, true, selectedOptional);
+}
+
+/** Skip cancels the whole install (the user's choice): nothing was written yet. */
+export function cancelDependencyConsent(): void {
+  setDependencyConsent(undefined);
 }
 
 /** Asks the engine to publish a toolpack folder (it shows the picker and the confirmation). */

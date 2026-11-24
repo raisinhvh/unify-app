@@ -26,10 +26,10 @@
       "ok": false,
       "id": "sound",
       "needsScriptConsent": true,
-      "packages": [
-        { "title": "Install Python 3.12", "command": "winget install --id Python.Python.3.12 --exact" },
-        { "title": "Install ffmpeg", "command": "winget install --id Gyan.FFmpeg --exact" }
-      ]
+      "scriptName": "install.ps1",
+      "scriptText": "# Downloads the sound sample index into the pack folder.\n$target = Join-Path $PSScriptRoot 'samples'\nNew-Item -ItemType Directory -Force $target | Out-Null\nInvoke-WebRequest 'https://example.com/sound/index.json' -OutFile (Join-Path $target 'index.json')\n",
+      "uninstallScriptName": "uninstall.ps1",
+      "uninstallScriptText": "# Removes the downloaded samples.\nRemove-Item -Recurse -Force (Join-Path $PSScriptRoot 'samples')\n"
     }
   ]
 }

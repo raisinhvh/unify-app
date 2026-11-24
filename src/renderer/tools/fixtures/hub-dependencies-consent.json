@@ -1,0 +1,37 @@
+{
+  "extends": "base",
+  "persisted": {
+    "route": "hub",
+    "panelOpen": true
+  },
+  "messages": [
+    {
+      "type": "hubState",
+      "hub": {
+        "packs": [
+          { "id": "imaging", "name": "Imaging", "author": "unify", "category": "design", "description": "Headless image editing with ImageMagick.", "icon": "image", "installs": 320, "tools": ["imaging_trim", "imaging_resize", "imaging_remove_background"], "version": "1.0.0", "updatedAt": 1795000000000, "publishedAt": 1780000000000, "license": "MIT" },
+          { "id": "sound", "name": "Sound", "author": "unify", "category": "games", "description": "Find, create, shape and export game sound effects.", "icon": "music_note", "installs": 140, "tools": ["sound_setup"], "version": "1.0.0", "updatedAt": 1795000000000, "publishedAt": 1780000000000, "license": "MIT" }
+        ],
+        "categories": [
+          { "id": "design", "label": "Design" },
+          { "id": "games", "label": "Games" }
+        ],
+        "featured": [],
+        "authors": 1,
+        "fetchedAt": 1795800000000
+      }
+    },
+    {
+      "type": "hubInstallResult",
+      "ok": false,
+      "id": "imaging",
+      "needsDependencyConsent": true,
+      "packages": [
+        { "stepId": "unify:python", "title": "Python 3.12", "command": "winget install --id Python.Python.3.12 --exact", "optional": true, "neededBy": ["rembg"] },
+        { "stepId": "imagemagick", "title": "ImageMagick", "command": "winget install --id ImageMagick.ImageMagick --exact" },
+        { "stepId": "ffmpeg", "title": "ffmpeg", "command": "winget install --id Gyan.FFmpeg --exact" },
+        { "stepId": "rembg", "title": "rembg (background removal)", "command": "python -m pip install rembg[cli]", "optional": true }
+      ]
+    }
+  ]
+}

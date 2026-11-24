@@ -5,11 +5,12 @@
  * the toolpack registry scans (`meta.json` keeps an existing `enabled` flag), run the pack's install script and
  * report progress throughout. Nothing is left behind on failure.
  *
- * A pack's install script, its uninstall script (run later, when the pack is removed), and any program its setup.json
- * installs (winget/brew/pip), never run without explicit user consent: the first install attempt returns
- * `needsScriptConsent` with both scripts and the package commands
- * so the Hub screen can show them, and no pack folder is installed.
- * The caller retries with `allowScript: true` after the user agrees.
+ * Nothing a pack brings runs without explicit user consent, asked in two steps before any pack folder is installed:
+ * 1. A pack with an install or uninstall script returns `needsScriptConsent` with both scripts until the request
+ *    has `allowScript: true`.
+ * 2. A pack whose setup.json installs programs (winget/brew/pip, plus Python when a pip package needs it) returns
+ *    `needsDependencyConsent` with every package and its exact command until the request has `packages`: the
+ *    optional step ids the user ticked (required ones are always installed).
  */
 import { existsSync, promises as fsp } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -56,7 +57,9 @@ export interface HubInstallResult {
   /** The script that runs when the pack is removed, shown on the same consent. */
   uninstallScriptName?: string;
   uninstallScriptText?: string;
-  /** Programs the pack's setup installs on this machine, with the exact command, for the same consent. */
+  /** The pack's setup installs programs and the request did not say which (`packages`); sent with `packages`. */
+  needsDependencyConsent?: boolean;
+  /** Programs the pack's setup would install on this machine (required and optional), with the exact command. */
   packages?: HubInstallPackage[];
   /** The pack's setup checklist, when it ships a `setup.json`. */
   setup?: PackSetupState | null;
@@ -151,8 +154,7 @@ export async function installHubPack(options: InstallHubPackOptions): Promise<Hu
     }
     const scriptName = installScriptFor(files);
     const uninstallScriptName = uninstallScriptFor(files);
-    const packages = files.includes('setup.json') ? await pendingPackages(staging, pack.name) : [];
-    if ((scriptName || uninstallScriptName || packages.length) && !options.allowScript) {
+    if ((scriptName || uninstallScriptName) && !options.allowScript) {
       const scriptText = scriptName ? await fsp.readFile(path.join(staging, scriptName), 'utf8') : undefined;
       const uninstallScriptText = uninstallScriptName ? await fsp.readFile(path.join(staging, uninstallScriptName), 'utf8') : undefined;
       return {
@@ -163,7 +165,23 @@ export async function installHubPack(options: InstallHubPackOptions): Promise<Hu
         ...(scriptText !== undefined ? { scriptText: scriptTextForUi(scriptText) } : {}),
         ...(uninstallScriptName ? { uninstallScriptName } : {}),
         ...(uninstallScriptText !== undefined ? { uninstallScriptText: scriptTextForUi(uninstallScriptText) } : {}),
-        ...(packages.length ? { packages: packages.map(item => ({ title: item.title, command: item.command.display })) } : {}),
+      };
+    }
+    const packages = files.includes('setup.json')
+      ? await pendingPackages(staging, pack.name, undefined, { includeOptional: true })
+      : [];
+    if (packages.length && options.packages === undefined) {
+      return {
+        ok: false,
+        id,
+        needsDependencyConsent: true,
+        packages: packages.map(item => ({
+          stepId: item.stepId,
+          title: item.title,
+          command: item.command.display,
+          ...(item.optional ? { optional: true } : {}),
+          ...(item.neededBy ? { neededBy: item.neededBy } : {}),
+        })),
       };
     }
     const sourceFile = path.join(staging, 'pack.ts');
@@ -208,7 +226,7 @@ export async function installHubPack(options: InstallHubPackOptions): Promise<Hu
     // checklist shows any that failed.
     if (packages.length) {
       send({ id, percent: 70, state: 'installing' });
-      await installSetupPackages(destination, pack.name);
+      await installSetupPackages(destination, pack.name, undefined, options.packages ?? []);
     }
     if (scriptName) {
       send({ id, percent: 85, state: 'installing' });

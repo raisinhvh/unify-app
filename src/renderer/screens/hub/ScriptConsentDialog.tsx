@@ -1,11 +1,12 @@
 /**
- * Hub › install script consent. Shown when the engine answers `hubInstall` with `needsScriptConsent`: the programs
- * the pack's setup installs (each with its exact winget/brew/pip command), the pack's install script in full and its
- * uninstall script (run when the pack is removed), then Cancel or "Run script and install" / "Install" (resends with `allowScript: true`).
+ * Hub › install script consent. Shown when the engine answers `hubInstall` with `needsScriptConsent`: the pack's
+ * install script in full and its uninstall script (run when the pack is removed), then Cancel or
+ * "Run script and install" (resends with `allowScript: true`). The programs the pack's setup installs are asked
+ * about next, on their own dialog (DependencyConsentDialog).
  *
  * Same frame as Providers › Add provider: a centered dialog over a 72% scrim, Presence pop from 0.96.
  */
-import { createEffect, For, onCleanup, Show, type JSX } from 'solid-js';
+import { createEffect, onCleanup, Show, type JSX } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { Button, IconButton } from '../../components';
 import { Presence } from '../../motion';
@@ -21,8 +22,7 @@ export function ScriptConsentDialog(): JSX.Element {
   };
   const hasScript = () => !!shown()?.scriptName;
   const hasUninstall = () => !!shown()?.uninstallScriptName;
-  const packages = () => shown()?.packages ?? [];
-  const itemCount = () => (hasScript() ? 1 : 0) + (hasUninstall() ? 1 : 0) + packages().length;
+  const scriptCount = () => (hasScript() ? 1 : 0) + (hasUninstall() ? 1 : 0);
   const packName = () => hubState()?.packs.find(pack => pack.id === shown()?.id)?.name ?? shown()?.id;
 
   createEffect(() => {
@@ -49,38 +49,29 @@ export function ScriptConsentDialog(): JSX.Element {
           <div class="hub-dialog" role="dialog" aria-modal="true" aria-labelledby="hub-script-title" aria-describedby="hub-script-lede">
             <header class="hub-dialog-header">
               <h2 id="hub-script-title" class="hub-dialog-title type-heading">
-                {hasScript() ? 'This pack runs an install script' : hasUninstall() ? 'This pack runs a script' : 'This pack installs programs'}
+                {hasScript() ? 'This pack runs an install script' : 'This pack runs a script'}
               </h2>
               <IconButton icon="close" label="Close" class="hub-dialog-close" onClick={cancelScriptConsent} />
             </header>
             <div class="hub-dialog-body">
               <p id="hub-script-lede" class="hub-script-lede">
-                Installing <strong>{packName()}</strong>{' '}
-                <Show when={hasScript()}>
-                  runs <span class="hub-script-name type-mono">{shown()?.scriptName}</span>
-                  {packages().length ? ' and ' : ' '}
+                <Show
+                  when={hasScript()}
+                  fallback={
+                    <>
+                      <strong>{packName()}</strong> runs <span class="hub-script-name type-mono">{shown()?.uninstallScriptName}</span>{' '}
+                      on this device when you remove it, to clean up what it added
+                    </>
+                  }
+                >
+                  Installing <strong>{packName()}</strong> runs <span class="hub-script-name type-mono">{shown()?.scriptName}</span>{' '}
+                  on this device
+                  <Show when={hasUninstall()}>
+                    , and runs <span class="hub-script-name type-mono">{shown()?.uninstallScriptName}</span> when you remove it to clean up what it added
+                  </Show>
                 </Show>
-                <Show when={packages().length}>
-                  installs {packages().length === 1 ? 'this program' : 'these programs'}{' '}
-                </Show>
-                on this device
-                <Show when={hasUninstall()}>
-                  , and runs <span class="hub-script-name type-mono">{shown()?.uninstallScriptName}</span> when you remove it to clean up what it added
-                </Show>
-                . Read {itemCount() === 1 ? 'it' : 'them'} before you continue.
+                . Read {scriptCount() === 1 ? 'it' : 'them'} before you continue.
               </p>
-              <Show when={packages().length}>
-                <ul class="hub-packages" aria-label="Programs to install">
-                  <For each={packages()}>
-                    {item => (
-                      <li class="hub-package">
-                        <span class="hub-package-title">{item.title}</span>
-                        <code class="hub-package-command type-mono">{item.command}</code>
-                      </li>
-                    )}
-                  </For>
-                </ul>
-              </Show>
               <Show when={hasScript()}>
                 <pre class="hub-script type-mono" tabindex="0" aria-label={`${shown()?.scriptName ?? 'Install script'} contents`}>
                   {shown()?.scriptText}
@@ -97,7 +88,7 @@ export function ScriptConsentDialog(): JSX.Element {
                 Cancel
               </Button>
               <Button variant="primary" onClick={runScriptAndInstall}>
-                {hasScript() ? 'Run script and install' : hasUninstall() ? 'Allow script and install' : 'Install'}
+                {hasScript() ? 'Run script and install' : 'Allow script and install'}
               </Button>
             </footer>
           </div>

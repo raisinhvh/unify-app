@@ -211,10 +211,25 @@ test('package steps: check.command, optional steps, the install command and pend
     // Packages make "Run setup again" available even without an install script.
     assert.equal(setup.canRerunScript, true);
 
+    // Python is added only when it is missing on this machine, so it is checked separately.
+    const steps = items => items.filter(item => item.stepId !== 'unify:python').map(item => item.stepId);
     const pending = await pendingPackages(packDir, 'Demo Pack');
-    assert.deepEqual(pending.map(item => item.stepId), ['missing']);
+    assert.deepEqual(steps(pending), ['missing']);
     const one = await pendingPackages(packDir, 'Demo Pack', 'extra');
-    assert.deepEqual(one.map(item => item.stepId), ['extra']);
+    assert.deepEqual(steps(one), ['extra']);
+    const all = await pendingPackages(packDir, 'Demo Pack', undefined, { includeOptional: true });
+    assert.deepEqual(steps(all), ['missing', 'extra']);
+    assert.equal(all.find(item => item.stepId === 'extra').optional, true);
+    assert.equal(all.find(item => item.stepId === 'missing').optional, undefined);
+    const python = all.find(item => item.stepId === 'unify:python');
+    if (python) {
+      assert.equal(all[0], python, 'Python comes first');
+      assert.ok(python.neededBy.includes('extra'));
+      assert.equal(python.command.manager === 'winget' || python.command.manager === 'brew', true);
+    }
+    // Only an optional pip step needs Python: the Python Unify adds is optional too.
+    const oneExtraPython = one.find(item => item.stepId === 'unify:python');
+    if (oneExtraPython) assert.equal(oneExtraPython.optional, true);
   } finally {
     process.env.PATH = savedPath;
   }

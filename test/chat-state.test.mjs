@@ -431,6 +431,34 @@ test('cancelling a turn leaves delegated subagents to the host, which reports ho
   assert.equal(sidebar.subagents('chat').delegated.state, 'cancelled');
 });
 
+test('a turn that ends without reporting a tool back settles its row instead of leaving it spinning', () => {
+  const sidebar = new UnifySidebarProvider({});
+  sidebar.postMessage({ type: 'runState', sessionId: 'chat', state: 'tool', label: 'Running' });
+  sidebar.postMessage({ type: 'toolEvent', sessionId: 'chat', event: { id: 'shell', kind: 'shell', title: 'Get-ChildItem', state: 'running' } });
+  sidebar.postMessage({ type: 'toolEvent', sessionId: 'chat', event: { id: 'batch', kind: 'other', title: 'Batch', state: 'running',
+    children: [{ title: 'Read', state: 'complete' }, { title: 'Search', state: 'running' }] } });
+  sidebar.postMessage({ type: 'toolEvent', sessionId: 'chat', event: { id: 'failed', kind: 'shell', title: 'npm test', state: 'error' } });
+  sidebar.postMessage({ type: 'runState', sessionId: 'chat', state: 'idle', label: 'Ready' });
+  const tools = Object.fromEntries(sidebar.timeline('chat').filter(entry => entry.kind === 'tool').map(entry => [entry.event.id, entry.event]));
+  assert.equal(tools.shell.state, 'complete');
+  assert.equal(tools.batch.state, 'complete');
+  assert.deepEqual(tools.batch.children.map(child => child.state), ['complete', 'complete']);
+  assert.equal(tools.failed.state, 'error');
+  // An idle chat posting idle again (switching chats) changes nothing.
+  sidebar.postMessage({ type: 'toolEvent', sessionId: 'chat', event: { id: 'late', kind: 'read', title: 'Read', state: 'running' } });
+  sidebar.postMessage({ type: 'runState', sessionId: 'chat', state: 'idle', label: 'Ready' });
+  assert.equal(sidebar.timeline('chat').find(entry => entry.id === 'tool:late').event.state, 'running');
+});
+
+test('a cancelled turn marks its unfinished tools cancelled', () => {
+  const sidebar = new UnifySidebarProvider({});
+  sidebar.postMessage({ type: 'runState', sessionId: 'chat', state: 'tool', label: 'Running' });
+  sidebar.postMessage({ type: 'toolEvent', sessionId: 'chat', event: { id: 'shell', kind: 'shell', title: 'Build', state: 'running' } });
+  sidebar.postMessage({ type: 'runState', sessionId: 'chat', state: 'cancelling', label: 'Cancelling' });
+  sidebar.postMessage({ type: 'runState', sessionId: 'chat', state: 'idle', label: 'Ready' });
+  assert.equal(sidebar.timeline('chat').find(entry => entry.id === 'tool:shell').event.state, 'cancelled');
+});
+
 test('generated media keeps its flag in the saved timeline', () => {
   const sidebar = new UnifySidebarProvider({});
   sidebar.postMessage({ type: 'mediaMessage', sessionId: 'chat', entryId: 'media:1', items: [{ name: 'a.png', mimeType: 'image/png', file: 'chat/a.png' }], generated: true });
