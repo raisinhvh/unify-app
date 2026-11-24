@@ -251,6 +251,8 @@ export async function installMockBridge(): Promise<void> {
       rememberState(value);
     },
     platform: 'win32',
+    // Rail footer: `?appdev=0` previews an installed build (no DEV badge).
+    appInfo: { version: '1.1.0', dev: new URLSearchParams(window.location.search).get('appdev') !== '0' },
     window: {
       minimize: () => console.info('[mock] minimize'),
       maximize: () => console.info('[mock] maximize'),

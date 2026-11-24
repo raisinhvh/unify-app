@@ -36,7 +36,7 @@ type SlashCommand = (typeof viewState)['slashCommands'][number];
 const builtInCommands: SlashCommand[] = [
   { name: 'job', description: 'Plan a checklist from your spec, then work and review until it passes', usage: '/job <spec>' },
   { name: 'noquestions', description: 'Agents stop asking you questions and state their assumptions instead (toggle)', usage: '/noquestions [on | off]' },
-  { name: 'permissions', description: 'Show or change the approval mode for this workspace', usage: '/permissions [ask | auto | full]' },
+  { name: 'permissions', description: 'Show or change the approval mode for this workspace', usage: '/permissions [ask | auto | most | full]' },
   { name: 'schedule', description: 'Send a prompt later, after a delay or at a time', usage: '/schedule <when> <prompt>' },
   { name: 'shutdown', description: 'Shut the PC down once every chat and subagent finishes', usage: '/shutdown' },
 ];
@@ -62,6 +62,7 @@ function describeDue(due: Date, now: Date): string {
 const approvalModes: { mode: ApprovalMode; label: string; description: string }[] = [
   { mode: 'ask', label: 'Ask approval', description: 'Ask before running tools' },
   { mode: 'auto', label: 'Approve for me', description: 'Routine actions run automatically; risky ones still ask' },
+  { mode: 'most', label: 'Most access', description: 'No approval prompts, but reckless commands (wiping folders, force-push, publishing, disk or system changes) are blocked' },
   { mode: 'full', label: 'Full access', description: 'No approval prompts; unrestricted file and network access' },
 ];
 

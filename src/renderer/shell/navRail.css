@@ -90,3 +90,33 @@
   justify-content: center;
   transform-origin: center bottom;
 }
+
+/* Footer under Settings: the app version, and a DEV badge on runs started from run.cmd / run.sh. */
+.rail-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 40px;
+  cursor: default;
+  user-select: none;
+}
+
+.rail-version {
+  color: var(--text3);
+  font-size: calc(10px * var(--text-scale));
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rail-dev-badge {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+  font-size: calc(9px * var(--text-scale));
+  font-weight: var(--weight-heading);
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+}

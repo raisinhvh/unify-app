@@ -31,6 +31,7 @@ import type { AgentRuntimeOffer } from './update/plan';
 import { compareVersions } from './update/version';
 import { JobHost, JobState } from './goal/types';
 import { addDecision, createJob, runJob } from './goal/runner';
+import { recklessBlockMessage, recklessPathReason, recklessToolReason, toolCommandText } from './runtime/reckless';
 import { NO_QUESTIONS_MESSAGE, parseApprovalMode, parseNoQuestionsArg, parseSlash, SLASH_COMMANDS } from './slash/registry';
 import { parseScheduleArgs } from './schedule/parse';
 import { ScheduledPrompts } from './schedule/store';
@@ -370,7 +371,7 @@ class ExtensionHost implements vscode.Disposable {
       ? savedModel : this.models.list(true)[0]?.name || '';
     this.modelChoices = context.workspaceState.get<Record<string, ModelChoice>>(MODEL_CHOICES_KEY, {});
     const savedApproval = context.workspaceState.get<ApprovalMode>(APPROVAL_KEY);
-    this.approvalMode = savedApproval === 'auto' || savedApproval === 'full' ? savedApproval : 'ask';
+    this.approvalMode = parseApprovalMode(savedApproval ?? '') ?? 'ask';
     this.timelines = context.workspaceState.get<Record<string, SavedTimeline>>(TIMELINES_KEY, {});
     for (const saved of Object.values(this.timelines)) for (const item of saved.timeline) if (item.kind === 'question' && item.status === 'pending') item.status = 'skipped';
     this.toolpacks = new ToolpackRegistry({
@@ -3105,7 +3106,7 @@ class ExtensionHost implements vscode.Disposable {
     // Outside the working copy the user decides per path, unless Unify has full access. Paths written out in the batch are asked about together, up front.
     const outsideAnswers = new Map<string, Promise<boolean>>();
     const askOutside = (paths: string[]): Promise<boolean> => this.askInChat(chat.record.id, 'Read outside the project', `The batch wants to read:\n${paths.join('\n')}`);
-    if (this.approvalMode !== 'full') {
+    if (!this.broadAccess()) {
       const written = calls.filter(call => isBatchFileTool(call.tool) && !call.forEach && typeof call.args.path === 'string' && !/\{\{/.test(call.args.path)).map(call => call.args.path as string);
       const outside = [...new Set((await Promise.all(written.map(async path => await outsideWorkingCopy(cwd, path) ? resolvePath(cwd, path.trim()) : ''))).filter(Boolean))];
       if (outside.length) {
@@ -3118,13 +3119,13 @@ class ExtensionHost implements vscode.Disposable {
       if (!isBatchFileTool(call.tool)) return this.handleDelegateCall(chat.ownerId, call.tool, call.args);
       const path = typeof call.args.path === 'string' ? call.args.path : '';
       const outside = !!path && await outsideWorkingCopy(cwd, path);
-      if (outside && this.approvalMode !== 'full') {
+      if (outside && !this.broadAccess()) {
         const absolute = resolvePath(cwd, path.trim());
         if (!outsideAnswers.has(absolute)) outsideAnswers.set(absolute, askOutside([absolute]));
         if (!await outsideAnswers.get(absolute)) return { text: `${path} is outside the project and the user declined.`, isError: true };
       }
       // Inside the copy, paths that need approval elsewhere (.env, .ssh, credentials) are not read silently here.
-      if (!outside && this.approvalMode !== 'full' && path && isRiskyAction(path)) return { text: `${path} needs approval; read it with your own tools.`, isError: true };
+      if (!outside && !this.broadAccess() && path && isRiskyAction(path)) return { text: `${path} needs approval; read it with your own tools.`, isError: true };
       if (call.tool === 'read_file' && !outside) this.noteRead(cwd, path);
       return runBatchFileTool(cwd, call.tool, call.args, { outside });
     };
@@ -4580,17 +4581,38 @@ class ExtensionHost implements vscode.Disposable {
       // Memory vaults are part of every agent's permissions, like any file in the project, unless the user
       // turned off agent writes to the knowledge folders (knowledge.agentWrites); then edits are asked about.
       if (path && isMemoryPath(path) && this.memorySettings().enabled && getUnifyFeature('knowledge.agentWrites')) return true;
-      // Outside the working copy nothing reviews the edit, so only full access skips asking.
-      if (!path && this.rawToolPath(info.input)) {
+      // Outside the working copy nothing reviews the edit, so only full or most access skips asking.
+      const outsidePath = !path ? this.rawToolPath(info.input) : undefined;
+      if (outsidePath) {
+        if (this.approvalMode === 'most') {
+          const reason = recklessPathReason(outsidePath);
+          return reason ? this.blockReckless(chat, actor, reason, outsidePath) : true;
+        }
         return this.approvalMode === 'full' || this.askInChat(chat.record.id, actor.owner === PARENT.owner ? 'Edit outside the project' : `Subagent "${actor.label}" wants to edit outside the project`, description, background);
       }
       if (info.autoAllowEdits) return true;
+    }
+    if (this.approvalMode === 'most') {
+      const reason = recklessToolReason(description, info?.input);
+      return reason ? this.blockReckless(chat, actor, reason, toolCommandText(description, info?.input)) : true;
     }
     if (this.approvalMode === 'full' || (this.approvalMode === 'auto' && !isRiskyAction(description))) return true;
     // Only shell commands can be remembered as an allow rule ("Always allow").
     const command = info && typeof info.input.command === 'string' ? info.input.command : '';
     const prefix = command ? commandPrefix(command) : undefined;
     return this.askInChat(chat.record.id, actor.owner === PARENT.owner ? 'Permission requested' : `Subagent "${actor.label}" requests permission`, description, background, prefix);
+  }
+
+  /** Full and Most access both skip the approval prompts for reads outside the project and for sensitive paths. */
+  private broadAccess(): boolean {
+    return this.approvalMode === 'full' || this.approvalMode === 'most';
+  }
+
+  /** Most access refused a reckless call: logs it and returns the reason the agent sees as the tool result. */
+  private blockReckless(chat: Chat, actor: Actor, reason: string, what: string): string {
+    const who = actor.owner === PARENT.owner ? chat.record.name : `subagent "${actor.label}"`;
+    this.output.appendLine(`Most access blocked ${who}: ${reason}: ${what.slice(0, 500)}`);
+    return recklessBlockMessage(reason);
   }
 
   private backgroundRun(owner: string): ChildRun | undefined {
@@ -4772,7 +4794,7 @@ class ExtensionHost implements vscode.Disposable {
           this.postToolpacks();
           break;
         case 'setApproval':
-          this.approvalMode = message.mode === 'auto' || message.mode === 'full' ? message.mode : 'ask';
+          this.approvalMode = parseApprovalMode(message.mode ?? '') ?? 'ask';
           await this.context.workspaceState.update(APPROVAL_KEY, this.approvalMode);
           this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode });
           break;

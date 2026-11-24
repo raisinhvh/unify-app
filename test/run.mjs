@@ -74,3 +74,4 @@ await import('./media-protocol.test.mjs');
 await import('./stuck-commands.test.mjs');
 await import('./updater.test.mjs');
 await import('./edit-preview.test.mjs');
+await import('./reckless.test.mjs');

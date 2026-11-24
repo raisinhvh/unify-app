@@ -132,6 +132,8 @@ export interface UnifyBridge {
   pickContextFolder?(): Promise<string | undefined>;
   /** Absolute path of the open project folder (main process `projectPath`). */
   projectPath?: string;
+  /** App version (semver, e.g. 1.1.0) and whether this is a dev run (run.cmd / run.sh). Missing outside Electron. */
+  appInfo?: { version: string; dev: boolean };
   /** Integrated terminals (node-pty in the main process). Missing outside Electron. */
   terminal?: UnifyTerminalApi;
   /** Source Control (git in the main process). Missing outside Electron. */

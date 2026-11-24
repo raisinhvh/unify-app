@@ -9,7 +9,8 @@
  * spring. The usage meter above Settings pops in and out with `showMeter` (feature usage.railMeter).
  * Reduced motion: positions snap and only opacity fades (createSpring / Presence handle it).
  */
-import { createMemo, For, mapArray, type Accessor, type JSX } from 'solid-js';
+import { createMemo, For, mapArray, Show, type Accessor, type JSX } from 'solid-js';
+import { bridge } from '../bridge';
 import { LogoMark } from '../backdrop/Backdrop';
 import { IconButton } from '../components/Button';
 import type { IconName } from '../components/icons';
@@ -44,6 +45,21 @@ interface RailEntry {
   opacity: Accessor<number>;
 }
 
+/** "1.1.0" → "V1.1"; a patch release keeps its third number ("1.1.2" → "V1.1.2"). */
+export function displayVersion(version: string): string {
+  const [major = '0', minor = '0', patch = '0'] = version.split(/[.+-]/);
+  return patch === '0' ? `V${major}.${minor}` : `V${major}.${minor}.${patch}`;
+}
+
+/** Version and dev-run flag for the footer; undefined outside Electron (browser dev mock). */
+function appInfo(): { version: string; dev: boolean } | undefined {
+  try {
+    return bridge().appInfo;
+  } catch {
+    return undefined;
+  }
+}
+
 const buttonTop = 64;
 const buttonStep = 44;
 
@@ -73,6 +89,8 @@ export function NavRail(props: NavRailProps): JSX.Element {
     }
     return slot;
   };
+
+  const info = appInfo();
 
   const activeIndex = () => props.items.findIndex(item => item.id === props.active && item.visible());
   const highlightY = createSpring(() => buttonTop + settledSlot(Math.max(0, activeIndex())) * buttonStep, 'indicator', { precision: 100 });
@@ -130,6 +148,19 @@ export function NavRail(props: NavRailProps): JSX.Element {
           tooltipPlacement="right-end"
           onClick={props.onSettings}
         />
+        <Show when={info}>
+          {current => (
+            <div
+              class="rail-footer"
+              title={current().dev ? `Unify ${displayVersion(current().version)}, running in dev mode (run.cmd / run.sh)` : `Unify ${displayVersion(current().version)}`}
+            >
+              <Show when={current().dev}>
+                <span class="rail-dev-badge" data-rail-dev>DEV</span>
+              </Show>
+              <span class="rail-version" data-rail-version>{displayVersion(current().version)}</span>
+            </div>
+          )}
+        </Show>
       </div>
     </nav>
   );

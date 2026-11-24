@@ -1015,6 +1015,10 @@ function installIpc(): void {
     rendererState = value;
     persistRendererState();
   });
+  // Footer indicators: the app version, and whether this is a dev run (run.cmd / run.sh / npm run dev) rather than an installed build.
+  ipcMain.on('unify:app-info', event => {
+    event.returnValue = { version: app.getVersion(), dev: process.env.UNIFY_DEV === '1' || !app.isPackaged };
+  });
   ipcMain.on('unify:project-path', event => {
     event.returnValue = projectPath;
   });

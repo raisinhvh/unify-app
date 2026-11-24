@@ -31,6 +31,18 @@ function readProjectPath(): string | undefined {
 
 const projectPath = readProjectPath();
 
+/** App version and dev-run flag, read once from the main process (footer indicators). */
+function readAppInfo(): { version: string; dev: boolean } | undefined {
+  try {
+    const value = ipcRenderer.sendSync('unify:app-info') as { version?: unknown; dev?: unknown } | undefined;
+    return value && typeof value.version === 'string' ? { version: value.version, dev: value.dev === true } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const appInfo = readAppInfo();
+
 function popoutChatIds(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
 }
@@ -106,6 +118,9 @@ const api = {
 
   /** Absolute path of the open project folder (main process `projectPath`). */
   projectPath,
+
+  /** App version and whether this is a dev run, for the rail footer. */
+  appInfo,
 
   /** Opens the chat in its own window, or focuses the one already showing it. */
   popOut(chatId: string): void {

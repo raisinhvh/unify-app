@@ -7,7 +7,7 @@ export const SCHEDULE_USAGE = '/schedule <in 2h | at 15:30 | 9am tomorrow> <prom
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'job', description: 'Plan a checklist from your spec, then work and review until it passes', usage: '/job <spec>' },
   { name: 'noquestions', description: 'Agents stop asking you questions and state their assumptions instead (toggle)', usage: '/noquestions [on | off]' },
-  { name: 'permissions', description: 'Show or change the approval mode for this workspace', usage: '/permissions [ask | auto | full]' },
+  { name: 'permissions', description: 'Show or change the approval mode for this workspace', usage: '/permissions [ask | auto | most | full]' },
   { name: 'schedule', description: 'Send a prompt later, at a time or after a delay', usage: SCHEDULE_USAGE },
   { name: 'shutdown', description: 'Shut the PC down once every chat and subagent finishes', usage: '/shutdown' },
 ];
@@ -26,6 +26,7 @@ export function parseNoQuestionsArg(args: string, current: boolean): boolean {
 export const APPROVAL_MODES = {
   ask: { label: 'Ask approval', description: 'Ask before running tools' },
   auto: { label: 'Approve for me', description: 'Routine actions run automatically; risky ones still ask' },
+  most: { label: 'Most access', description: 'No approval prompts, but reckless commands (wiping folders, force-push, publishing, disk or system changes) are blocked' },
   full: { label: 'Full access', description: 'No approval prompts; unrestricted file and network access' },
 } as const;
 

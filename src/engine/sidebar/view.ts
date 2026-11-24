@@ -22,7 +22,7 @@ export interface SidebarPlan {
   /** Monthly price in US dollars; 0 for free plans. */
   monthlyUsd: number;
 }
-export type ApprovalMode = 'ask' | 'auto' | 'full';
+export type ApprovalMode = 'ask' | 'auto' | 'most' | 'full';
 export type SidebarPage = 'chat' | 'accounts' | 'models' | 'subagents' | 'instructions' | 'toolcalls' | 'customize' | 'accessibility' | 'experimental' | 'sync';
 
 /** GitHub config sync status for the Sync page. */
