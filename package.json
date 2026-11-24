@@ -2,7 +2,7 @@
   "name": "unify",
   "displayName": "Unify",
   "description": "A native desktop app for AI agents.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "license": "MIT",
   "private": true,
   "repository": {
