@@ -1,58 +1,42 @@
 /**
  * Images inside chat rows (docs/briefs/ds-media-chat-ui.md):
  *
- *   <ToolMediaLine media={…}>    prints under a tool row (images the call gave the agent). A click expands one in
- *                                place under the row; clicking it again, clicking the expanded image or Esc
- *                                collapses it back into its print.
+ *   <ToolMediaLine media={…}>    prints under a tool row (images the call gave the agent).
  *   <SubagentStrip media={…}>    "N images", up to 4 prints and "+K" under a subagent row. Prints that arrive
- *                                while it runs pop in one by one. A print expands in place; the expanded image's
- *                                own click (and "+K") opens the full viewer for the whole group.
+ *                                while it runs pop in one by one.
  *
- * Non-image files open with the OS (openMedia), as the media entry does.
+ * Clicking a print opens the full viewer for the row's images, growing out of the print; "+K" opens it at the
+ * first hidden image. Non-image files open with the OS (openMedia), as the media entry does.
  */
 import { createSignal, For, onMount, Show, type JSX } from 'solid-js';
 import { post } from '../../bridge';
-import {
-  isImage,
-  MediaExpand,
-  mediaKey,
-  MediaThumb,
-  onEscape,
-  openMediaViewer,
-  type MediaItem,
-} from '../../components/media';
+import { isImage, mediaKey, MediaThumb, openMediaViewer, type MediaItem } from '../../components/media';
 import { Presence } from '../../motion';
 
-/** Which image of a group is expanded in place, and the prints it grows out of. */
-function useInPlaceExpand() {
-  const [expanded, setExpanded] = createSignal<MediaItem>();
-  const [standIns, setStandIns] = createSignal<ReadonlySet<string>>(new Set());
+/** Opens a group's images in the full viewer from their prints; non-image files open with the OS. */
+function useViewerOpen(media: () => MediaItem[], sender?: () => string | undefined) {
   const prints = new Map<string, HTMLElement>();
-  const expandedKey = () => {
-    const media = expanded();
-    return media ? mediaKey(media) : undefined;
-  };
-  const toggle = (media: MediaItem) => {
-    if (!isImage(media)) {
-      post({ type: 'openMedia', file: media.file });
+  const open = (target: MediaItem) => {
+    if (!isImage(target)) {
+      post({ type: 'openMedia', file: target.file });
       return;
     }
-    setExpanded(expandedKey() === mediaKey(media) ? undefined : media);
+    const images = media().filter(isImage);
+    openMediaViewer({
+      items: images,
+      index: Math.max(0, images.indexOf(target)),
+      sender: sender?.(),
+      origin: index => prints.get(mediaKey(images[index])),
+    });
   };
-  onEscape(() => expanded() !== undefined, () => setExpanded(undefined));
   return {
-    expanded,
-    setExpanded,
-    expandedKey,
-    standIns,
-    setStandIns,
     prints,
-    toggle,
+    open,
   };
 }
 
 export function ToolMediaLine(props: { media: MediaItem[] }): JSX.Element {
-  const expand = useInPlaceExpand();
+  const viewer = useViewerOpen(() => props.media);
   return (
     <div class="tool-media">
       <div class="media-prints">
@@ -61,21 +45,12 @@ export function ToolMediaLine(props: { media: MediaItem[] }): JSX.Element {
             <MediaThumb
               media={media}
               size="row"
-              active={expand.expandedKey() === mediaKey(media)}
-              hidden={expand.standIns().has(mediaKey(media))}
-              ref={element => expand.prints.set(mediaKey(media), element)}
-              onSelect={() => expand.toggle(media)}
+              ref={element => viewer.prints.set(mediaKey(media), element)}
+              onSelect={() => viewer.open(media)}
             />
           )}
         </For>
       </div>
-      <MediaExpand
-        media={expand.expanded()}
-        origin={media => expand.prints.get(mediaKey(media))}
-        imageAction="Collapse image"
-        onStandIn={expand.setStandIns}
-        onImageClick={() => expand.setExpanded(undefined)}
-      />
     </div>
   );
 }
@@ -84,8 +59,10 @@ export function ToolMediaLine(props: { media: MediaItem[] }): JSX.Element {
 const stripLimit = 4;
 
 export function SubagentStrip(props: { media: MediaItem[]; sender: string }): JSX.Element {
-  const expand = useInPlaceExpand();
-  let expandedElement: HTMLElement | undefined;
+  const viewer = useViewerOpen(
+    () => props.media,
+    () => props.sender,
+  );
   const visible = () => props.media.slice(0, stripLimit);
   const more = () => Math.max(0, props.media.length - stripLimit);
   const imageCount = () => props.media.filter(isImage).length;
@@ -107,22 +84,14 @@ export function SubagentStrip(props: { media: MediaItem[]; sender: string }): JS
     setReady(true);
   });
 
-  const openViewer = (index: number) => {
-    const images = props.media.filter(isImage);
-    const target = props.media[index];
-    const imageIndex = Math.max(0, images.indexOf(target));
-    openMediaViewer({
-      items: images,
-      index: imageIndex,
-      sender: props.sender,
-      origin: itemIndex => {
-        const key = mediaKey(images[itemIndex]);
-        if (key === expand.expandedKey() && expandedElement?.isConnected) {
-          return expandedElement;
-        }
-        return expand.prints.get(key);
-      },
-    });
+  // "+K" opens at the first hidden image (or the first image, when only files are hidden).
+  const openMore = () => {
+    const hiddenImage = props.media.slice(stripLimit).find(isImage);
+    const firstImage = props.media.find(isImage);
+    const target = hiddenImage ?? firstImage;
+    if (target) {
+      viewer.open(target);
+    }
   };
 
   return (
@@ -153,10 +122,8 @@ export function SubagentStrip(props: { media: MediaItem[]; sender: string }): JS
                   <MediaThumb
                     media={media}
                     size={isImage(media) ? 'sent' : 'strip'}
-                    active={expand.expandedKey() === key}
-                    hidden={expand.standIns().has(key)}
-                    ref={element => expand.prints.set(key, element)}
-                    onSelect={() => expand.toggle(media)}
+                    ref={element => viewer.prints.set(key, element)}
+                    onSelect={() => viewer.open(media)}
                   />
                 </Presence>
               );
@@ -167,24 +134,13 @@ export function SubagentStrip(props: { media: MediaItem[]; sender: string }): JS
               type="button"
               class="media-print-more"
               aria-label={`Show all ${props.media.length}`}
-              onClick={() => openViewer(stripLimit)}
+              onClick={openMore}
             >
               {`+${more()}`}
             </button>
           </Show>
         </div>
       </div>
-      <MediaExpand
-        media={expand.expanded()}
-        origin={media => expand.prints.get(mediaKey(media))}
-        imageAction="Open full view"
-        opensViewer
-        onStandIn={expand.setStandIns}
-        onImageClick={(media, element) => {
-          expandedElement = element;
-          openViewer(props.media.indexOf(media));
-        }}
-      />
     </div>
   );
 }

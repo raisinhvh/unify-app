@@ -36,6 +36,11 @@ function writeVariables(id: ThemeId): void {
   // Text on the flat primary button and dim loader cells depend on whether the theme is light.
   root.style.setProperty('--on-accent', tokens.bg);
   root.style.setProperty('--loader-dim', light ? '#D9C7A6' : '#4A3A28');
+  // Panes lift off the canvas with a soft shadow in light themes; on near-black a shadow can't show.
+  root.style.setProperty(
+    '--shadow-pane',
+    light ? '0 1px 2px rgba(0, 0, 0, 0.05), 0 2px 10px rgba(0, 0, 0, 0.05)' : 'none',
+  );
 }
 
 /** Applies the persisted theme. Call once before mounting. */

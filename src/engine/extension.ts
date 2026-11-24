@@ -95,6 +95,8 @@ interface SessionRecord {
   id: string;
   mirrorId: string;
   name: string;
+  /** The chat agent's exclusive name in agent messaging ("Kernel"); kept while free, see unify/agentNames.ts. */
+  agentName?: string;
   /** The user renamed this chat, so automatic titles must not replace the name. */
   renamed?: boolean;
   /** Material Symbols icon the activity rail shows, picked by the name model. */
@@ -145,6 +147,17 @@ interface SessionRecord {
   /** Toolpacks turned on in this chat, by a /pack command or an agent's load_toolpack call. */
   toolpacks?: string[];
   updatedAt: number;
+}
+
+/**
+ * Whether a lock / subagent-files entry covers a path: the same path, or inside it when the entry is a folder
+ * (trailing "/"). Absolute paths compare case-insensitively on Windows.
+ */
+function pathCovers(entry: string, path: string): boolean {
+  const fold = (value: string): string => process.platform === 'win32' && isAbsolute(value) ? value.toLowerCase() : value;
+  const a = fold(entry);
+  const b = fold(path);
+  return a === b || (a.endsWith('/') && b.startsWith(a));
 }
 
 const SESSIONS_KEY = 'unify.ide.sessions.v1';
@@ -456,6 +469,7 @@ class ExtensionHost implements vscode.Disposable {
       vscode.window.onDidChangeWindowState(state => { this.windowFocused = state.focused; if (state.focused) this.sync.check(true); }),
       { dispose: agentBus.onEvent(event => this.onAgentBusEvent(event)) },
       { dispose: onUnifyFeatureChange(() => { this.postUnifyFeatures(); this.refreshCustomize(); }) },
+      { dispose: onUnifyFeatureChange((id, value) => { if (id === 'toolpacks.autoUpdate' && value === true) this.checkToolpackUpdates(); }) },
       ...this.watchGlobalInstructions(),
       ...this.watchKnowledge(),
       { dispose: () => { if (this.knowledgeTimer) clearTimeout(this.knowledgeTimer); } },
@@ -472,6 +486,10 @@ class ExtensionHost implements vscode.Disposable {
     }).catch(error => this.output.appendLine(`Subagent bridge failed to start: ${String(error)}`));
     const updateTimer = setTimeout(() => { void this.checkUpdates(); }, 5000);
     this.disposables.push({ dispose: () => clearTimeout(updateTimer) });
+    // Toolpack updates: once shortly after startup, then every 6 hours (auto-update installs them when it is on).
+    const toolpackUpdateTimer = setTimeout(() => this.checkToolpackUpdates(), 30_000);
+    const toolpackUpdateInterval = setInterval(() => this.checkToolpackUpdates(), 6 * 60 * 60 * 1000);
+    this.disposables.push({ dispose: () => { clearTimeout(toolpackUpdateTimer); clearInterval(toolpackUpdateInterval); } });
     // Models saved before they moved to settings must be in settings to sync.
     void this.models.migrate().catch(error => this.output.appendLine(`Could not move saved models to settings: ${String(error)}`));
     // One-time: an OAuth account signed in twice (same email) keeps one record.
@@ -1729,7 +1747,8 @@ class ExtensionHost implements vscode.Disposable {
       ownerId, runtime: slot?.runtime, runtimeKey: slot?.key, locks: new Map(), children: new Set(), background: new Map(),
     };
     this.chats.set(record.id, chat);
-    agentBus.register({ id: record.id, name: 'Main', task: record.name, chatId: record.id, state: 'idle' });
+    // The chat keeps its agent name across restarts while it is free; it is saved with the record on the next save.
+    record.agentName = agentBus.register({ id: record.id, name: record.agentName, role: 'main', task: record.name, chatId: record.id, state: 'idle' });
     bindChatAgentOwner(ownerId, record.id);
     return chat;
   }
@@ -3744,7 +3763,7 @@ class ExtensionHost implements vscode.Disposable {
     const contained = relative(realRoot, realTarget);
     if (!contained || contained === '..' || contained.startsWith(`..${sep}`) || isAbsolute(contained)) return fail(`${pathArg} is outside the working copy.`);
     const rel = contained.split(sep).join('/');
-    if (run && !run.files.some(file => rel === file || (file.endsWith('/') && rel.startsWith(file)))) {
+    if (run && !run.files.some(file => pathCovers(file, rel))) {
       return fail(`"${rel}" is outside this subagent's files${run.files.length ? `: ${run.files.join(', ')}` : ''}.`);
     }
     const conflict = this.lockConflict(chat, rel, owner);
@@ -4036,10 +4055,11 @@ class ExtensionHost implements vscode.Disposable {
     const speedOption = entry.speedOptions?.find(item => item.label === speed);
     if (profile.speed && !speedOption) return fail(`Speed "${profile.speed}" is not an option for model "${entry.name}".`);
     if (profile.effort && !entry.effortOptions?.includes(profile.effort)) return fail(`Effort "${profile.effort}" is not an option for model "${entry.name}".`);
-    const files = paths.map(item => item.replaceAll('\\', '/').replace(/^\.\//, '').trim()).filter(Boolean);
+    // Paths outside the working copy are allowed: the subagent has its parent's permissions, so editing them
+    // is approved (or asked about) exactly as it would be for the parent.
+    const files = paths.map(item => this.fileKey(chat, item)).filter(Boolean);
     const readOnly = profile.mode !== 'edit' || !files.length || this.jobReadOnly(chat);
-    if (files.some(item => item.startsWith('..') || isAbsolute(item))) return fail('"files" must be paths relative to the working copy.');
-    const overlaps = (a: string, b: string): boolean => a === b || (a.endsWith('/') && b.startsWith(a)) || (b.endsWith('/') && a.startsWith(b));
+    const overlaps = (a: string, b: string): boolean => pathCovers(a, b) || pathCovers(b, a);
     if (!readOnly) {
       const conflicts = files.flatMap(file => [...chat.locks].filter(([path]) => overlaps(path, file)).map(([path, lock]) => `${file} (locked by "${lock.label}" via ${path})`));
       if (conflicts.length) return fail(`Cannot lock: ${conflicts.join('; ')}. Wait for that subagent or choose other files.`);
@@ -4056,7 +4076,7 @@ class ExtensionHost implements vscode.Disposable {
     };
     const run: ChildRun = { parent: chat, owner, label: profile.name, agentId, readOnly, changed: new Set(), outOfScope: new Set(), files: readOnly ? [] : files, sentToParent: [],queuedForParent: [], background: !!onBackground, cancel: () => undefined };
     this.childRuns.add(run); chat.children.add(run);
-    registerSubagentAgent({ id: agentId, owner, name, task, chatId: chat.record.id, parentId: chat.record.id });
+    registerSubagentAgent({ id: agentId, owner, profile: profile.name, task, chatId: chat.record.id, parentId: chat.record.id });
     onBackground?.(run);
     if (!readOnly) for (const file of files) chat.locks.set(file, { owner, label: profile.name });
     post({ title: profile.name, prompt: task, model: entry.name, effort: profile.effort, speed, state: 'running', delegated: true, files: readOnly ? [] : files, ...(explorer ? { profile: 'explorer' } : {}) });
@@ -4109,7 +4129,7 @@ class ExtensionHost implements vscode.Disposable {
         const edited = state === 'complete' ? liveEdits.targets(id) : [];
         for (const rel of edited) {
           run.changed.add(rel);
-          if (!run.files.some(file => rel === file || (file.endsWith('/') && rel.startsWith(file)))) run.outOfScope.add(rel);
+          if (!run.files.some(file => pathCovers(file, rel))) run.outOfScope.add(rel);
         }
         if (!shownRow) return;
         editRows.delete(id);
@@ -4671,11 +4691,12 @@ class ExtensionHost implements vscode.Disposable {
       if (rel) this.recordAgentKnowledgeVersion(chat, rel, actor.owner === PARENT.owner ? chat.record.name : actor.label);
     }
     if (verdict === true && info && EDIT_TOOLS.test(info.tool) && actor.owner !== PARENT.owner) {
-      const rel = this.relPath(chat, info.input);
+      const raw = this.rawToolPath(info.input);
+      const key = raw ? this.fileKey(chat, raw) : '';
       const run = [...this.childRuns].find(item => item.owner === actor.owner);
-      if (rel && run) {
-        run.changed.add(rel);
-        if (!run.files.some(file => rel === file || (file.endsWith('/') && rel.startsWith(file)))) run.outOfScope.add(rel);
+      if (key && run) {
+        run.changed.add(key);
+        if (!run.files.some(file => pathCovers(file, key))) run.outOfScope.add(key);
       }
     }
     return verdict;
@@ -4713,6 +4734,8 @@ class ExtensionHost implements vscode.Disposable {
       // Outside the working copy nothing reviews the edit, so only full or most access skips asking.
       const outsidePath = !path ? this.rawToolPath(info.input) : undefined;
       if (outsidePath) {
+        const outsideConflict = this.lockConflict(chat, this.fileKey(chat, outsidePath), actor.owner);
+        if (outsideConflict) return `"${outsidePath}" is locked by subagent "${outsideConflict.label}" until it finishes. Edit other files or wait.`;
         if (this.approvalMode === 'most') {
           const reason = recklessPathReason(outsidePath);
           return reason ? this.blockReckless(chat, actor, reason, outsidePath) : true;
@@ -4761,8 +4784,23 @@ class ExtensionHost implements vscode.Disposable {
   }
 
   private lockConflict(chat: Chat, rel: string, owner: string): { owner: string; label: string } | undefined {
-    for (const [path, lock] of chat.locks) if (lock.owner !== owner && (rel === path || (path.endsWith('/') && rel.startsWith(path)))) return lock;
+    for (const [path, lock] of chat.locks) if (lock.owner !== owner && pathCovers(path, rel)) return lock;
     return undefined;
+  }
+
+  /**
+   * A path as a lock / subagent-files key: forward-slash and relative inside the working copy, absolute outside it.
+   * A trailing "/" (a folder) is kept.
+   */
+  private fileKey(chat: Chat, raw: string): string {
+    const trimmed = raw.trim().replaceAll('\\', '/');
+    if (!trimmed) return '';
+    const folder = trimmed.endsWith('/');
+    const absolute = resolvePath(chat.mirror.cwd, trimmed);
+    const rel = relative(chat.mirror.cwd, absolute);
+    const inside = !!rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+    const key = (inside ? rel : absolute).replaceAll('\\', '/');
+    return folder && !key.endsWith('/') ? `${key}/` : key;
   }
 
   private async handleCursorRequest(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -5033,6 +5071,12 @@ class ExtensionHost implements vscode.Disposable {
         default: await this.handleUnhandledSidebarMessage(message); break;
       }
     });
+  }
+
+  /** Checks the Hub for toolpack updates and posts `toolpackUpdates`; installs them when auto-update is on. */
+  private checkToolpackUpdates(): void {
+    void this.handleUnhandledSidebarMessage({ type: 'hubCheckUpdates', auto: true } as unknown as SidebarWebviewMessage)
+      .catch(error => this.output.appendLine(`Toolpack update check failed: ${String(error)}`));
   }
 
   /**

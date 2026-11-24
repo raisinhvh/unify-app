@@ -23,7 +23,7 @@ import { ScheduleBar } from './ScheduleBar';
 import { isNoFolder, newSessionTarget, parentFolder, selectedProject } from './projects';
 import './home.css';
 
-/** Waits for the session just asked for with `newSession`, then opens it in a pane. */
+/** Waits for the session just asked for with `newSession`, then opens it in a new pane beside the others. */
 export function openNextNewSession(images: SidebarImage[] = []): void {
   const known = new Set(viewState.sessions.map(session => session.id));
   const stop = onHostMessage(message => {
@@ -33,7 +33,7 @@ export function openNextNewSession(images: SidebarImage[] = []): void {
     stop();
     window.clearTimeout(giveUp);
     if (images.length) rememberSentImages(sessionId, images);
-    openChat(sessionId);
+    openChat(sessionId, { beside: true });
   });
   const giveUp = window.setTimeout(stop, 15000);
 }

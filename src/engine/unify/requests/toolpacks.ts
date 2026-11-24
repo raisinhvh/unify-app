@@ -25,6 +25,10 @@ export interface InstalledHubPack {
   source: 'hub';
   tools: string[];
   installedAt: number;
+  /** The Hub pack's `updatedAt` at install time; older records only have `installedAt`. */
+  updatedAt?: number;
+  /** `packScriptHash` of the install/uninstall scripts the user agreed to, so an update with the same ones skips consent. */
+  scriptHash?: string;
 }
 
 export interface ToolpackPackSettings {

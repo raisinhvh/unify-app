@@ -10,7 +10,8 @@ export function createHubRegistry(): HubRegistry {
 }
 
 export * from './types';
-export { installHubPack } from './install';
+export { installHubPack, packScriptHash } from './install';
+export { findHubUpdates } from './updates';
 export { toolpackIdFor } from './ids';
 export { GithubHubRegistry, HUB_BRANCH, HUB_INDEX_URL, HUB_PUBLISHERS_URL, HUB_REPOSITORY } from './githubRegistry';
 export { PUBLISH_NOT_APPROVED, PUBLISH_SIGNED_OUT, publishAccessError } from './publishing';

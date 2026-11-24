@@ -13,7 +13,7 @@
  *    optional step ids the user ticked (required ones are always installed).
  */
 import { existsSync, promises as fsp } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import { toolpackIdFor } from './ids';
 import { INSTALL_SCRIPT_NAMES, UNINSTALL_SCRIPT_NAMES } from './scripts';
@@ -42,6 +42,25 @@ export interface InstallHubPackOptions extends HubInstallRequest {
   unifyHome?: string;
   reply: (message: unknown) => void;
   onInstalled?: (pack: InstalledHubPack) => void;
+  /** `scriptHash` of the scripts the user agreed to at the last install: the same scripts are not asked again. */
+  consentedScriptHash?: string;
+  /**
+   * Auto-update: never asks. New or changed scripts answer `needsScriptConsent`, missing required programs answer
+   * `needsDependencyConsent`; otherwise it installs without any optional program.
+   */
+  unattended?: boolean;
+}
+
+/** One stable hash of a pack's install and uninstall scripts (name and text), stored with the install record. */
+export function packScriptHash(
+  scriptName: string | undefined,
+  scriptText: string | undefined,
+  uninstallScriptName: string | undefined,
+  uninstallScriptText: string | undefined,
+): string {
+  return createHash('sha256')
+    .update([scriptName ?? '', scriptText ?? '', uninstallScriptName ?? '', uninstallScriptText ?? ''].join('\0'))
+    .digest('hex');
 }
 
 export interface HubInstallResult {
@@ -154,9 +173,15 @@ export async function installHubPack(options: InstallHubPackOptions): Promise<Hu
     }
     const scriptName = installScriptFor(files);
     const uninstallScriptName = uninstallScriptFor(files);
-    if ((scriptName || uninstallScriptName) && !options.allowScript) {
-      const scriptText = scriptName ? await fsp.readFile(path.join(staging, scriptName), 'utf8') : undefined;
-      const uninstallScriptText = uninstallScriptName ? await fsp.readFile(path.join(staging, uninstallScriptName), 'utf8') : undefined;
+    const scriptText = scriptName ? await fsp.readFile(path.join(staging, scriptName), 'utf8') : undefined;
+    const uninstallScriptText = uninstallScriptName ? await fsp.readFile(path.join(staging, uninstallScriptName), 'utf8') : undefined;
+    const scriptHash = scriptName || uninstallScriptName
+      ? packScriptHash(scriptName, scriptText, uninstallScriptName, uninstallScriptText)
+      : undefined;
+    // An update whose scripts are exactly the ones the user already agreed to does not ask again.
+    const alreadyConsented = scriptHash !== undefined && scriptHash === options.consentedScriptHash;
+    const allowScript = alreadyConsented || (options.allowScript === true && !options.unattended);
+    if (scriptHash !== undefined && !allowScript) {
       return {
         ok: false,
         id,
@@ -170,7 +195,9 @@ export async function installHubPack(options: InstallHubPackOptions): Promise<Hu
     const packages = files.includes('setup.json')
       ? await pendingPackages(staging, pack.name, undefined, { includeOptional: true })
       : [];
-    if (packages.length && options.packages === undefined) {
+    const requiredPending = packages.some(item => !item.optional);
+    const askForPackages = options.unattended ? requiredPending : options.packages === undefined;
+    if (packages.length && askForPackages) {
       return {
         ok: false,
         id,
@@ -226,7 +253,7 @@ export async function installHubPack(options: InstallHubPackOptions): Promise<Hu
     // checklist shows any that failed.
     if (packages.length) {
       send({ id, percent: 70, state: 'installing' });
-      await installSetupPackages(destination, pack.name, undefined, options.packages ?? []);
+      await installSetupPackages(destination, pack.name, undefined, options.unattended ? [] : options.packages ?? []);
     }
     if (scriptName) {
       send({ id, percent: 85, state: 'installing' });
@@ -244,6 +271,8 @@ export async function installHubPack(options: InstallHubPackOptions): Promise<Hu
       source: 'hub',
       tools: [...pack.tools],
       installedAt: Date.now(),
+      updatedAt: pack.updatedAt,
+      ...(scriptHash ? { scriptHash } : {}),
     };
     options.onInstalled?.(installed);
     const setup = await readPackSetup(destination, packId, pack.name);

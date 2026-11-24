@@ -421,7 +421,7 @@ function parsePane(id: string, raw: unknown): PaneInstance | null {
     if (typeof value.src !== 'string' || !value.src || value.src.length > 4096) return null;
     pane.src = value.src;
   }
-  if (pane.kind === 'terminal' && typeof value.cwd === 'string' && value.cwd) pane.cwd = value.cwd;
+  if ((pane.kind === 'terminal' || pane.kind === 'git') && typeof value.cwd === 'string' && value.cwd) pane.cwd = value.cwd;
   if (typeof value.title === 'string') pane.title = value.title;
   return pane;
 }
@@ -733,11 +733,11 @@ export function setPaneTitle(paneId: string, title: string): void {
   commit({ ...state, panes: { ...state.panes, [paneId]: { ...pane, title } } });
 }
 
-/** Sets the folder a terminal pane's shell starts in; the pane restarts its shell there. */
+/** Sets a terminal pane's shell folder (the shell restarts there) or the repository a Source Control pane shows. */
 export function setPaneCwd(paneId: string, cwd: string): void {
   const state = layout();
   const pane = state.panes[paneId];
-  if (!pane || pane.kind !== 'terminal' || pane.cwd === cwd) return;
+  if (!pane || (pane.kind !== 'terminal' && pane.kind !== 'git') || pane.cwd === cwd) return;
   commit({ ...state, panes: { ...state.panes, [paneId]: { ...pane, cwd } } });
 }
 

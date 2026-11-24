@@ -31,6 +31,7 @@ export const ENGINE_FEATURE_DEFAULTS = {
   'knowledge.agentWrites': true,
   'knowledge.audiences': true,
   'notifications.desktop': true,
+  'toolpacks.autoUpdate': false,
   'power.shutdownWhenIdle': false,
   'power.rememberArmed': false,
 } as const satisfies Record<string, UnifyFeatureValue>;

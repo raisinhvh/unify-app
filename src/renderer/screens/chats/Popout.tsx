@@ -17,6 +17,7 @@ import { createEffect, onCleanup, type JSX } from 'solid-js';
 import { render } from 'solid-js/web';
 import { bridge } from '../../bridge';
 import { TitleBar, TooltipHost } from '../../components';
+import { ImageContextMenuHost } from '../../components/media';
 import { setAppReducedMotion } from '../../motion';
 import type { PaneContext } from '../../shell/PaneGrid';
 import { connectStore, viewState } from '../../store';
@@ -84,6 +85,7 @@ export function startPopout(root: HTMLElement, chatId: string): void {
       <>
         <Popout chatId={chatId} />
         <TooltipHost />
+        <ImageContextMenuHost />
       </>
     ),
     root,

@@ -69,8 +69,9 @@
   position: absolute;
   inset: calc(var(--titlebar-height) + 40px * var(--notice-progress, 0)) 8px 8px 8px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--pane-border);
   border-radius: var(--radius-pane);
+  box-shadow: var(--shadow-pane);
   overflow: hidden;
 }
 
@@ -90,15 +91,16 @@
   display: flex;
   flex-direction: column;
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--pane-border);
   border-radius: var(--radius-pane);
+  box-shadow: var(--shadow-pane);
   overflow: hidden;
   transform-origin: top left;
   will-change: transform;
 }
 
 .pane.focused {
-  border-color: color-mix(in srgb, var(--text3) 70%, var(--border));
+  border-color: color-mix(in srgb, var(--text3) 70%, var(--pane-border));
 }
 
 .pane.lifted {

@@ -1,0 +1,22 @@
+{
+  "extends": "base",
+  "persisted": {
+    "route": "chats",
+    "panelOpen": false,
+    "layout": { "preset": "single", "cells": [], "splits": { "x": 0.5, "y": 0.5 }, "focused": 0 }
+  },
+  "messages": [],
+  "timed": [
+    {
+      "after": 400,
+      "message": {
+        "type": "toolpackUpdates",
+        "checkedAt": 1795800000000,
+        "updates": [
+          { "id": "roblox-studio", "name": "Roblox Studio", "icon": "roblox", "fromVersion": "1.4.0", "toVersion": "1.5.0", "installedUpdatedAt": 1795000000000, "updatedAt": 1795700000000, "addedTools": ["studio_capture_viewport"], "removedTools": [], "needsConsent": true, "consentReason": "script" },
+          { "id": "figma", "name": "Figma", "icon": "figma", "fromVersion": "0.9.2", "toVersion": "1.0.0", "installedUpdatedAt": 1795000000000, "updatedAt": 1795600000000, "addedTools": ["figma_export_png"], "removedTools": [] }
+        ]
+      }
+    }
+  ]
+}

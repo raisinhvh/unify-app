@@ -7,9 +7,19 @@
  */
 import { createSignal } from 'solid-js';
 import { post } from '../../bridge';
-import type { HubInstallMessage, HubInstallPackage, HubInstallResultMessage, SidebarWebviewMessage } from '../../protocol';
+import type {
+  HubInstallMessage,
+  HubInstallPackage,
+  HubInstallResultMessage,
+  SidebarWebviewMessage,
+  ToolpackAutoUpdated,
+  ToolpackUpdate,
+  ToolpackUpdatesMessage,
+} from '../../protocol';
+import { navigate, route } from '../../router';
 import { onHostMessage } from '../../store';
 import { feature } from '../../store/features';
+import { setHubCategory } from '../toolpacks/selection';
 import { applySetup } from '../toolpacks/setup';
 
 export interface HubPack {
@@ -58,14 +68,16 @@ export interface HubInstallProgress {
 export type HubRequest =
   | { type: 'hubBrowse'; refresh?: boolean }
   | HubInstallMessage
-  | { type: 'hubPublish' };
+  | { type: 'hubPublish' }
+  | { type: 'hubCheckUpdates' };
 
 /** Engine -> UI. `hubPublishResult` is the suggested dedicated reply (protocol-requests.md › Publish). */
 export type HubReply =
   | { type: 'hubState'; hub: HubState }
   | ({ type: 'hubInstallProgress' } & HubInstallProgress)
   | HubInstallResultMessage
-  | { type: 'hubPublishResult'; ok: boolean; message: string; url?: string };
+  | { type: 'hubPublishResult'; ok: boolean; message: string; url?: string }
+  | ToolpackUpdatesMessage;
 
 /** A pack whose install script waits for the user's consent (the Hub's script dialog, shown first). */
 export interface ScriptConsent {
@@ -126,7 +138,85 @@ function setInstall(id: string, progress: HubInstallProgress | undefined): void 
   });
 }
 
+/* Toolpack updates -------------------------------------------------------------------------------------------
+ * The engine posts `toolpackUpdates` on its own schedule, after each install and when the Hub opens. The notice
+ * row (components/ToolpackUpdateNotice) offers Review (the pack's Hub detail, with what changed) and Update (every
+ * listed pack, one at a time). An update that needs consent opens the Hub so its script/dependency dialog shows.
+ */
+
+const [toolpackUpdates, setToolpackUpdates] = createSignal<ToolpackUpdate[]>([]);
+const [autoUpdated, setAutoUpdated] = createSignal<ToolpackAutoUpdated[]>([]);
+/** A pack the Hub should pick when it shows (Review from the notice). */
+const [focusedPackId, setFocusedPackId] = createSignal<string>();
+/** Packs the notice's Update is installing, in order; the first is the one installing now. */
+const [updateQueue, setUpdateQueue] = createSignal<string[]>([]);
+export { autoUpdated, focusedPackId, toolpackUpdates, updateQueue };
+
+/** The update for an installed pack, if the Hub has a newer version. */
+export function updateFor(id: string): ToolpackUpdate | undefined {
+  return toolpackUpdates().find(update => update.id === id);
+}
+
+/** Asks the engine to compare installed packs with the Hub (it answers `toolpackUpdates`). */
+export function checkToolpackUpdates(): void {
+  send({ type: 'hubCheckUpdates' });
+}
+
+/** Opens the Hub on the pack's detail, which shows what changed and the Update button. */
+export function reviewUpdate(id: string): void {
+  setHubCategory('all');
+  setFocusedPackId(id);
+  navigate('hub');
+}
+
+/** The Hub picked the focused pack. */
+export function clearFocusedPack(): void {
+  setFocusedPackId(undefined);
+}
+
+/** Installs the update of one pack (the normal install, with its consent dialogs). */
+export function updatePack(id: string): void {
+  requestInstall(id);
+}
+
+/** Installs every listed update, one at a time, so each consent dialog gets its turn. */
+export function updateAll(ids: string[]): void {
+  const waiting = ids.filter(id => !updateQueue().includes(id));
+  if (!waiting.length) return;
+  const startNow = updateQueue().length === 0;
+  setUpdateQueue([...updateQueue(), ...waiting]);
+  if (startNow) requestInstall(waiting[0]);
+}
+
+/** The queued update for `id` finished (installed, failed or cancelled): start the next one. */
+function advanceUpdateQueue(id: string): void {
+  const queue = updateQueue();
+  if (queue[0] !== id) return;
+  const rest = queue.slice(1);
+  setUpdateQueue(rest);
+  if (rest.length) requestInstall(rest[0]);
+}
+
+/** A queued update stopped for consent: the dialogs live in the Hub, so open it on that pack. */
+function showConsentFor(id: string): void {
+  if (updateQueue()[0] !== id || route() === 'hub') return;
+  reviewUpdate(id);
+}
+
+export function dismissAutoUpdated(): void {
+  setAutoUpdated([]);
+}
+
+function applyToolpackUpdates(message: ToolpackUpdatesMessage): void {
+  // A check that failed (offline) keeps what is known rather than clearing the notice.
+  if (message.error && !message.updates.length) return;
+  setToolpackUpdates(message.updates);
+  if (message.autoUpdated?.length) setAutoUpdated([...autoUpdated(), ...message.autoUpdated]);
+}
+
 function applyInstallResult(result: HubInstallResultMessage): void {
+  if (result.needsScriptConsent || result.needsDependencyConsent) showConsentFor(result.id);
+  else advanceUpdateQueue(result.id);
   if (result.needsScriptConsent) {
     setInstall(result.id, undefined);
     setScriptConsent({
@@ -159,6 +249,10 @@ function applyReply(reply: HubReply): void {
     setPublishStatus({ pending: false, ok: reply.ok, message: reply.message, url: reply.url });
     return;
   }
+  if (reply.type === 'toolpackUpdates') {
+    applyToolpackUpdates(reply);
+    return;
+  }
   if (reply.type === 'hubState') {
     if (publishStatus().pending && reply.hub.error) {
       const { error, ...hub } = reply.hub;
@@ -174,7 +268,7 @@ function applyReply(reply: HubReply): void {
   setInstall(progress.id, progress.state === 'done' ? undefined : progress);
 }
 
-const hubReplyTypes = new Set<string>(['hubState', 'hubInstallProgress', 'hubInstallResult', 'hubPublishResult']);
+const hubReplyTypes = new Set<string>(['hubState', 'hubInstallProgress', 'hubInstallResult', 'hubPublishResult', 'toolpackUpdates']);
 
 onHostMessage(message => {
   const reply = message as unknown as HubReply;
@@ -210,7 +304,9 @@ export function runScriptAndInstall(): void {
 }
 
 export function cancelScriptConsent(): void {
+  const consent = scriptConsent();
   setScriptConsent(undefined);
+  if (consent) advanceUpdateQueue(consent.id);
 }
 
 /** The user agreed to the dependencies: install with the optional step ids they ticked (required ones always install). */
@@ -223,7 +319,9 @@ export function installDependencies(selectedOptional: string[]): void {
 
 /** Skip cancels the whole install (the user's choice): nothing was written yet. */
 export function cancelDependencyConsent(): void {
+  const consent = dependencyConsent();
   setDependencyConsent(undefined);
+  if (consent) advanceUpdateQueue(consent.id);
 }
 
 /** Asks the engine to publish a toolpack folder (it shows the picker and the confirmation). */

@@ -21,7 +21,8 @@ export interface SubagentAgentRegistration {
     id: string;
     /** The MCP bridge owner id this subagent's tools report. */
     owner: string;
-    name: string;
+    /** Subagent profile (e.g. "explorer"); the agent's own name comes from the name pool. */
+    profile: string;
     task: string;
     chatId: string;
     parentId: string;
@@ -53,17 +54,18 @@ export function agentIdForOwner(ownerId: string): string | undefined {
     return agentIdByOwner.get(ownerId);
 }
 
-/** Registers a delegate task as a running subagent and binds its MCP owner. */
-export function registerSubagentAgent(registration: SubagentAgentRegistration): void {
-    agentBus.register({
+/** Registers a delegate task as a running subagent, binds its MCP owner and returns the exclusive name it got. */
+export function registerSubagentAgent(registration: SubagentAgentRegistration): string {
+    const name = agentBus.register({
         id: registration.id,
-        name: registration.name,
+        role: registration.profile,
         task: summarizeTask(registration.task),
         chatId: registration.chatId,
         parentId: registration.parentId,
         state: 'running',
     });
     bindChatAgentOwner(registration.owner, registration.id);
+    return name;
 }
 
 export function setSubagentState(agentId: string, state: AgentInfo['state']): void {
@@ -78,16 +80,25 @@ export function unregisterSubagentAgent(agentId: string): void {
     }
 }
 
-/** Roster text for list_agents, already limited to the caller's scope by the bus. */
+/** "Kernel (id abc)", or just the id when that agent has stopped. */
+function agentLabel(agentId: string): string {
+    const name = agentBus.nameOf(agentId);
+    return name ? `${name} (id ${agentId})` : agentId;
+}
+
+/** Roster text for list_agents, already limited to the caller's scope by the bus. Starts with the caller's own name. */
 export function visibleAgentsText(fromAgentId: string): string {
+    const ownName = agentBus.nameOf(fromAgentId);
+    const self = ownName ? `You are ${ownName} (id ${fromAgentId}).\n` : '';
     const agents = agentBus.listVisible(fromAgentId);
-    if (!agents.length) return 'No other agents are visible right now.';
+    if (!agents.length) return `${self}No other agents are visible right now.`;
     const lines = agents.map(agent => {
-        const where = [agent.parentId ? `child of ${agent.parentId}` : '', agent.chatId ? `chat ${agent.chatId}` : '']
+        const where = [agent.parentId ? `child of ${agentLabel(agent.parentId)}` : '', agent.chatId ? `chat ${agent.chatId}` : '']
             .filter(Boolean).join(', ');
-        return `- ${agent.name} (id ${agent.id}) — ${agent.state}${where ? `, ${where}` : ''}: ${agent.task || '(no task)'}`;
+        const role = agent.role ? `, ${agent.role}` : '';
+        return `- ${agent.name} (id ${agent.id}${role}) — ${agent.state}${where ? `, ${where}` : ''}: ${agent.task || '(no task)'}`;
     });
-    return `${agents.length} other agent${agents.length === 1 ? '' : 's'} visible under the current scope:\n${lines.join('\n')}`;
+    return `${self}${agents.length} other agent${agents.length === 1 ? '' : 's'} visible under the current scope:\n${lines.join('\n')}`;
 }
 
 function messageText(target: AgentInfo): string {

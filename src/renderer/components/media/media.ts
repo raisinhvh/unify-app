@@ -1,11 +1,9 @@
 /**
- * Media helpers shared by thumbnails, in-place expansion and the full viewer (docs/contracts/media.md).
+ * Media helpers shared by thumbnails and the full viewer (docs/contracts/media.md).
  *
  *   mediaKey(media)       the media store sha256 (from `hash`, else parsed from `unify-media://<hash>`), else the file
  *   thumbSource(media)    `unify-media://<hash>?thumb=1` for stored media; anything else (mock files) is used as is
- *   onEscape(active, fn)  Esc closes the topmost expanded image; the viewer swallows Esc while it is open
  */
-import { createEffect, onCleanup } from 'solid-js';
 import type { SidebarMedia } from '../../protocol';
 
 /** The engine's SidebarMedia carries the contract's `hash`, `width` and `height`, all optional. */
@@ -57,20 +55,4 @@ export function aspectOf(media: MediaItem, image?: HTMLImageElement | null): num
     return media.width / media.height;
   }
   return 4 / 3;
-}
-
-/** While `active()` is true, Esc calls `close`. */
-export function onEscape(active: () => boolean, close: () => void): void {
-  createEffect(() => {
-    if (!active()) {
-      return;
-    }
-    const listener = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        close();
-      }
-    };
-    document.addEventListener('keydown', listener);
-    onCleanup(() => document.removeEventListener('keydown', listener));
-  });
 }

@@ -74,6 +74,58 @@ export interface HubInstallPackage {
   neededBy?: string[];
 }
 
+/* ---------------------------------------------------------------------------------------------------------------
+ * Toolpack updates: the engine compares installed Hub packs with the Hub (`hub/updates.ts`) and posts
+ * `toolpackUpdates` to the renderer. With the `toolpacks.autoUpdate` feature on, it installs the updates that need
+ * no consent (no new or changed install/uninstall script, no missing required program) and reports them in
+ * `autoUpdated`; the rest stay in `updates` with `needsConsent`.
+ * ------------------------------------------------------------------------------------------------------------- */
+
+/** An installed Hub pack that has a newer version on the Hub. */
+export interface ToolpackUpdate {
+  id: string;
+  name: string;
+  icon?: string;
+  /** Version installed now. */
+  fromVersion: string;
+  /** Version on the Hub. */
+  toVersion: string;
+  /** Hub `updatedAt` of the installed copy (ms), or its install time when unknown. */
+  installedUpdatedAt: number;
+  /** Hub `updatedAt` of the new version (ms). */
+  updatedAt: number;
+  /** Tool names the update adds. */
+  addedTools: string[];
+  /** Tool names the update removes. */
+  removedTools: string[];
+  /** Set when auto-update could not install it by itself: the user has to review it. */
+  needsConsent?: boolean;
+  /** Why it needs consent: a new or changed install/uninstall script, or a missing required program. */
+  consentReason?: 'script' | 'programs';
+}
+
+/** A pack auto-update installed by itself. */
+export interface ToolpackAutoUpdated {
+  id: string;
+  name: string;
+  version: string;
+}
+
+/** Engine → renderer: the result of an update check. */
+export interface ToolpackUpdatesMessage {
+  type: 'toolpackUpdates';
+  updates: ToolpackUpdate[];
+  autoUpdated?: ToolpackAutoUpdated[];
+  /** When the check ran (ms). */
+  checkedAt: number;
+  error?: string;
+}
+
+/** Renderer → engine: check the Hub for toolpack updates now (replies `toolpackUpdates`). */
+export interface HubCheckUpdatesRequest {
+  type: 'hubCheckUpdates';
+}
+
 export interface HubInstallProgress {
   id: string;
   /** 0-100. */

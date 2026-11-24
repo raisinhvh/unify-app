@@ -148,7 +148,7 @@ async function tools(): Promise<Json[]> {
                 properties: {
                     agent: { type: 'string', description: 'Exact profile name.' },
                     task: { type: 'string', description: 'Complete, self-contained instructions.' },
-                    files: { type: 'array', items: { type: 'string' }, description: 'Paths an edit profile may change.' },
+                    files: { type: 'array', items: { type: 'string' }, description: 'Paths an edit profile may change: relative to the working copy, or absolute for files outside it (the subagent has the same permissions as you).' },
                     background: { type: 'boolean', description: `Return a task id at once; collect with ${WAIT_SUBAGENTS}.` },
                     after_turn: { type: 'string', enum: ['resume', 'hold', 'cancel'], description: 'Background only, if your turn ends first: resume (default) sends results in a new turn, hold attaches them to the user\'s next message, cancel stops it.' },
                 },

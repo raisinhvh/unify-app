@@ -3,10 +3,9 @@
   "themes": ["walnutDark", "walnutLight"],
   "shots": [
     { "name": "media-row", "page": "chat-media?timed=end" },
-    { "name": "media-expanded", "page": "chat-media?timed=end", "steps": [{ "click": ".tool-media .media-print", "wait": 700 }] },
     { "name": "media-feed", "page": "chat-media?timed=end", "steps": [{ "click": ".subagent-row", "wait": 700 }] },
-    { "name": "media-strip-expanded", "page": "chat-media?timed=end", "steps": [{ "click": ".subagent-strip .media-print", "wait": 700 }] },
-    { "name": "media-viewer", "page": "chat-media?timed=end", "steps": [{ "click": ".subagent-strip .media-print", "wait": 700 }, { "click": ".subagent-strip .media-expand-layer", "wait": 900 }] },
+    { "name": "media-viewer-tool", "page": "chat-media?timed=end", "steps": [{ "click": ".tool-media .media-print", "wait": 900 }] },
+    { "name": "media-viewer", "page": "chat-media?timed=end", "steps": [{ "click": ".subagent-strip .media-print", "wait": 900 }] },
     { "name": "media-viewer-more", "page": "chat-media?timed=end", "steps": [{ "click": ".media-print-more", "wait": 900 }] },
     { "name": "explored-running", "page": "chat-agents?timed=0" },
     { "name": "explored-complete", "page": "chat-agents?timed=end" },

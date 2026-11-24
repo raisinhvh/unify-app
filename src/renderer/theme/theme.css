@@ -50,6 +50,9 @@
   --row-pad-y: calc(4px * var(--space-scale));
 
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.36), 0 2px 6px rgba(0, 0, 0, 0.24);
+  /* A resting pane's lift off the canvas. theme/index.ts sets it per theme: soft in light themes, none in dark
+     ones (a shadow can't show on near-black, so dark themes rely on --pane-border). */
+  --shadow-pane: none;
 
   color-scheme: dark;
 }
@@ -68,7 +71,8 @@ body,
 }
 
 body {
-  background: var(--bg);
+  /* The window backdrop; panes fill with --bg on top of it. */
+  background: var(--canvas);
   color: var(--text);
   font-family: var(--font-ui);
   /* Unitless line-height so it grows with the font; px would stay fixed when Text size changes. */
@@ -240,6 +244,12 @@ textarea {
 }
 
 /* Theme crossfade (View Transitions). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 240ms;
+  animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+ns). */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation-duration: 240ms;

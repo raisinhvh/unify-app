@@ -610,6 +610,59 @@
   line-height: 22px;
 }
 
+/* What's new (an installed pack with an update) ---------------------------------------------------------- */
+
+.hub-detail-open {
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 0;
+  color: var(--text3);
+  text-align: center;
+  transition: color 120ms ease;
+}
+
+.hub-detail-open:hover {
+  color: var(--text);
+}
+
+.hub-whatsnew {
+  display: flex;
+  flex-direction: column;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.hub-whatsnew-tools {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+}
+
+.hub-whatsnew-label {
+  margin-bottom: 2px;
+  color: var(--text3);
+}
+
+.hub-tool-removed {
+  color: var(--text3);
+  text-decoration: line-through;
+}
+
+.hub-whatsnew-note {
+  margin: 8px 0 0;
+  color: var(--text3);
+}
+
+.hub-whatsnew-hint {
+  margin: 12px 0 0;
+  color: var(--text2);
+}
+
+.hub-whatsnew + .hub-facts {
+  margin-top: 16px;
+}
+
 .hub-more {
   align-self: flex-start;
   margin-top: 4px;

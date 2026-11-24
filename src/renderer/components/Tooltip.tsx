@@ -33,6 +33,8 @@ export interface TooltipOptions {
   placement?: PopoverPlacement;
   /** Delay before the first tooltip shows, ms. */
   delay?: number;
+  /** Panel padding for element content. Default: true for element content, false for strings. */
+  rich?: boolean;
 }
 
 export function tooltip(element: HTMLElement, content: TooltipContent, options: TooltipOptions = {}): void {
@@ -43,7 +45,7 @@ export function tooltip(element: HTMLElement, content: TooltipContent, options: 
       anchor: element,
       content,
       placement: options.placement ?? 'bottom-start',
-      rich: typeof content !== 'string',
+      rich: options.rich ?? typeof content !== 'string',
     };
     if (visible()) {
       setRequest(next);

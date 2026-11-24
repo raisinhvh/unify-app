@@ -12,6 +12,7 @@
  * Styles: pane-content.css.
  */
 import { createEffect, createSignal, For, on, onCleanup, Match, onMount, Show, Switch, type JSX } from 'solid-js';
+import { bridge } from '../bridge';
 import { Button, Icon, IconButton } from '../components';
 import { readPersisted, writePersisted } from '../persist';
 import { ChatPane } from '../screens/chats/ChatPane';
@@ -297,13 +298,30 @@ function TerminalPane(props: { context: PaneContext }): JSX.Element {
 // Source Control: the git view (screens/git) in the generic frame
 // ---------------------------------------------------------------------------------------------
 
+/** The project folder the app has open, shown when the pane has no repository of its own. */
+function projectFolder(): string | undefined {
+  try {
+    return bridge().projectPath || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function GitPane(props: { context: PaneContext }): JSX.Element {
+  const pane = () => props.context.pane();
   return (
     <div class="chat-pane pane-frame">
       <PaneHeader context={props.context} title="Source Control" />
       <div class="pane-body pane-git">
         <ScaleToWidth fullWidth={paneFullWidth.sourceControl}>
-          <GitView />
+          {/* Which repository the pane shows, like the Files tree's project row. */}
+          <ProjectSwitch
+            class="pane-git-repo"
+            path={pane()?.cwd ?? projectFolder()}
+            onSelect={project => setPaneCwd(props.context.paneId, project.path)}
+          />
+          {/* A new folder remounts the view, so no status, diffs or branch menu carry over from the last one. */}
+          <For each={[pane()?.cwd]}>{cwd => <GitView cwd={cwd} />}</For>
         </ScaleToWidth>
       </div>
     </div>

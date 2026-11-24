@@ -24,6 +24,7 @@ import { engineError, setEngineError } from '../store';
 import { Button, IconButton } from './Button';
 import { Loader, type LoaderShape } from './loaders';
 import { useProgressNotice } from './ProgressNotice';
+import { useToolpackUpdateNotice } from './ToolpackUpdateNotice';
 import './notice.css';
 
 export type NoticeTone = 'error' | 'warning' | 'info';
@@ -33,6 +34,8 @@ export interface NoticeData {
   tone?: NoticeTone;
   /** A text action at the end of the line; `disabled` greys it out (e.g. 'Cancelling…' while a cancel is pending). */
   action?: { label: string; run: () => void; disabled?: boolean };
+  /** A second text action, before `action` (e.g. Review before Update). */
+  secondaryAction?: { label: string; run: () => void; disabled?: boolean };
   /** Same key as the line on screen: update it in place rather than sliding a new line in. */
   key?: string;
   /** Muted text after the message. */
@@ -136,6 +139,19 @@ function NoticeLine(props: { layer: Layer }): JSX.Element {
           )}
         </Show>
       </span>
+      <Show when={notice().secondaryAction}>
+        {action => (
+          <Button
+            variant="text"
+            class="notice-action notice-action-secondary"
+            tabIndex={props.layer.leaving() ? -1 : undefined}
+            disabled={action().disabled}
+            onClick={() => action().run()}
+          >
+            {action().label}
+          </Button>
+        )}
+      </Show>
       <Show when={notice().action}>
         {action => (
           <Button
@@ -323,17 +339,22 @@ export function Notice(props: NoticeProps): JSX.Element {
   );
 }
 
-/** The engine's last error as a notice, else the newest progress task; dismissing clears whichever is shown. */
+/**
+ * The engine's last error as a notice, else the newest progress task, else toolpack updates (ToolpackUpdateNotice);
+ * dismissing clears whichever is shown.
+ */
 export function EngineNotice(props: { onProgress?: (progress: number) => void }): JSX.Element {
   const progressNotice = useProgressNotice();
+  const updateNotice = useToolpackUpdateNotice();
   const notice = (): NoticeData | undefined => {
     const message = engineError();
     if (message) return { message, tone: 'error', key: `engine-error:${message}` };
-    return progressNotice.notice();
+    return progressNotice.notice() ?? updateNotice.notice();
   };
   const dismiss = () => {
     if (engineError()) setEngineError(undefined);
-    else progressNotice.dismiss();
+    else if (progressNotice.notice()) progressNotice.dismiss();
+    else updateNotice.dismiss();
   };
   return <Notice notice={notice()} onDismiss={dismiss} onProgress={props.onProgress} />;
 }

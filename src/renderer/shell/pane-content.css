@@ -186,6 +186,14 @@
   min-height: 0;
 }
 
+/* Which repository the pane shows: the Files tree's project row, inset from the pane edges. It sits in
+   ScaleToWidth's column above the git view, so it shrinks with it. */
+.project-switch.pane-git-repo {
+  flex: none;
+  width: auto;
+  margin: 8px 8px 0;
+}
+
 /* ---------------------------------------------------------------- image */
 
 .pane-image {

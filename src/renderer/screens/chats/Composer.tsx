@@ -31,6 +31,7 @@ import type { VoiceAction, VoicePart } from '../../../engine/voice/dictation';
 import { MentionMenu, type MentionMenuApi } from './MentionMenu';
 import { SlashMenu, type SlashMenuApi } from './SlashMenu';
 import { createVoiceSession, VoiceButton, VoiceHint } from './VoiceButton';
+import { BackgroundIndicator, SubagentIndicator } from './ActivityIndicators';
 import './composer.css';
 
 const maxAttachments = 8;
@@ -54,6 +55,22 @@ export interface ComposerProps {
   onSubmit?: (prompt: string, images: SidebarImage[]) => void;
   autofocus?: boolean;
   class?: string;
+  /** Receives the composer's API (QuoteSelection quotes into it). */
+  ref?: (api: ComposerApi) => void;
+}
+
+export interface ComposerApi {
+  /** Adds `text` as a markdown quote ("> " lines) after what is typed, then focuses with the caret below it. */
+  quote: (text: string) => void;
+}
+
+/** "> " before every line; blank lines stay quoted so the block holds together. */
+export function quoteBlock(text: string): string {
+  return text
+    .trim()
+    .split(/\r?\n/)
+    .map(line => (line.trim() ? `> ${line}` : '>'))
+    .join('\n');
 }
 
 function readFileBase64(file: File): Promise<string> {
@@ -177,6 +194,16 @@ export function Composer(props: ComposerProps): JSX.Element {
     });
     resize();
   }
+
+  props.ref?.({
+    quote(quoted: string) {
+      const block = quoteBlock(quoted);
+      if (!block) return;
+      const current = text().replace(/\s+$/, '');
+      insertText(`${current ? `${current}\n\n` : ''}${block}\n\n`);
+      lastDictation = undefined;
+    },
+  });
 
   onMount(() => {
     if (!import.meta.env.DEV) return;
@@ -402,6 +429,7 @@ export function Composer(props: ComposerProps): JSX.Element {
           <IconButton
             icon="paperclip"
             label="Attach files"
+            class="composer-attach"
             onClick={() => fileInput?.click()}
           />
           <ModelPicker
@@ -416,6 +444,15 @@ export function Composer(props: ComposerProps): JSX.Element {
             chatId={props.chatId}
             placement="top-start"
           />
+          {/* What else the chat has running: subagents and background tasks (Home has no chat yet). */}
+          <Show when={props.chatId} keyed>
+            {chatId => (
+              <>
+                <SubagentIndicator chatId={chatId} />
+                <BackgroundIndicator chatId={chatId} />
+              </>
+            )}
+          </Show>
           <span class="composer-spacer" />
           <Presence when={running()}>
             <IconButton

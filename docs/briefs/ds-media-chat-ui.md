@@ -13,7 +13,7 @@ Repo: the Unify app, reached from this working copy as `unify/` (repo root) and 
 1. `unify-renderer/protocol.ts`: mirror the contract's type additions.
 2. **Tool-row thumbnails** (main feed and subagent feed): a tool row whose event has `media` shows small thumbnails (about 40 px tall, rounded 4 px, hairline border) after its title. Click expands that image in place under the row (springs open to fit width, max ~360 px tall); click again or Esc collapses. Hidden when `chats.toolImages` is off.
 3. **Subagent feed**: a message with `media` renders as an inline media entry at that point in the feed (reuse `MediaEntry`'s look).
-4. **Subagent row in the parent chat**: when the subagent has `sentToParent` and is finished, the row grows a compact strip under its title: "N images" label plus up to 4 small thumbnails and "+K". Clicking a thumbnail expands it in place inside the row; an expanded image's own click opens the full viewer. While it runs, thumbnails appear one by one as they arrive (each pops in with a soft spring). Hidden when `chats.subagentImageStrip` is off; the row then looks exactly as it does today.
+4. **Subagent row in the parent chat**: when the subagent has `sentToParent` and is finished, the row grows a compact strip under its title: "N images" label plus up to 4 small thumbnails and "+K". Clicking a thumbnail opens the full viewer for the group. While it runs, thumbnails appear one by one as they arrive (each pops in with a soft spring). Hidden when `chats.subagentImageStrip` is off; the row then looks exactly as it does today.
 5. **Full viewer**: one shared overlay component (in `unify-renderer/components/`) layered over the app: the image scales up from its thumbnail's position (shared-element style spring), dark scrim, arrow keys step through the images of that group, Esc / click outside closes back into the thumbnail. Name + sender caption in the UI font at the bottom.
 6. Use `media.file` (`unify-media://<hash>`) for originals and `?thumb=1` for thumbnails. In the mock bridge, use data URLs or files under `unify-renderer/dev/` so previews work without the engine.
 7. `unify-renderer/dev/mockBridge.ts`: add fixtures: a main tool row with two images, a running subagent that sends images over time, a finished subagent with 6 sent images, and a subagent feed with a send_media message.
@@ -27,3 +27,4 @@ File-system look, Walnut themes, monochrome accent, no pills, no glow, no dots o
 - Run `unify/.dsh/tools/motion-audit.mjs` on expand/collapse and the viewer open/close; fix snaps or layout jumps.
 - Stop vite / Edge / node you started.
 - Report: files changed, what each toggle hides, screenshots paths, anything the contract lacked.
+act lacked.

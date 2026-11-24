@@ -1,0 +1,15 @@
+/* QuoteSelection: an invisible box over the selected line, and the small raised "Quote" button above it. */
+.quote-selection-anchor {
+  position: fixed;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.popover.quote-selection {
+  min-width: 0;
+  padding: 2px;
+}
+
+.quote-selection-button {
+  white-space: nowrap;
+}

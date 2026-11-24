@@ -12,6 +12,12 @@
         { "id": "s-agents", "name": "Model pill on narrow panes", "updatedAt": -1, "project": { "name": "Unify", "path": "C:/Users/User/Documents/Projects/Programs/Unify" } }
       ]
     },
+    {
+      "type": "agentRoster",
+      "agents": [
+        { "id": "s-agents", "name": "Kernel", "role": "main", "task": "Model pill on narrow panes", "chatId": "s-agents", "state": "running" }
+      ]
+    },
     { "type": "runState", "sessionId": "s-agents", "state": "tool", "label": "Working" },
     {
       "type": "timelineState",
@@ -91,7 +97,7 @@
           "message": {
             "id": "m1",
             "fromId": "main",
-            "fromName": "Main",
+            "fromName": "Kernel",
             "toId": "sol",
             "toName": "Sol",
             "text": "Take the header controls split; I'm on the pill. Keep the 40px row and leave the Pane/Header tokens alone, the theme agent owns those. Ping me if layout.ts needs to change, because the narrow breakpoint is shared with the composer.",
@@ -106,7 +112,7 @@
             "fromId": "sol",
             "fromName": "Sol",
             "toId": "main",
-            "toName": "Main",
+            "toName": "Kernel",
             "text": "On it. layout.ts can stay as it is.",
             "replyToId": "m1",
             "sentAt": 1763900060000
@@ -120,7 +126,7 @@
             "fromId": "x1",
             "fromName": "Explorer",
             "toId": "main",
-            "toName": "Main",
+            "toName": "Kernel",
             "text": "This one is from the explorer and must never show.",
             "sentAt": 1763900070000
           }

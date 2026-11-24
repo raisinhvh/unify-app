@@ -24,7 +24,15 @@ await mkdir(tempRoot, { recursive: true });
 const requestsFile = join(tempRoot, 'requests.mjs');
 const hubFile = join(tempRoot, 'hub.mjs');
 await build({
-  entryPoints: [join(here, '../src/engine/unify/requests/index.ts')],
+  // The settings helpers come from the same bundle, so the test can switch `toolpacks.autoUpdate` for the handler.
+  stdin: {
+    contents: [
+      "export * from './unify/requests/index.ts';",
+      "export { resetUnifySettingsCache, setUnifyFeature } from './unify/settings.ts';",
+    ].join('\n'),
+    resolveDir: join(here, '../src/engine'),
+    loader: 'ts',
+  },
   bundle: true,
   platform: 'node',
   format: 'esm',
@@ -41,8 +49,8 @@ await build({
   outfile: hubFile,
   external: ['esbuild'],
 });
-const { handleUnifyRequest } = await import(pathToFileURL(requestsFile).href);
-const { GithubHubRegistry, installHubPack, toolpackIdFor } = await import(pathToFileURL(hubFile).href);
+const { handleUnifyRequest, resetUnifySettingsCache, setUnifyFeature } = await import(pathToFileURL(requestsFile).href);
+const { GithubHubRegistry, findHubUpdates, installHubPack, toolpackIdFor } = await import(pathToFileURL(hubFile).href);
 
 const SAMPLE_PACKS = [
   {
@@ -433,5 +441,198 @@ test('GithubHubRegistry.state parses a live-format index.json and reports error 
     assert.match(errState.error, /503/);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+/* Toolpack updates ------------------------------------------------------------------------------------------- */
+
+test('findHubUpdates lists newer and re-versioned installed packs, with added and removed tools', async () => {
+  const updatesDir = join(tempRoot, 'updates-toolpacks');
+  await mkdir(join(updatesDir, 'alpha'), { recursive: true });
+  await mkdir(join(updatesDir, 'beta'), { recursive: true });
+  await mkdir(join(updatesDir, 'same'), { recursive: true });
+  const hubPack = (id, version, updatedAt, tools) => ({
+    id,
+    name: id[0].toUpperCase() + id.slice(1),
+    author: 't',
+    category: 'dev',
+    description: '',
+    installs: 0,
+    tools,
+    version,
+    updatedAt,
+    publishedAt: 1,
+    license: 'MIT',
+  });
+  const record = (id, version, fields) => ({
+    id,
+    name: id,
+    description: '',
+    version,
+    source: 'hub',
+    tools: ['old_tool', 'kept_tool'],
+    installedAt: 100,
+    ...fields,
+  });
+  const updates = findHubUpdates(
+    [
+      hubPack('beta', '1.0.0', 500, ['kept_tool']),
+      hubPack('alpha', '1.1.0', 200, ['kept_tool', 'new_tool']),
+      hubPack('same', '1.0.0', 200, ['kept_tool']),
+      hubPack('gone', '2.0.0', 900, []),
+    ],
+    {
+      // An older record without updatedAt is compared by installedAt.
+      beta: record('beta', '1.0.0'),
+      alpha: record('alpha', '1.0.0', { updatedAt: 200 }),
+      same: record('same', '1.0.0', { updatedAt: 200 }),
+      // Its folder was deleted by hand, so it is not offered.
+      gone: record('gone', '1.0.0', { updatedAt: 1 }),
+    },
+    updatesDir,
+  );
+  assert.deepEqual(updates.map(update => update.id), ['alpha', 'beta']);
+  assert.deepEqual(
+    { from: updates[0].fromVersion, to: updates[0].toVersion, added: updates[0].addedTools, removed: updates[0].removedTools },
+    { from: '1.0.0', to: '1.1.0', added: ['new_tool'], removed: ['old_tool'] },
+  );
+  assert.equal(updates[1].installedUpdatedAt, 100);
+  assert.equal(updates[1].updatedAt, 500);
+});
+
+test('installHubPack skips script consent for the same scripts and auto-update never asks', async () => {
+  const updatesDir = join(tempRoot, 'unattended-toolpacks');
+  let recorded;
+  const first = await installHubPack({
+    registry,
+    id: 'notes',
+    toolpacksDir: updatesDir,
+    reply: () => {},
+    allowScript: true,
+    onInstalled: pack => { recorded = pack; },
+  });
+  assert.equal(first.ok, true);
+  assert.match(recorded.scriptHash, /^[0-9a-f]{64}$/);
+  assert.equal(recorded.updatedAt, SAMPLE_PACKS[0].updatedAt);
+
+  // Unattended without a stored consent: the scripts are new to the user, so it stops, even with allowScript.
+  const unconsented = await installHubPack({ registry, id: 'notes', toolpacksDir: updatesDir, reply: () => {}, unattended: true });
+  assert.equal(unconsented.needsScriptConsent, true);
+  const forced = await installHubPack({
+    registry,
+    id: 'notes',
+    toolpacksDir: updatesDir,
+    reply: () => {},
+    unattended: true,
+    allowScript: true,
+  });
+  assert.equal(forced.needsScriptConsent, true);
+
+  // The same scripts the user agreed to install without asking, attended or not.
+  const attended = await installHubPack({
+    registry,
+    id: 'notes',
+    toolpacksDir: updatesDir,
+    reply: () => {},
+    consentedScriptHash: recorded.scriptHash,
+  });
+  assert.equal(attended.ok, true);
+  const unattended = await installHubPack({
+    registry,
+    id: 'notes',
+    toolpacksDir: updatesDir,
+    reply: () => {},
+    unattended: true,
+    consentedScriptHash: recorded.scriptHash,
+  });
+  assert.equal(unattended.ok, true);
+
+  // Only optional programs: installs unattended without them.
+  const optionalOnly = await installHubPack({ registry, id: 'dep-pack', toolpacksDir: updatesDir, reply: () => {}, unattended: true });
+  assert.equal(optionalOnly.ok, true);
+  assert.equal(optionalOnly.setup.steps.find(step => step.id === 'extra').status, 'todo');
+});
+
+test('installHubPack unattended stops when a required program is missing', async () => {
+  const updatesDir = join(tempRoot, 'required-toolpacks');
+  const requiredRegistry = {
+    ...createTestRegistry(),
+    async state() {
+      const hub = await registry.state();
+      return {
+        ...hub,
+        packs: hub.packs.map(pack => (pack.id === 'dep-pack' ? { ...pack, id: 'req-pack', name: 'Req Pack' } : pack)),
+      };
+    },
+    async download(_id, destination) {
+      await registry.download('dep-pack', destination);
+      const setup = {
+        steps: [
+          { id: 'need', title: 'Need', kind: 'auto', install: { pip: 'needed-tool' }, check: { command: 'unify-not-a-program' } },
+        ],
+      };
+      await writeFile(join(destination, 'setup.json'), JSON.stringify(setup), 'utf8');
+    },
+  };
+  const result = await installHubPack({
+    registry: requiredRegistry,
+    id: 'req-pack',
+    toolpacksDir: updatesDir,
+    reply: () => {},
+    unattended: true,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.needsDependencyConsent, true);
+  assert.equal(existsSync(join(updatesDir, 'req_pack')), false, 'nothing was installed');
+});
+
+test('hubCheckUpdates reports updates, and auto-update installs only those that need no consent', async () => {
+  const originalUnifyHome = process.env.UNIFY_HOME;
+  process.env.UNIFY_HOME = join(tempRoot, 'settings-home');
+  resetUnifySettingsCache();
+  const notes = SAMPLE_PACKS.find(pack => pack.id === 'notes');
+  const scene = SAMPLE_PACKS.find(pack => pack.id === 'scene-tools');
+  const original = { notes: { ...notes }, scene: { ...scene, tools: [...scene.tools] } };
+  const originalDownload = registry.download;
+  try {
+    // notes is installed with consent (its script hash is stored); scene-tools has no script.
+    await send({ type: 'hubInstall', id: 'notes', allowScript: true });
+    await send({ type: 'hubInstall', id: 'scene-tools' });
+    const none = await send({ type: 'hubCheckUpdates', requestId: 'u0' });
+    const empty = ofType(none.replies, 'toolpackUpdates')[0];
+    assert.equal(empty.requestId, 'u0');
+    assert.deepEqual(empty.updates.filter(update => update.id === 'notes' || update.id === 'scene-tools'), []);
+
+    Object.assign(notes, { version: '1.1.0', updatedAt: notes.updatedAt + 1000 });
+    Object.assign(scene, { version: '2.2.0', updatedAt: scene.updatedAt + 1000, tools: [...scene.tools, 'scene_tools_new'] });
+    const found = ofType((await send({ type: 'hubCheckUpdates' })).replies, 'toolpackUpdates')[0];
+    const sceneUpdate = found.updates.find(update => update.id === 'scene-tools');
+    assert.deepEqual(
+      { from: sceneUpdate.fromVersion, to: sceneUpdate.toVersion, added: sceneUpdate.addedTools },
+      { from: '2.1.0', to: '2.2.0', added: ['scene_tools_new'] },
+    );
+
+    // `auto` with the feature off only reports.
+    const off = ofType((await send({ type: 'hubCheckUpdates', auto: true })).replies, 'toolpackUpdates')[0];
+    assert.equal(off.autoUpdated, undefined);
+
+    setUnifyFeature('toolpacks.autoUpdate', true);
+    // A changed install script needs the user's consent again.
+    registry.download = async (id, destination) => {
+      await originalDownload(id, destination);
+      if (id === 'notes') await writeFile(join(destination, 'install.js'), "console.log('changed');\n", 'utf8');
+    };
+    const auto = ofType((await send({ type: 'hubCheckUpdates', auto: true })).replies, 'toolpackUpdates').at(-1);
+    assert.deepEqual(auto.autoUpdated, [{ id: 'scene-tools', name: 'Scene Tools', version: '2.2.0' }]);
+    const pending = auto.updates.find(update => update.id === 'notes');
+    assert.deepEqual({ needsConsent: pending.needsConsent, reason: pending.consentReason }, { needsConsent: true, reason: 'script' });
+    assert.equal(auto.updates.some(update => update.id === 'scene-tools'), false);
+  } finally {
+    registry.download = originalDownload;
+    Object.assign(notes, original.notes);
+    Object.assign(scene, original.scene);
+    if (originalUnifyHome === undefined) delete process.env.UNIFY_HOME;
+    else process.env.UNIFY_HOME = originalUnifyHome;
+    resetUnifySettingsCache();
   }
 });

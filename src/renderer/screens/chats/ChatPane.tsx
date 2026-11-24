@@ -4,11 +4,11 @@
  *   header    grip (hold-drag to rearrange, see shell/PaneGrid) · title · working folder · model picker · pop out ·
  *             more · close
  *   job       JobBar.tsx: the chat's /job run (round, phase, criteria), only while it has one
- *   background BackgroundBar.tsx: the chat's background shells and subagents, only while it has any
  *   timeline  Timeline.tsx
  *   status    what the agent is doing right now (loader + label) while it runs
  *   changes   files this chat edited, with review / keep / undo (DSH renderChanges); every pane shows its own chat's
  *   composer  Composer.tsx, bound to this chat
+ *   quote     QuoteSelection.tsx: selecting text in an agent reply offers "Quote", which adds it to the composer
  *
  * Everything under the header follows the pane text-size rule (shell/paneScale.tsx): narrower than full size it
  * scales down instead of wrapping, to 0.8× at most.
@@ -21,17 +21,18 @@ import { Button, Icon, IconButton, Loader, Menu, actionLabel, actionLoader, chat
 import { Collapse } from '../../motion';
 import { bridge, post } from '../../bridge';
 import type { PaneContext } from '../../shell/PaneGrid';
-import { markRead, viewState } from '../../store';
+import { agentName, markRead, viewState } from '../../store';
+import { tooltip } from '../../components/Tooltip';
 import { ModelPicker } from '../../components/ModelPicker';
 import type { SidebarProject } from '../../protocol';
 import { openProjectInFiles } from '../../shell/fileLinks';
 import { paneFullWidth, ScaleToWidth } from '../../shell/paneScale';
 import { feature } from '../../store/features';
 import { shortPath } from './projects';
-import { Composer } from './Composer';
+import { Composer, type ComposerApi } from './Composer';
 import { JobBar } from './JobBar';
-import { BackgroundBar } from './BackgroundBar';
 import { ScheduleBar } from './ScheduleBar';
+import { QuoteSelection } from './QuoteSelection';
 import { Timeline } from './Timeline';
 import './chat-pane.css';
 
@@ -123,6 +124,29 @@ function ChangesBar(props: { chatId: string }): JSX.Element {
 }
 
 /**
+ * A small paper icon beside the title; hovering it shows the chat agent's messaging name ("Name: Kernel").
+ * Hidden until the engine's roster knows the name.
+ */
+function AgentNameTag(props: { chatId: string }): JSX.Element {
+  const name = () => agentName(props.chatId);
+  return (
+    <Show when={name()}>
+      <span
+        class="chat-pane-agent"
+        aria-label={`Name: ${name()}`}
+        ref={element => tooltip(element, () => (
+          <span>
+            Name: <strong>{name()}</strong>
+          </span>
+        ), { rich: false, delay: 200 })}
+      >
+        <Icon name="file" size={12} />
+      </span>
+    </Show>
+  );
+}
+
+/**
  * The folder the agent works in, beside the title: the project's last two segments ("Programs/Unify"), full path in
  * the tooltip. Clicking shows it in the Files pane (not in pop-outs, which have no panes). No project means the
  * chat runs in its own scratch folder.
@@ -153,6 +177,8 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
   const [moreOpen, setMoreOpen] = createSignal(false);
   const [moreAnchor, setMoreAnchor] = createSignal<HTMLButtonElement>();
   const [renaming, setRenaming] = createSignal(false);
+  const [paneElement, setPaneElement] = createSignal<HTMLDivElement>();
+  let composer: ComposerApi | undefined;
 
   const moreItems = (): MenuEntry[] => [
     { id: 'rename', label: 'Rename' },
@@ -179,7 +205,7 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
   };
 
   return (
-    <div class="chat-pane" onPointerDown={() => markRead(chatId())}>
+    <div ref={setPaneElement} class="chat-pane" onPointerDown={() => markRead(chatId())}>
       <header
         class="chat-pane-header"
         classList={{ standalone: !!props.context.standalone }}
@@ -221,6 +247,7 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
           <ChatFolder project={session()?.project} standalone={!!props.context.standalone} />
         </Show>
         <span class="chat-pane-spacer" onPointerDown={event => props.context.startDrag(event)} />
+        <AgentNameTag chatId={chatId()} />
         <ModelPicker
           class="chat-pane-model"
           chatId={chatId()}
@@ -245,15 +272,21 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
       {/* Narrower than full size, everything under the header shrinks instead of wrapping (shell/paneScale). */}
       <ScaleToWidth fullWidth={paneFullWidth.chat} class="chat-pane-scale">
         <JobBar chatId={chatId()} />
-        <BackgroundBar chatId={chatId()} />
         <Timeline chatId={chatId()} />
         <div class="chat-pane-bottom">
           <StatusLine chatId={chatId()} />
           <ChangesBar chatId={chatId()} />
           <ScheduleBar chatId={chatId()} />
-          <Composer chatId={chatId()} placeholder="Reply, @ to mention a file" />
+          <Composer
+            chatId={chatId()}
+            placeholder="Reply, @ to mention a file"
+            ref={api => {
+              composer = api;
+            }}
+          />
         </div>
       </ScaleToWidth>
+      <QuoteSelection root={paneElement()} onQuote={text => composer?.quote(text)} />
       <Menu anchor={moreAnchor()} open={moreOpen()} onClose={() => setMoreOpen(false)} placement="bottom-end" items={moreItems()} onSelect={onMore} />
     </div>
   );

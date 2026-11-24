@@ -144,19 +144,22 @@ function laneX(column: number): number {
 // View
 // ---------------------------------------------------------------------------------------------
 
-export function GitView(): JSX.Element {
+/** `cwd`: the repository folder; unset means the project folder. Remount the view to switch folders. */
+export function GitView(props: { cwd?: string }): JSX.Element {
   const git = gitApi();
   return (
     <div class="git-view">
       <Show when={git} fallback={<p class="git-note">Source Control needs the desktop app.</p>}>
-        {api => <GitPanel git={api()} />}
+        {api => <GitPanel git={api()} cwd={props.cwd} />}
       </Show>
     </div>
   );
 }
 
-function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
+function GitPanel(props: { git: UnifyGitApi; cwd?: string }): JSX.Element {
   const git = props.git;
+  // Fixed for the panel's life: GitPane remounts the view when the folder changes.
+  const cwd = props.cwd;
   const [status, setStatus] = createSignal<GitStatusResult>();
   const [commits, setCommits] = createSignal<GitCommit[]>([]);
   const [message, setMessage] = createSignal('');
@@ -199,7 +202,7 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
   });
 
   const loadDiff = async (key: string, target: DiffTarget) => {
-    const result = await git.diff(undefined, target.path, { staged: target.staged, untracked: target.untracked });
+    const result = await git.diff(cwd, target.path, { staged: target.staged, untracked: target.untracked });
     // Ignore a result for a row that was closed while it loaded.
     if (open()[key]) setDiffs(current => ({ ...current, [key]: result }));
   };
@@ -209,10 +212,10 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
     if (refreshing) return;
     refreshing = true;
     try {
-      const next = await git.status();
+      const next = await git.status(cwd);
       setStatus(next);
       if (isError(next) || !next.repo) return;
-      const log = await git.log();
+      const log = await git.log(cwd);
       if (isError(log)) setNotice(log.error);
       else setCommits(log.commits);
       for (const [key, target] of Object.entries(open())) void loadDiff(key, target);
@@ -244,10 +247,10 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
     if (!canCommit()) return;
     void act(async () => {
       if (staged().length === 0) {
-        const stagedAll = await git.stage(undefined, null);
+        const stagedAll = await git.stage(cwd, null);
         if (isError(stagedAll)) return stagedAll;
       }
-      const result = await git.commit(undefined, text);
+      const result = await git.commit(cwd, text);
       if (!isError(result)) setMessage('');
       return result;
     });
@@ -257,7 +260,7 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
   const amend = () => {
     if (busy()) return;
     void act(async () => {
-      const result = await git.commit(undefined, message().trim(), { amend: true });
+      const result = await git.commit(cwd, message().trim(), { amend: true });
       if (!isError(result)) setMessage('');
       return result;
     });
@@ -270,11 +273,11 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
     if (items.length === 0) return;
     const count = items.length === 1 ? '1 file' : `${items.length} files`;
     if (!window.confirm(`Discard all changes in ${count}? New files will be deleted. This cannot be undone.`)) return;
-    void act(() => git.discard(undefined, items));
+    void act(() => git.discard(cwd, items));
   };
 
   const openBranches = async () => {
-    const result = await git.branches();
+    const result = await git.branches(cwd);
     if (isError(result)) {
       setNotice(result.error);
       return;
@@ -289,7 +292,7 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
       setCreating(false);
       return;
     }
-    if (await act(() => git.createBranch(undefined, text))) setCreating(false);
+    if (await act(() => git.createBranch(cwd, text))) setCreating(false);
   };
 
   const branchItems = (): MenuEntry[] => {
@@ -313,7 +316,7 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
       return;
     }
     const name = id.slice('branch:'.length);
-    if (name !== branchList().current) void act(() => git.checkout(undefined, name));
+    if (name !== branchList().current) void act(() => git.checkout(cwd, name));
   };
 
   const moreItems = (): MenuEntry[] => [
@@ -339,16 +342,16 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
     setMoreOpen(false);
     switch (id) {
       case 'pull':
-        void act(() => git.pull());
+        void act(() => git.pull(cwd));
         break;
       case 'pull-rebase':
-        void act(() => git.pull(undefined, { rebase: true }));
+        void act(() => git.pull(cwd, { rebase: true }));
         break;
       case 'push':
-        void act(() => git.push());
+        void act(() => git.push(cwd));
         break;
       case 'fetch':
-        void act(() => git.fetch());
+        void act(() => git.fetch(cwd));
         break;
       case 'commit':
         commit();
@@ -357,25 +360,25 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
         amend();
         break;
       case 'undo-commit':
-        if (window.confirm('Undo the last commit? Its changes stay staged.')) void act(() => git.undoLastCommit());
+        if (window.confirm('Undo the last commit? Its changes stay staged.')) void act(() => git.undoLastCommit(cwd));
         break;
       case 'stage-all':
-        void act(() => git.stage(undefined, null));
+        void act(() => git.stage(cwd, null));
         break;
       case 'unstage-all':
-        void act(() => git.unstage(undefined, stagedPaths()));
+        void act(() => git.unstage(cwd, stagedPaths()));
         break;
       case 'discard-all':
         discardAll();
         break;
       case 'stash':
-        void act(() => git.stash(undefined));
+        void act(() => git.stash(cwd));
         break;
       case 'stash-untracked':
-        void act(() => git.stash(undefined, { includeUntracked: true }));
+        void act(() => git.stash(cwd, { includeUntracked: true }));
         break;
       case 'stash-pop':
-        void act(() => git.stashPop());
+        void act(() => git.stashPop(cwd));
         break;
     }
   };
@@ -401,7 +404,7 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
   const discard = (change: GitChange) => {
     const extra = change.status === 'U' ? ' The new file will be deleted.' : '';
     if (!window.confirm(`Discard changes to ${change.path}?${extra}`)) return;
-    void act(() => git.discard(undefined, [{ path: change.path, untracked: change.status === 'U' }]));
+    void act(() => git.discard(cwd, [{ path: change.path, untracked: change.status === 'U' }]));
   };
 
   onMount(() => void refresh());
@@ -420,7 +423,7 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
     <Show
       when={repo()}
       fallback={
-        <Unavailable status={status()} busy={busy()} notice={notice()} onInit={() => void act(() => git.init())} />
+        <Unavailable status={status()} busy={busy()} notice={notice()} onInit={() => void act(() => git.init(cwd))} />
       }
     >
       {current => (
@@ -461,7 +464,7 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
               class="git-sync-button"
               title="Pull, then push"
               disabled={busy()}
-              onClick={() => void act(() => git.sync())}
+              onClick={() => void act(() => git.sync(cwd))}
             >
               <Icon name="cloud" size={14} />
               <Show when={current().hasUpstream && (current().ahead > 0 || current().behind > 0)}>
@@ -516,7 +519,7 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
                         diff={diffs()[keyOf(target())]}
                         disabled={busy()}
                         onToggle={() => toggleDiff(target())}
-                        onStageToggle={() => void act(() => git.unstage(undefined, [change.path]))}
+                        onStageToggle={() => void act(() => git.unstage(cwd, [change.path]))}
                         stageLabel="Unstage"
                       />
                     );
@@ -537,7 +540,7 @@ function GitPanel(props: { git: UnifyGitApi }): JSX.Element {
                         diff={diffs()[keyOf(target())]}
                         disabled={busy()}
                         onToggle={() => toggleDiff(target())}
-                        onStageToggle={() => void act(() => git.stage(undefined, [change.path]))}
+                        onStageToggle={() => void act(() => git.stage(cwd, [change.path]))}
                         stageLabel="Stage"
                         onDiscard={() => discard(change)}
                       />
@@ -598,7 +601,7 @@ function NoRepo(props: { busy: boolean; notice?: string; onInit: () => void }): 
   return (
     <div class="git-empty-state">
       <p class="git-empty-title">Not a git repository</p>
-      <p class="git-note">The project folder is not under version control yet.</p>
+      <p class="git-note">This folder is not under version control yet.</p>
       <Button variant="secondary" disabled={props.busy} onClick={props.onInit}>
         Initialize repository
       </Button>

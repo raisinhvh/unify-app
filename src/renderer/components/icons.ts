@@ -96,6 +96,8 @@ export const icons = {
     path('M8.66667 10.6667H11.3333'),
   /** Not in Figma yet: stop square for cancelling a run. */
   stop: '<rect x="4.5" y="4.5" width="7" height="7" rx="1" fill="currentColor"/>',
+  /** Not in Figma yet: reply-quote (a quote bar beside two text lines), drawn in the same stroke style. */
+  quote: path('M3.33 3.33V12.67') + path('M6.67 5.33H12.67') + path('M6.67 8H12.67') + path('M6.67 10.67H10.67'),
 } as const;
 
 export type IconName = keyof typeof icons;

@@ -138,4 +138,13 @@ export interface HubInstallResultMessage {
   setup?: PackSetupState | null;
 }
 
-export type { HubInstallPackage, PackSetupState, PackSetupStep, PackSetupStepStatus } from '@engine/hub/types';
+export type {
+  HubCheckUpdatesRequest,
+  HubInstallPackage,
+  PackSetupState,
+  PackSetupStep,
+  PackSetupStepStatus,
+  ToolpackAutoUpdated,
+  ToolpackUpdate,
+  ToolpackUpdatesMessage,
+} from '@engine/hub/types';

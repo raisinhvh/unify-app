@@ -26,7 +26,10 @@ import { requestSetup, setupFor } from '../toolpacks/setup';
 import { ToolpacksPanel } from '../toolpacks/ToolpacksPanel';
 import {
   browseHub,
+  checkToolpackUpdates,
+  clearFocusedPack,
   dismissPublishStatus,
+  focusedPackId,
   formatAge,
   hubEnabled,
   hubState,
@@ -34,8 +37,11 @@ import {
   installs,
   publishStatus,
   publishToHub,
+  updateFor,
+  updatePack,
   type HubPack,
 } from './hubAdapter';
+import type { ToolpackUpdate } from '../../protocol';
 import { DependencyConsentDialog } from './DependencyConsentDialog';
 import { ScriptConsentDialog } from './ScriptConsentDialog';
 import { Segmented } from './Segmented';
@@ -90,7 +96,12 @@ function InstallState(props: { pack: HubPack; compact?: boolean }): JSX.Element 
         </Button>
       }
     >
-      <Match when={isInstalled(props.pack.id)}>
+      <Match when={isInstalled(props.pack.id) && !progress() && updateFor(props.pack.id)}>
+        <Button variant="secondary" class="hub-install" onClick={() => setPickedId(props.pack.id)}>
+          Update
+        </Button>
+      </Match>
+      <Match when={isInstalled(props.pack.id) && !progress()}>
         <span class="hub-installed type-label">
           <Icon name="check" size={14} />
           Installed
@@ -155,12 +166,50 @@ function PackRow(props: { pack: HubPack }): JSX.Element {
   );
 }
 
+/** What an update changes: versions, tools added and removed, and what it will ask before installing. */
+function WhatsNew(props: { update: ToolpackUpdate }): JSX.Element {
+  const hint = () => {
+    if (props.update.consentReason === 'script') return 'This update has a new install script, which you will review next.';
+    if (props.update.consentReason === 'programs') return 'This update needs new programs, which you will review next.';
+    return undefined;
+  };
+  return (
+    <section class="hub-whatsnew" aria-label="What's new">
+      <h3 class="hub-tools-title type-label">What's new</h3>
+      <div class="hub-fact"><span>Version</span><span>{props.update.fromVersion} → {props.update.toVersion}</span></div>
+      <Show when={props.update.addedTools.length}>
+        <div class="hub-whatsnew-tools">
+          <span class="hub-whatsnew-label type-caption">Adds</span>
+          <For each={props.update.addedTools}>{tool => <span class="hub-tool type-mono" title={tool}>+ {tool}</span>}</For>
+        </div>
+      </Show>
+      <Show when={props.update.removedTools.length}>
+        <div class="hub-whatsnew-tools">
+          <span class="hub-whatsnew-label type-caption">Removes</span>
+          <For each={props.update.removedTools}>
+            {tool => <span class="hub-tool hub-tool-removed type-mono" title={tool}>− {tool}</span>}
+          </For>
+        </div>
+      </Show>
+      <Show when={!props.update.addedTools.length && !props.update.removedTools.length}>
+        <p class="hub-whatsnew-note type-caption">Same tools, updated.</p>
+      </Show>
+      <Show when={hint()}>
+        <p class="hub-whatsnew-hint type-caption">{hint()}</p>
+      </Show>
+    </section>
+  );
+}
+
 function Detail(props: { pack: HubPack }): JSX.Element {
   const [allTools, setAllTools] = createSignal(false);
   const shownTools = () => (allTools() ? props.pack.tools : props.pack.tools.slice(0, 5));
   const category = () => categoryLabel(props.pack.category);
   const installed = () => isInstalled(props.pack.id);
   const busy = () => !!installs()[props.pack.id] && installs()[props.pack.id].state !== 'error';
+  const update = () => (installed() ? updateFor(props.pack.id) : undefined);
+  // Keeps the last update on screen while "What's new" collapses after it installs.
+  const shownUpdate = createMemo<ToolpackUpdate | undefined>(previous => update() ?? previous);
   // Picking another pack swaps the column; the new one settles in instead of snapping.
   const [shown, setShown] = createSignal(0);
   onMount(() => setShown(1));
@@ -190,6 +239,27 @@ function Detail(props: { pack: HubPack }): JSX.Element {
       <p class="hub-detail-description">{props.pack.description}</p>
 
       <Switch>
+        <Match when={busy()}>
+          <div class="hub-detail-progress">
+            <InstallState pack={props.pack} />
+          </div>
+        </Match>
+        <Match when={installed() && update()}>
+          <Button variant="primary" class="hub-detail-install" onClick={() => updatePack(props.pack.id)}>
+            Update to {update()!.toVersion}
+          </Button>
+          <button
+            type="button"
+            class="hub-detail-open type-label"
+            ref={element => pressable(element, 0.97)}
+            onClick={() => {
+              selectPack(props.pack.id);
+              navigate('toolpacks');
+            }}
+          >
+            Open in Toolpacks
+          </button>
+        </Match>
         <Match when={installed()}>
           <Button
             variant="secondary"
@@ -202,11 +272,6 @@ function Detail(props: { pack: HubPack }): JSX.Element {
           >
             Open in Toolpacks
           </Button>
-        </Match>
-        <Match when={busy()}>
-          <div class="hub-detail-progress">
-            <InstallState pack={props.pack} />
-          </div>
         </Match>
         <Match when={true}>
           <Button
@@ -232,6 +297,10 @@ function Detail(props: { pack: HubPack }): JSX.Element {
       <Show when={installed()}>
         <SetupChecklist id={props.pack.id} />
       </Show>
+
+      <Collapse open={!!update() && !busy()}>
+        <Show when={shownUpdate()}>{current => <WhatsNew update={current()} />}</Show>
+      </Collapse>
 
       <div class="hub-facts">
         <div class="hub-fact"><span>Version</span><span>{props.pack.version}</span></div>
@@ -326,6 +395,15 @@ function Hub(): JSX.Element {
     const current = hub();
     if (!current) return undefined;
     return current.packs.find(pack => pack.id === pickedId()) ?? visible()[0];
+  });
+
+  // Review from the update notice: pick that pack, clearing a search that would hide it.
+  createEffect(() => {
+    const id = focusedPackId();
+    if (!id) return;
+    setQuery('');
+    setPickedId(id);
+    clearFocusedPack();
   });
 
   // A category with nothing left picked moves the detail to its first pack.
@@ -424,7 +502,10 @@ function Hub(): JSX.Element {
 export function HubContent(): JSX.Element {
   const [waited, setWaited] = createSignal(false);
   onMount(() => {
-    if (hubEnabled()) browseHub();
+    if (hubEnabled()) {
+      browseHub();
+      checkToolpackUpdates();
+    }
     window.setTimeout(() => setWaited(true), 6000);
   });
   return (

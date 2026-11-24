@@ -36,6 +36,7 @@ import type {
 import { isChatLoading, isRunning, requestChatHistory, userImages, viewState } from '../../store';
 import { feature } from '../../store/features';
 import { AgentMessageRow } from './AgentMessageRow';
+import { explorerProfile, openedSubagent as openedSubagentOf, openSubagent } from './subagentView';
 import { ExplorerRow } from './ExplorerRow';
 import { EditRow, LiveEditDetail } from './EditPreview';
 import { InternalIcon, internalLoader } from './internalTools';
@@ -52,7 +53,6 @@ type ToolLike = Pick<SidebarToolEvent, 'title' | 'detail' | 'full' | 'kind'> & {
   progress?: SidebarToolProgress;
 };
 
-const explorerProfile = 'explorer';
 const noMediaIds: ReadonlySet<string> = new Set();
 
 function isExplorer(chatId: string, agentId: string): boolean {
@@ -965,9 +965,12 @@ function inlineMediaKeys(timeline: SidebarTimelineItem[]): ReadonlySet<string> {
   }
   return keys;
 }
-
 export function Timeline(props: { chatId: string }): JSX.Element {
-  const [openedSubagent, setOpenedSubagent] = createSignal('');
+  // Shared per chat (subagentView.ts), so the composer's subagent indicator can open one too.
+  const openedSubagent = () => openedSubagentOf(props.chatId);
+  const setOpenedSubagent = (agentId: string) => openSubagent(props.chatId, agentId);
+  // A chat shown again later starts on its own feed, as it did when this was local state.
+  onCleanup(() => openSubagent(props.chatId, ''));
   // DEV: `?subagent=<agentId>` opens that subagent's feed so tools/shot.mjs can capture it.
   if (import.meta.env.DEV) {
     const subagent = new URLSearchParams(window.location.search).get('subagent');
@@ -1047,8 +1050,11 @@ export function Timeline(props: { chatId: string }): JSX.Element {
 
   return (
     <div class="timeline-pane">
-      <Show when={openedAgent()}>
-        {agent => <SubagentBar agent={agent()} onBack={() => setOpenedSubagent('')} />}
+      {/* Keyed, so the subagent view gets the agent itself rather than <Show>'s narrowed accessor. Something that
+          outlives the view for a moment (a row's tooltip in the global host) would otherwise read that accessor
+          after Back, throw "stale value from <Show>" and abort the update, leaving the view stuck open. */}
+      <Show when={openedAgent()} keyed>
+        {agent => <SubagentBar agent={agent} onBack={() => setOpenedSubagent('')} />}
       </Show>
       <div
         class="timeline"
@@ -1061,6 +1067,7 @@ export function Timeline(props: { chatId: string }): JSX.Element {
       >
         <Show
           when={openedAgent()}
+          keyed
           fallback={
             <div class="feed">
               <Show when={!feed().order.length && !loading()}>
@@ -1086,7 +1093,7 @@ export function Timeline(props: { chatId: string }): JSX.Element {
             </div>
           }
         >
-          {agent => <SubagentFeed agent={agent()} />}
+          {agent => <SubagentFeed agent={agent} />}
         </Show>
       </div>
     </div>

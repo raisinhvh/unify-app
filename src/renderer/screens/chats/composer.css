@@ -48,8 +48,15 @@
 .composer-bar {
   display: flex;
   align-items: center;
-  gap: 2px;
+  /* Paperclip, model, effort and the activity indicators sit an even step apart. */
+  gap: 6px;
   margin-left: -6px;
+}
+
+/* The paperclip's square box has less air around its glyph than the text buttons' padding and chevrons:
+   this evens the visible gaps (glyph to glyph) along the row. */
+.composer-attach {
+  margin-right: 4px;
 }
 
 .composer-spacer {

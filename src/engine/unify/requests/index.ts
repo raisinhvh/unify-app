@@ -487,7 +487,7 @@ export async function handleUnifyRequest(
 
   /* Hub --------------------------------------------------------------------------------------------------- */
 
-  if (type === 'hubBrowse' || type === 'hubInstall' || type === 'hubPublish') {
+  if (type === 'hubBrowse' || type === 'hubInstall' || type === 'hubPublish' || type === 'hubCheckUpdates') {
     return handleHubRequest(message, send, paths, context, context.hubRegistry);
   }
 

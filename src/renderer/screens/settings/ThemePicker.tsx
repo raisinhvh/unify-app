@@ -20,6 +20,12 @@ export const themeKinds: Record<ThemeId, string> = {
   slate: 'Dark',
   moss: 'Dark',
   ink: 'Dark, true black for OLED',
+  dusk: 'Dark',
+  tide: 'Dark',
+  ember: 'Dark',
+  linen: 'Light',
+  mist: 'Light',
+  sage: 'Light',
 };
 
 /** A tiny window in the theme's colours: a side panel, two lines of text and the accent. Drawn at 48×32. */

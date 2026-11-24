@@ -5,6 +5,7 @@
 import { createEffect, type JSX } from 'solid-js';
 import { render } from 'solid-js/web';
 import { TooltipHost } from './components';
+import { ImageContextMenuHost } from './components/media';
 import { setAppReducedMotion } from './motion';
 import { Shell } from './shell';
 import { pruneChats } from './shell/layout';
@@ -29,6 +30,7 @@ function App(): JSX.Element {
     <>
       <Shell />
       <TooltipHost />
+      <ImageContextMenuHost />
     </>
   );
 }

@@ -6,7 +6,8 @@
  * 'agents.messaging.scope' in Settings takes effect immediately.
  */
 import { randomUUID } from 'node:crypto';
-import type { AgentBus, AgentBusEvent, AgentInfo, AgentMessage } from './agentBus';
+import type { AgentBus, AgentBusEvent, AgentInfo, AgentMessage, AgentRegistration } from './agentBus';
+import { pickAgentName } from './agentNames';
 import { getUnifyFeature, type AgentMessagingScope } from './settings';
 
 type AgentBusListener = (event: AgentBusEvent) => void;
@@ -103,13 +104,25 @@ function returnUndelivered(stopped: AgentInfo, messages: AgentMessage[]): void {
   }
 }
 
+/** Whether a running agent other than `exceptId` already has this name (case-insensitive). */
+function nameTaken(name: string, exceptId: string): boolean {
+  const wanted = name.toLowerCase();
+  for (const agent of roster.values()) {
+    if (agent.id !== exceptId && agent.name.toLowerCase() === wanted) return true;
+  }
+  return false;
+}
+
 export const agentBus: AgentBus = {
-  register(agent: AgentInfo): void {
+  register(agent: AgentRegistration): string {
     if (!agent.id) throw new Error('An agent needs an id before it can be registered.');
-    if (!agent.name) throw new Error(`Agent "${agent.id}" needs a name before it can be registered.`);
-    roster.set(agent.id, { ...agent });
+    // Re-registering keeps the current name; otherwise the preferred name when free, else a fresh one.
+    const preferred = roster.get(agent.id)?.name ?? agent.name;
+    const name = pickAgentName(candidate => nameTaken(candidate, agent.id), preferred);
+    roster.set(agent.id, { ...agent, name });
     if (!inboxes.has(agent.id)) inboxes.set(agent.id, []);
     emitRoster();
+    return name;
   },
 
   update(agentId: string, patch: Partial<Omit<AgentInfo, 'id'>>): void {
@@ -127,6 +140,10 @@ export const agentBus: AgentBus = {
     // Deliver the bounce before the roster event so the roster stays the last thing listeners see.
     returnUndelivered(agent, undelivered);
     emitRoster();
+  },
+
+  nameOf(agentId: string): string | undefined {
+    return roster.get(agentId)?.name;
   },
 
   listVisible(fromAgentId: string): AgentInfo[] {

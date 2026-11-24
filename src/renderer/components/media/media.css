@@ -1,5 +1,15 @@
 /* Images in chat: small prints, in-place expansion, and the full viewer (docs/briefs/ds-media-chat-ui.md). */
 
+/* ---------- Right-click menu (ImageContextMenu): a 1px box at the pointer for the menu to hang from ---------- */
+
+.image-context-anchor {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+  visibility: hidden;
+}
+
 /* ---------- Prints ---------- */
 
 .media-prints {
@@ -50,11 +60,6 @@
   border-radius: var(--radius-control);
 }
 
-.media-print-sent.media-print-active {
-  outline: 1px solid var(--accent);
-  outline-offset: 1px;
-}
-
 .media-print img {
   display: block;
   height: 100%;
@@ -71,15 +76,6 @@
 .media-print:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
-}
-
-.media-print-active {
-  border-color: var(--accent);
-}
-
-.media-print-hidden img,
-.media-print-hidden .media-print-file {
-  visibility: hidden;
 }
 
 .media-print-file {
@@ -105,43 +101,6 @@
 
 .media-print-more:hover {
   color: var(--text);
-}
-
-/* ---------- In-place expansion ---------- */
-
-.media-expand {
-  position: relative;
-  height: 0;
-  overflow: visible;
-}
-
-.media-expand-layer {
-  position: absolute;
-  top: 6px;
-  left: 0;
-  z-index: 1;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--raised);
-  transform-origin: top left;
-  cursor: zoom-out;
-  will-change: transform, opacity;
-}
-
-.media-expand-layer[data-action='open'] {
-  cursor: zoom-in;
-}
-
-.media-expand-thumb,
-.media-expand-image {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  pointer-events: none;
 }
 
 /* ---------- Full viewer ---------- */

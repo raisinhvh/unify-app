@@ -1,0 +1,75 @@
+{
+  "extends": "base",
+  "persisted": {
+    "route": "hub",
+    "panelOpen": true
+  },
+  "messages": [
+    {
+      "type": "toolpacksState",
+      "packs": [
+        {
+          "id": "roblox-studio",
+          "name": "Roblox Studio",
+          "icon": "roblox",
+          "description": "Read and edit the open place in Roblox Studio: instances, scripts, playtests.",
+          "version": "1.4.0",
+          "source": "hub",
+          "enabled": true,
+          "state": "running",
+          "status": "Connected",
+          "tools": [
+            { "name": "studio_tree", "description": "List instances under a path" },
+            { "name": "studio_get_properties", "description": "Read an instance's properties" },
+            { "name": "studio_set_property", "description": "Set a property on an instance" },
+            { "name": "studio_run_playtest", "description": "Start a playtest and capture output" },
+            { "name": "studio_legacy_select", "description": "Select instances (old)" }
+          ],
+          "logs": []
+        },
+        {
+          "id": "figma",
+          "name": "Figma",
+          "icon": "figma",
+          "description": "Inspect and edit the open Figma file through the Unify bridge plugin.",
+          "version": "0.9.2",
+          "source": "hub",
+          "enabled": true,
+          "state": "running",
+          "status": "Connected",
+          "tools": [
+            { "name": "figma_get_selection", "description": "Read the current selection" },
+            { "name": "figma_execute", "description": "Run plugin code in the open file" }
+          ],
+          "logs": []
+        }
+      ]
+    },
+    {
+      "type": "hubState",
+      "hub": {
+        "packs": [
+          { "id": "figma", "name": "Figma", "author": "unify", "category": "design", "description": "Inspect and edit the open Figma file through the Unify bridge plugin.", "icon": "figma", "installs": 5200, "tools": ["figma_get_selection", "figma_execute", "figma_export_png"], "version": "1.0.0", "updatedAt": 1795600000000, "publishedAt": 1780000000000, "license": "MIT" },
+          { "id": "roblox-studio", "name": "Roblox Studio", "author": "unify", "category": "games", "description": "Read and edit the open place in Roblox Studio.", "icon": "roblox", "installs": 12400, "tools": ["studio_tree", "studio_get_properties", "studio_set_property", "studio_run_playtest", "studio_capture_viewport"], "version": "1.5.0", "updatedAt": 1795700000000, "publishedAt": 1770000000000, "license": "MIT" },
+          { "id": "blender", "name": "Blender", "author": "community", "category": "3d", "description": "Drive Blender over its Python API.", "icon": "blender", "installs": 860, "tools": ["blender_list_objects", "blender_render"], "version": "2.1.0", "updatedAt": 1794000000000, "publishedAt": 1785000000000, "license": "MIT" }
+        ],
+        "categories": [
+          { "id": "design", "label": "Design" },
+          { "id": "games", "label": "Games" },
+          { "id": "3d", "label": "3D" }
+        ],
+        "featured": [],
+        "authors": 2,
+        "fetchedAt": 1795800000000
+      }
+    },
+    {
+      "type": "toolpackUpdates",
+      "checkedAt": 1795800000000,
+      "updates": [
+        { "id": "roblox-studio", "name": "Roblox Studio", "icon": "roblox", "fromVersion": "1.4.0", "toVersion": "1.5.0", "installedUpdatedAt": 1795000000000, "updatedAt": 1795700000000, "addedTools": ["studio_capture_viewport"], "removedTools": ["studio_legacy_select"], "needsConsent": true, "consentReason": "script" },
+        { "id": "figma", "name": "Figma", "icon": "figma", "fromVersion": "0.9.2", "toVersion": "1.0.0", "installedUpdatedAt": 1795000000000, "updatedAt": 1795600000000, "addedTools": ["figma_export_png"], "removedTools": [] }
+      ]
+    }
+  ]
+}

@@ -79,6 +79,7 @@ export const featureDefinitions = {
 
 	// Toolpacks
 	'toolpacks.hub': { group: 'Toolpacks', label: 'Toolpack Hub', description: 'Browse and publish toolpacks.', defaultValue: true, scope: 'ui' },
+	'toolpacks.autoUpdate': { group: 'Toolpacks', label: 'Auto-update toolpacks', description: 'Installs toolpack updates from the Hub without asking. Updates with a new install script or new programs still ask first.', defaultValue: false, scope: 'engine' },
 
 	// Notifications
 	'notifications.desktop': { group: 'Notifications', label: 'Desktop notifications', description: 'Notify when an agent finishes or needs you while Unify is in the background.', defaultValue: true, scope: 'engine' },
