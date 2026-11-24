@@ -62,6 +62,8 @@ import { buildHandoff, CHAT_HISTORY_TOOL, chatHistoryReply, ChatMessage, handoff
 import { buildPartsHandoff, parsePartsReply, partsDir, partsPrompt, partWindows, TranscriptPart, unsummarizedPart, writeTranscriptParts } from './runtime/transcriptParts';
 import { findGit, GIT_DOWNLOAD_PAGE, installGit } from './runtime/git';
 import { globalMemoryFolder, isMemoryPath, memoryInstructions, memorySyncNeeded, syncGlobalMemory } from './runtime/memory';
+import { diffSnapshots, snapshotFiles } from './runtime/changeSnapshot';
+import { chatStorageInstructions, removeChatStorage } from './runtime/chatStorage';
 import { BATCH_INSTRUCTIONS, BatchCall, BatchOutcome, callLabel, executeBatch, formatBatchResult, isBatchFileTool, isBatchTool, outsideWorkingCopy, parseBatchCalls, runBatchFileTool, uniqueBatchCalls } from './runtime/batch';
 import { describePackTools, LOAD_TOOLPACK, loadToolpackTool, packCommands, RUN_TOOLPACK_TOOL, runToolpackTool } from './toolpacks/access';
 import { UnifySidebarProvider, SidebarHostMessage, SidebarWebviewMessage } from './sidebar/provider';
@@ -900,6 +902,7 @@ class ExtensionHost implements vscode.Disposable {
     else if (this.chats.get(id)?.running) throw new Error('Cancel this chat before deleting it.');
     const wasActive = this.active?.id === id || (!this.active && this.context.workspaceState.get<string>(ACTIVE_SESSION_KEY) === id);
     this.deletedSessions.add(id);
+    const liveCwd = this.chats.get(id)?.mirror.cwd;
     const unloaded = this.unloadChat(id);
     const remaining = this.sessions().filter(item => item.id !== id);
     const saved = this.context.workspaceState.update(SESSIONS_KEY, remaining);
@@ -921,6 +924,9 @@ class ExtensionHost implements vscode.Disposable {
     this.shownMedia?.forget(id);
     this.pendingParentMedia?.delete(id);
     await rm(join(this.context.globalStorageUri.fsPath, 'media', id), { recursive: true, force: true }).catch(() => undefined);
+    // Chat storage (.unify/chats/<id>): direct chats write it into the real project, so remove it there and in the live mirror.
+    if (!record.noFolder) await removeChatStorage(this.projectRoot(record).uri.fsPath, id).catch(error => this.output.appendLine(`Could not remove chat storage: ${String(error)}`));
+    if (liveCwd) await removeChatStorage(liveCwd, id).catch(error => this.output.appendLine(`Could not remove chat storage: ${String(error)}`));
     // A no-folder chat's files are all in its scratch folder.
     if (record.noFolder) { await rm(this.scratchPath(id), { recursive: true, force: true }).catch(() => undefined); return; }
     const folder = vscode.workspace.workspaceFolders?.[0];
@@ -2889,6 +2895,7 @@ class ExtensionHost implements vscode.Disposable {
       BACKGROUND_CLEANUP,
       shellInstructions(),
       memoryInstructions(chat.mirror.cwd, this.memorySettings().enabled),
+      chatStorageInstructions(chat.mirror.cwd, chat.record.id),
       delegationInstructions(bridged, { explorer: this.delegationProfiles().some(profile => profile.name === 'explorer') }),
       bridged && this.feature('batching') ? BATCH_INSTRUCTIONS : '',
       bridged && this.summariesOn() ? SUMMARY_INSTRUCTIONS : '',
@@ -3923,11 +3930,13 @@ class ExtensionHost implements vscode.Disposable {
       : `You may edit ONLY these paths: ${files.join(', ')}. Do not touch anything else; other agents are working in parallel.`;
     const summaries = profile.tools !== false && this.summariesOn() ? `${SUMMARY_INSTRUCTIONS}\n\n` : '';
     const memory = memoryInstructions(chat.mirror.cwd, this.memorySettings().enabled);
+    // Tied to the parent chat, so a subagent's scratch files go in the same folder and are deleted with it.
+    const storage = `${chatStorageInstructions(chat.mirror.cwd, chat.record.id)}${readOnly ? ' This folder is the one exception to the no-files rule above.' : ''}`;
     const explorerNote = explorer ? explorerPromptNote() : '';
     const shell = [BACKGROUND_CLEANUP, shellInstructions()].filter(Boolean).join('\n');
     const intro = `You are a subagent working in a shared working copy on behalf of another agent. ${instructions}\n\n${shell}`;
     // Claude already gets the delegation note as system text.
-    const promptFor = (text: string, systemDelegation: boolean): string => `${intro}\n\n${systemDelegation ? '' : `${delegationInstructions(false)}\n\n`}${memory ? `${memory}\n\n` : ''}${summaries}Task:\n${explorerNote}${text}\n\n`
+    const promptFor = (text: string, systemDelegation: boolean): string => `${intro}\n\n${systemDelegation ? '' : `${delegationInstructions(false)}\n\n`}${memory ? `${memory}\n\n` : ''}${storage}\n\n${summaries}Task:\n${explorerNote}${text}\n\n`
       + 'When you finish, reply with a concise final report of at most 300 words unless the task asks for more: findings, files changed, and anything the requester must still do.';
     // Where the reply of the session that finished the task starts; earlier sessions ended in checkpoints.
     let reportStart = 0;
@@ -3957,6 +3966,12 @@ class ExtensionHost implements vscode.Disposable {
       if (state !== 'running') {
         // Only edit rows show a finished state; other subagent tools have none.
         const shownRow = editRows.get(id);
+        // An edit that succeeded changed the files it names, whether or not it was ever asked to approve.
+        const edited = state === 'complete' ? liveEdits.targets(id) : [];
+        for (const rel of edited) {
+          run.changed.add(rel);
+          if (!run.files.some(file => rel === file || (file.endsWith('/') && rel.startsWith(file)))) run.outOfScope.add(rel);
+        }
         if (!shownRow) return;
         editRows.delete(id);
         const edit = liveEdits.finish(id, state === 'error' ? error || 'The edit failed.' : undefined);
@@ -3988,6 +4003,15 @@ class ExtensionHost implements vscode.Disposable {
       }
       editRows.set(event.id, shown);
       post({ messageId: `tool:${event.id}`, role: 'tool', tool: { ...shown, state: 'running', edit } });
+    };
+    // Fingerprints of the locked paths before the run, for edits no edit row reported (shell commands, auto-approved writes).
+    let filesBefore: Map<string, string> | undefined;
+    const noteFileChanges = async (): Promise<void> => {
+      if (!filesBefore) return;
+      const after = await snapshotFiles(chat.mirror.cwd, run.files).catch(() => undefined);
+      const before = filesBefore;
+      filesBefore = undefined;
+      if (after) for (const rel of diffSnapshots(before, after)) run.changed.add(rel);
     };
     try {
       const route = await this.resolveRoute(model);
@@ -4133,6 +4157,7 @@ class ExtensionHost implements vscode.Disposable {
           }
         };
       }
+      if (!readOnly && run.files.length) filesBefore = await snapshotFiles(chat.mirror.cwd, run.files).catch(() => undefined);
       let sessionTask = task;
       for (let segment = 1; ; segment++) {
         watch = compactAt && segment < MAX_SUBAGENT_SEGMENTS ? { threshold: compactAt } : undefined;
@@ -4147,6 +4172,7 @@ class ExtensionHost implements vscode.Disposable {
         gap = true;
         sessionTask = subagentResumeTask(task, checkpoint, segment);
       }
+      await noteFileChanges();
       if (cancelled) throw new Error('Cancelled.');
       const parsed = explorer
         ? parseExplorerRanges(reply.slice(reportStart).trim())
@@ -4169,6 +4195,7 @@ class ExtensionHost implements vscode.Disposable {
       return { text: result };
     } catch (error) {
       post({ state: cancelled ? 'cancelled' : 'error' });
+      await noteFileChanges();
       const message = error instanceof Error ? error.message : String(error);
       let result = cancelled ? 'The subagent was cancelled.' : `Subagent "${name}" failed: ${message}`;
       // What it did before stopping, so the requester need not redo or guess at it.

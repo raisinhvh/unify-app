@@ -10,10 +10,17 @@ Thumbs.db
 hub-staging/
 
 # Local agent data and scratch folders; never published.
-.unify/
+# .unify/memory and .unify/skills are project content and travel with the repo (so they reach every PC);
+# the rest of .unify (chat storage in .unify/chats, caches) stays local.
+.unify/*
+!.unify/memory/
+!.unify/skills/
 .dsh/
 build/node-compile-cache/
 agent_team/
 subagent-output/
 subagent-test/
 tictactoe/
+
+# Dev screenshots written by the capture scripts (src/renderer/**/capture.mjs); not source.
+**/__screens__/

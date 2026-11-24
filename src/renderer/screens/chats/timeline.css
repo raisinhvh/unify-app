@@ -1,4 +1,12 @@
 /* Chat timeline (Figma 12 Chat pane 306:3030). */
+/* Non-scrolling wrapper: an optional subagent bar, then the scroller. */
+.timeline-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .timeline {
   flex: 1;
   min-height: 0;
@@ -673,25 +681,28 @@
   white-space: nowrap;
 }
 
-/* Pinned to the top of the scroller, so the way back to the parent chat never scrolls away. */
-.subagent-back {
-  position: sticky;
-  top: 0;
+/* Static bar above the scroller, so the way back to the parent chat is always in view. */
+.subagent-bar {
+  position: relative;
   z-index: 2;
-  display: flex;
-  align-items: center;
   flex: none;
+}
+
+.subagent-back {
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  align-items: center;
   gap: 8px;
   height: 36px;
-  /* Bleeds to the feed's edges so scrolled content never peeks past it; the top margin cancels the feed padding. */
-  margin: -16px -20px auto;
   padding: 0 20px;
   color: var(--text2);
   background: var(--bg);
+  text-align: left;
 }
 
 /* A short fade under the bar, so content slides beneath it instead of being cut off. */
-.subagent-back::after {
+.subagent-bar::after {
   content: '';
   position: absolute;
   top: 100%;

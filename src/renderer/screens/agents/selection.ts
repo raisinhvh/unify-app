@@ -19,6 +19,15 @@ export function select(next: AgentsSelection): void {
   writePersisted('agentsSelection', next.kind === 'new' ? { kind: 'general' } : next);
 }
 
+// Bumped on every new draft, so the draft resets even when it is already on screen.
+const [newDraftKey, setNewDraftKey] = createSignal(0);
+export { newDraftKey };
+
+export function startNewDraft(): void {
+  setNewDraftKey(key => key + 1);
+  select({ kind: 'new' });
+}
+
 const [subagentsOpen, setSubagentsOpenSignal] = createSignal<boolean>(readPersisted<boolean>('agentsSubagentsOpen', true));
 export { subagentsOpen };
 

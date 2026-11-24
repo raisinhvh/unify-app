@@ -63,6 +63,8 @@ nsis:
   deleteAppDataOnUninstall: false
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
+  # build/installer.nsh shows the file list during install (ShowInstDetails), so a slow step is visible.
+  include: build/installer.nsh
 
 portable:
   artifactName: ${productName}-${version}-portable.${ext}

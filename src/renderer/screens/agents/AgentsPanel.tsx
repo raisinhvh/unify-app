@@ -11,7 +11,7 @@ import { Show, type JSX } from 'solid-js';
 import { Icon, IconButton, TreeFolder, TreeItem } from '../../components';
 import { AnimatedList } from '../../motion';
 import { viewState } from '../../store';
-import { select, selection, setSubagentsOpen, subagentsOpen } from './selection';
+import { select, selection, setSubagentsOpen, startNewDraft, subagentsOpen } from './selection';
 
 /** The draft's row key. Profile names never contain a NUL, so it cannot clash with one. */
 const draftRow = '\u0000new';
@@ -26,7 +26,7 @@ export function AgentsPanel(): JSX.Element {
   const rows = () => [...profiles().map(profile => profile.name), ...(drafting() ? [draftRow] : [])];
   const startNew = () => {
     setSubagentsOpen(true);
-    select({ kind: 'new' });
+    startNewDraft();
   };
   return (
     <aside class="side-panel agents-panel" aria-label="Agents">

@@ -76,6 +76,16 @@ export class LiveEdits {
     return call.preview;
   }
 
+  /** The workspace-relative, forward-slash paths a tracked call names. Paths outside the workspace are left out. */
+  targets(id: string): string[] {
+    const call = this.calls.get(id);
+    if (!call) return [];
+    return Object.keys(call.files)
+      .map(raw => relative(this.cwd, this.absolutePath(raw)))
+      .filter(rel => rel && !rel.startsWith('..') && !isAbsolute(rel))
+      .map(rel => rel.replace(/\\/g, '/'));
+  }
+
   /** The last preview of a call, marked finished (and failed when `error` is set). Forgets the call. */
   finish(id: string, error?: string): SidebarEditPreview | undefined {
     const call = this.calls.get(id);

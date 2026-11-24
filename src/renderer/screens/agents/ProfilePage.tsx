@@ -15,7 +15,7 @@ import { engineError, viewState } from '../../store';
 import type { SettingRow } from '../settings/catalog';
 import { SettingRows } from '../settings/SettingControls';
 import { agentRow, effortSpeedRows, modelName, withModel } from './rows';
-import { select, selection } from './selection';
+import { newDraftKey, select, selection } from './selection';
 
 export type SubagentProfile = (typeof viewState.subagentProfiles)[number];
 
@@ -219,17 +219,14 @@ export function ProfilePage(): JSX.Element {
   const [pendingName, setPendingName] = createSignal<string>();
   const profile = () => findProfile(selectedName()) ?? findProfile(pendingName());
 
-  createEffect(
-    on(
-      () => [pendingName(), viewState.subagentProfiles] as const,
-      ([pending]) => {
-        if (pending !== undefined && findProfile(pending)) {
-          setPendingName(undefined);
-          select({ kind: 'profile', name: pending });
-        }
-      },
-    ),
-  );
+  // Track the lookup, not the list: the store updates the list in place, so its reference never changes.
+  createEffect(() => {
+    const pending = pendingName();
+    if (pending !== undefined && findProfile(pending)) {
+      setPendingName(undefined);
+      select({ kind: 'profile', name: pending });
+    }
+  });
   // The engine refused the rename: keep the old name.
   createEffect(
     on(
@@ -284,22 +281,31 @@ export function NewProfilePage(): JSX.Element {
   const canAdd = () => !!name() && !!draft().model && !duplicate() && adding() === undefined;
   const nameCaption = () => (duplicate() ? 'A subagent with this name already exists.' : 'The main agent asks for this subagent by name.');
 
-  createEffect(
-    on(
-      () => [adding(), viewState.subagentProfiles] as const,
-      ([pending]) => {
-        if (pending !== undefined && findProfile(pending)) {
-          setAdding(undefined);
-          select({ kind: 'profile', name: pending });
-        }
-      },
-    ),
-  );
+  // Track the lookup, not the list: the store updates the list in place, so its reference never changes.
+  createEffect(() => {
+    const pending = adding();
+    if (pending !== undefined && findProfile(pending)) {
+      setAdding(undefined);
+      select({ kind: 'profile', name: pending });
+    }
+  });
   createEffect(
     on(
       engineError,
       error => {
         if (error) setAdding(undefined);
+      },
+      { defer: true },
+    ),
+  );
+  // "+" starts a blank draft, even when this page is already showing one.
+  createEffect(
+    on(
+      newDraftKey,
+      () => {
+        setDraft({ name: '', model: '', mode: 'read-only' });
+        setTypedName('');
+        setAdding(undefined);
       },
       { defer: true },
     ),

@@ -18,7 +18,7 @@
  *
  * Rows are keyed by timeline id, so streaming text and state changes update in place instead of remounting.
  */
-import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch, type Accessor, type JSX } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, Show, Switch, type Accessor, type JSX } from 'solid-js';
 import { Button, Icon, Loader, actionLoader, toolAction, tooltip, type IconName } from '../../components';
 import { isImage, mediaKey, openMediaViewer, thumbSource, uniqueMedia, type MediaItem } from '../../components/media';
 import { imageDragProps } from '../../shell/imageDrag';
@@ -664,10 +664,10 @@ function SubagentToolEntry(props: { tool: ToolLike }): JSX.Element {
   );
 }
 
-/** A subagent's own feed, shown in place of the chat until "Back". */
-function SubagentFeed(props: { agent: SidebarSubagent; onBack: () => void }): JSX.Element {
+/** The static bar above the timeline scroller while a subagent's feed is open. Lives outside the scroller so it never scrolls. */
+function SubagentBar(props: { agent: SidebarSubagent; onBack: () => void }): JSX.Element {
   return (
-    <div class="feed">
+    <div class="subagent-bar">
       <button type="button" class="subagent-back" onClick={() => props.onBack()}>
         <Icon name="chevronRight" size={12} style={{ rotate: '180deg' }} />
         <span class="type-label">{props.agent.title}</span>
@@ -675,6 +675,14 @@ function SubagentFeed(props: { agent: SidebarSubagent; onBack: () => void }): JS
           <span class="subagent-model">{props.agent.model}</span>
         </Show>
       </button>
+    </div>
+  );
+}
+
+/** A subagent's own feed, shown in place of the chat until "Back". */
+function SubagentFeed(props: { agent: SidebarSubagent }): JSX.Element {
+  return (
+    <div class="feed">
       <Show when={props.agent.prompt}>
         <div class="feed-entry bubble user">
           <div class="message-content">{props.agent.prompt}</div>
@@ -805,6 +813,12 @@ function FeedRow(props: {
   );
 }
 
+/** True when the event target is a text field, so Escape belongs to the field rather than the subagent view. */
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || !!target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
+}
+
 /** Keys of every image this chat already shows inline: media entries, and tool prints when those are on. */
 function inlineMediaKeys(timeline: SidebarTimelineItem[]): ReadonlySet<string> {
   const keys = new Set<string>();
@@ -859,6 +873,39 @@ export function Timeline(props: { chatId: string }): JSX.Element {
   });
 
   const openedAgent = () => (openedSubagent() ? viewState.subagents[props.chatId]?.[openedSubagent()] : undefined);
+  const subagentOpen = createMemo(() => !!openedAgent());
+
+  // If the open subagent leaves the store (history reloaded, chat changed), fall back to the chat.
+  // Only clears once the subagent has been seen, so a feed opened before its data arrives is kept.
+  let openedSeen = '';
+  createEffect(() => {
+    const id = openedSubagent();
+    if (!id) return;
+    if (viewState.subagents[props.chatId]?.[id]) {
+      openedSeen = id;
+    } else if (openedSeen === id) {
+      setOpenedSubagent('');
+    }
+  });
+
+  // Opening or leaving a subagent's feed starts the reader at the bottom, like a new chat.
+  createEffect(on(openedSubagent, () => {
+    stickToBottom = true;
+    queueMicrotask(() => {
+      if (scroller) scroller.scrollTop = scroller.scrollHeight;
+    });
+  }, { defer: true }));
+
+  // Escape goes back while a subagent's feed is open, unless the key is handled elsewhere or typed into a field.
+  createEffect(() => {
+    if (!subagentOpen()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || isTypingTarget(event.target)) return;
+      setOpenedSubagent('');
+    };
+    window.addEventListener('keydown', onKeyDown);
+    onCleanup(() => window.removeEventListener('keydown', onKeyDown));
+  });
 
   // Follow new output while the reader is at the bottom (DSH: within 60px).
   createMemo(() => {
@@ -870,44 +917,49 @@ export function Timeline(props: { chatId: string }): JSX.Element {
   });
 
   return (
-    <div
-      class="timeline"
-      data-chat-id={props.chatId}
-      ref={scroller}
-      onScroll={event => {
-        const element = event.currentTarget;
-        stickToBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 60;
-      }}
-    >
-      <Show
-        when={openedAgent()}
-        fallback={
-          <div class="feed">
-            <Show when={!feed().order.length && !loading()}>
-              <div class="feed-empty type-caption">Ask about your workspace or request an edit.</div>
-            </Show>
-            <Presence when={showLoader()} from={0.96}>
-              <div class="feed-loading type-caption" role="status">
-                <Loader id={actionLoader.loading} size={16} />
-                <span>Loading history</span>
-              </div>
-            </Presence>
-            <For each={feed().order}>
-              {id => (
-                <FeedRow
-                  chatId={props.chatId}
-                  item={() => feed().byId.get(id)}
-                  userMedia={() => feed().userMedia}
-                  parentMedia={parentMedia}
-                  onOpenSubagent={setOpenedSubagent}
-                />
-              )}
-            </For>
-          </div>
-        }
-      >
-        {agent => <SubagentFeed agent={agent()} onBack={() => setOpenedSubagent('')} />}
+    <div class="timeline-pane">
+      <Show when={openedAgent()}>
+        {agent => <SubagentBar agent={agent()} onBack={() => setOpenedSubagent('')} />}
       </Show>
+      <div
+        class="timeline"
+        data-chat-id={props.chatId}
+        ref={scroller}
+        onScroll={event => {
+          const element = event.currentTarget;
+          stickToBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 60;
+        }}
+      >
+        <Show
+          when={openedAgent()}
+          fallback={
+            <div class="feed">
+              <Show when={!feed().order.length && !loading()}>
+                <div class="feed-empty type-caption">Ask about your workspace or request an edit.</div>
+              </Show>
+              <Presence when={showLoader()} from={0.96}>
+                <div class="feed-loading type-caption" role="status">
+                  <Loader id={actionLoader.loading} size={16} />
+                  <span>Loading history</span>
+                </div>
+              </Presence>
+              <For each={feed().order}>
+                {id => (
+                  <FeedRow
+                    chatId={props.chatId}
+                    item={() => feed().byId.get(id)}
+                    userMedia={() => feed().userMedia}
+                    parentMedia={parentMedia}
+                    onOpenSubagent={setOpenedSubagent}
+                  />
+                )}
+              </For>
+            </div>
+          }
+        >
+          {agent => <SubagentFeed agent={agent()} />}
+        </Show>
+      </div>
     </div>
   );
 }
