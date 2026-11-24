@@ -31,7 +31,7 @@ import type { AgentRuntimeOffer } from './update/plan';
 import { compareVersions } from './update/version';
 import { JobHost, JobState } from './goal/types';
 import { addDecision, createJob, runJob } from './goal/runner';
-import { parseApprovalMode, parseSlash, SLASH_COMMANDS } from './slash/registry';
+import { NO_QUESTIONS_MESSAGE, parseApprovalMode, parseNoQuestionsArg, parseSlash, SLASH_COMMANDS } from './slash/registry';
 import { parseScheduleArgs } from './schedule/parse';
 import { ScheduledPrompts } from './schedule/store';
 import { terminateProcessTree } from './runtime/cancellation';
@@ -122,6 +122,11 @@ interface SessionRecord {
   nudgedAt?: number;
   runtimeId?: string;
   pendingMirror?: boolean;
+  /**
+   * The folder the chat's working copy was made from, fixed when it was first prepared. Chats from before this
+   * was recorded were all made from the workspace folder.
+   */
+  rootPath?: string;
   /** The agent edits the real workspace instead of a private copy (unify.runtime.mirror off when the chat was created). */
   direct?: boolean;
   /** Started with no project folder: the agent works in its own empty scratch folder (see scratchRoot). */
@@ -357,7 +362,10 @@ class ExtensionHost implements vscode.Disposable {
     this.models = new ModelRegistry(context, this.accounts);
     this.cursorModels = context.workspaceState.get<ModelEntry[]>(CURSOR_MODELS_KEY, []);
     for (const [id, items] of Object.entries(context.workspaceState.get<Record<string, TranscriptItem[]>>(TRANSCRIPTS_KEY, {}))) this.transcripts.set(id, items);
-    this.selectedModel = context.workspaceState.get<string>(SELECTED_MODEL_KEY) || this.models.list(true)[0]?.name || '';
+    const savedModel = context.workspaceState.get<string>(SELECTED_MODEL_KEY);
+    // A saved pick that was since renamed, removed or turned off falls back to the first enabled model.
+    this.selectedModel = savedModel && (savedModel === SMART_AUTO || this.models.list(true).some(model => model.name === savedModel))
+      ? savedModel : this.models.list(true)[0]?.name || '';
     this.modelChoices = context.workspaceState.get<Record<string, ModelChoice>>(MODEL_CHOICES_KEY, {});
     const savedApproval = context.workspaceState.get<ApprovalMode>(APPROVAL_KEY);
     this.approvalMode = savedApproval === 'auto' || savedApproval === 'full' ? savedApproval : 'ask';
@@ -773,9 +781,29 @@ class ExtensionHost implements vscode.Disposable {
   /** The empty folder a no-folder chat works in, kept in extension storage. */
   private scratchPath(id: string): string { return join(this.context.globalStorageUri.fsPath, 'scratch', id); }
 
-  /** The folder a chat's agent works on: the workspace, or a no-folder chat's scratch folder (created on demand). */
+  /**
+   * The project folder a chat works on. Once its working copy exists that is the folder it was made from
+   * (`rootPath`; older chats: the workspace). Before that, the folder it was started in (Home's project picker,
+   * "New chat in"), falling back to the workspace when there is none or it is gone.
+   */
+  private projectRoot(record: SessionRecord): { uri: vscode.Uri; name: string } {
+    if (!record.pendingMirror) {
+      if (!record.rootPath) return this.root();
+      const name = record.project?.path === record.rootPath && record.project.name ? record.project.name : basename(record.rootPath);
+      return { uri: vscode.Uri.file(record.rootPath), name };
+    }
+    const path = record.project?.path;
+    if (path) {
+      let isFolder = false;
+      try { isFolder = statSync(path).isDirectory(); } catch { isFolder = false; }
+      if (isFolder) return { uri: vscode.Uri.file(path), name: record.project?.name || basename(path) };
+    }
+    return this.root();
+  }
+
+  /** The folder a chat's agent works on: its project folder, or a no-folder chat's scratch folder (created on demand). */
   private async chatRoot(record: SessionRecord): Promise<vscode.Uri> {
-    if (!record.noFolder) return this.root().uri;
+    if (!record.noFolder) return this.projectRoot(record).uri;
     const path = this.scratchPath(record.id);
     await mkdir(path, { recursive: true });
     return vscode.Uri.file(path);
@@ -987,6 +1015,19 @@ class ExtensionHost implements vscode.Disposable {
     return this.availableModels().find(model => model.name === name);
   }
 
+  /** The picked model; when it was renamed, removed or turned off, falls back to (and saves) the first enabled one. */
+  private selectedEntry(): ModelEntry | undefined {
+    const current = this.availableModel(this.selectedModel);
+    if (current && current.enabled !== false) return current;
+    const fallback = this.models.list(true)[0];
+    if (fallback) {
+      this.selectedModel = fallback.name;
+      void this.context.workspaceState.update(SELECTED_MODEL_KEY, fallback.name);
+      this.refreshModels();
+    }
+    return fallback ?? current;
+  }
+
   private async refreshCursorModels(runtime: AcpRuntime, sessionId: string): Promise<void> {
     const options = runtime.models(sessionId);
     if (!options.length) return;
@@ -1017,8 +1058,8 @@ class ExtensionHost implements vscode.Disposable {
   private async resolveRoute(override?: ModelEntry): Promise<ResolvedRoute> {
     await this.ensureNode();
     await this.refreshDependencies();
-    const selected = override ?? this.availableModel(this.selectedModel);
-    if (!selected) throw new Error('Pick a model first.');
+    const selected = override ?? this.selectedEntry();
+    if (!selected) throw new Error('Turn on a model in Accounts first.');
     const model = override ?? this.effectiveModel(selected);
     if (model.provider === 'cursor-acp') return { model };
     if (isOAuthProvider(model.provider)) {
@@ -1314,6 +1355,7 @@ class ExtensionHost implements vscode.Disposable {
 
   private async askQuestions(chat: Chat, args: Record<string, unknown>): Promise<DelegateResult> {
     if (chat.cancelRequested) return { text: 'Cancelled.', isError: true };
+    if (getUnifyFeature('agents.noQuestions')) return { text: NO_QUESTIONS_MESSAGE, isError: true };
     const parsed = parseQuestions(args);
     if ('error' in parsed) return { text: parsed.error, isError: true };
     const answers = await this.showQuestions(chat, parsed.questions);
@@ -1324,6 +1366,8 @@ class ExtensionHost implements vscode.Disposable {
   /** Claude's built-in AskUserQuestion, shown with the same chat card as ask_questions. */
   private async askNativeQuestions(chat: Chat, input: Record<string, unknown>): Promise<Record<string, string> | string> {
     if (chat.cancelRequested) return 'Cancelled.';
+    // A string answer makes the runtime deny the AskUserQuestion call with this message.
+    if (getUnifyFeature('agents.noQuestions')) return NO_QUESTIONS_MESSAGE;
     const parsed = parseQuestions(input);
     if ('error' in parsed) return parsed.error;
     const answers = await this.showQuestions(chat, parsed.questions);
@@ -1539,8 +1583,8 @@ class ExtensionHost implements vscode.Disposable {
     // A Smart Auto chat starts on its smartest model; the decider replaces it when the first message is sent.
     const auto = this.selectedModel === SMART_AUTO;
     const first = auto ? this.smartAutoCandidates()[0] : undefined;
-    const selected = auto ? first?.entry : this.availableModel(this.selectedModel);
-    if (!selected) throw new Error(auto ? 'Smart Auto has no available ranked models. Set them in Customize.' : 'Pick a model first.');
+    const selected = auto ? first?.entry : this.selectedEntry();
+    if (!selected) throw new Error(auto ? 'Smart Auto has no available ranked models. Set them in Customize.' : 'Turn on a model in Accounts first.');
     const model = auto ? selected : this.effectiveModel(selected);
     const account = isOAuthProvider(model.provider) ? accountForModel(this.oauthAccounts, model) : accountForModel(this.accounts, model);
     if (model.provider !== 'cursor-acp' && !account) throw new Error('Connect an account in Accounts before starting a chat.');
@@ -1718,7 +1762,11 @@ class ExtensionHost implements vscode.Disposable {
       await WorkspaceMirror.remove(root.uri, this.context.globalStorageUri.fsPath, mirror.id);
       throw new Error('This chat was deleted.');
     }
-    if (fresh) { record.mirrorId = mirror.id; record.pendingMirror = undefined; }
+    if (fresh) {
+      record.mirrorId = mirror.id;
+      record.pendingMirror = undefined;
+      if (!record.noFolder) record.rootPath = root.uri.fsPath;
+    }
     const chat = this.addChat(record, mirror, holder.review, ownerId, slot);
     if (needsHandoff) chat.handoffPending = true;
     await this.saveSession(record, false);
@@ -2836,7 +2884,7 @@ class ExtensionHost implements vscode.Disposable {
     return [
       chat.record.noFolder
         ? `Unify IDE, no project folder: this chat works in its own empty scratch folder (${chat.mirror.cwd}). Write any files there.`
-        : `Unify IDE, workspace ${this.root().name}. ${scope}`,
+        : `Unify IDE, workspace ${this.projectRoot(chat.record).name}. ${scope}`,
       'End a turn only when everything the user asked for is done, or you are blocked on a question only they can answer. Answering the latest message, a checkpoint, a compaction or a resumed session is not a stopping point: carry on with any unfinished requests in the same turn.',
       BACKGROUND_CLEANUP,
       shellInstructions(),
@@ -3760,7 +3808,7 @@ class ExtensionHost implements vscode.Disposable {
   private async linkedImageFiles(chat: Chat, text: string): Promise<string[]> {
     const found: string[] = [];
     for (const raw of linkedImagePaths(text)) {
-      const candidates = isAbsolute(raw) ? [raw] : [resolvePath(chat.mirror.cwd, raw), resolvePath(this.root().uri.fsPath, raw)];
+      const candidates = isAbsolute(raw) ? [raw] : [resolvePath(chat.mirror.cwd, raw), resolvePath(this.projectRoot(chat.record).uri.fsPath, raw)];
       for (const candidate of candidates) {
         if ((await stat(candidate).catch(() => undefined))?.isFile()) { found.push(candidate); break; }
       }
@@ -3779,7 +3827,7 @@ class ExtensionHost implements vscode.Disposable {
     const inputs: Buffer[] = [];
     const problems: string[] = [];
     for (const raw of request.images) {
-      const candidates = isAbsolute(raw) ? [raw] : [resolvePath(chat.mirror.cwd, raw), resolvePath(this.root().uri.fsPath, raw)];
+      const candidates = isAbsolute(raw) ? [raw] : [resolvePath(chat.mirror.cwd, raw), resolvePath(this.projectRoot(chat.record).uri.fsPath, raw)];
       let found: string | undefined;
       for (const candidate of candidates) if (!found && (await stat(candidate).catch(() => undefined))?.isFile()) found = candidate;
       if (!found) { problems.push(`${raw}: file not found`); continue; }
@@ -3802,7 +3850,7 @@ class ExtensionHost implements vscode.Disposable {
     try {
       const image = await generateImage({ home: account.directory }, request, inputs);
       // The real workspace, not the chat's private copy: .unify is outside the mirror's review scope.
-      const dir = join(this.root().uri.fsPath, '.unify', 'images');
+      const dir = join(this.projectRoot(chat.record).uri.fsPath, '.unify', 'images');
       await mkdir(dir, { recursive: true });
       const path = join(dir, imageFileName(args.name, request.prompt, image.extension));
       await writeFile(path, image.bytes, { flag: 'wx' });
@@ -4591,6 +4639,10 @@ class ExtensionHost implements vscode.Disposable {
             }
             // With no or an unknown mode the UI opens its own picker.
             this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode });
+          } else if (slash?.name === 'noquestions') {
+            // Only flips the setting; agents learn about it when they try to ask (see askQuestions), no turn is started.
+            setUnifyFeature('agents.noQuestions', parseNoQuestionsArg(slash.args, getUnifyFeature('agents.noQuestions')));
+            this.postUnifyFeatures();
           } else if (slash?.name === 'shutdown') {
             // Arms the one-shot shutdown; the controller answers with shutdownArmed and the chat shows its bar.
             setUnifyFeature('power.shutdownWhenIdle', true);

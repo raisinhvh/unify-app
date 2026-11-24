@@ -381,8 +381,17 @@ function Document(props: { item: KnowledgeItem; file?: string }): JSX.Element {
     if (props.item.folder) parts.push(props.item.folder);
     parts.push(props.item.name);
     if (props.item.kind === 'skill') parts.push(props.file ?? 'SKILL.md');
+    else {
+      // Rules and notes: the file on disk, so it's clear which one this is.
+      const fileName = props.item.path.split(/[\\/]/).pop();
+      if (fileName) parts.push(fileName);
+    }
     return parts;
   };
+
+  /** Hover text per crumb: the last one (the file) shows its full path. */
+  const crumbTitle = (crumb: string, index: number): string =>
+    index === crumbs().length - 1 && props.item.kind !== 'skill' ? props.item.path : crumb;
 
   const moreItems = (): MenuEntry[] => [
     { id: 'open', label: 'Open in editor', icon: 'pop' },
@@ -401,7 +410,7 @@ function Document(props: { item: KnowledgeItem; file?: string }): JSX.Element {
                 <Show when={index() > 0}>
                   <span class="kd-crumb-sep">/</span>
                 </Show>
-                <span class="kd-crumb" classList={{ current: index() === crumbs().length - 1 }} title={crumb}>{crumb}</span>
+                <span class="kd-crumb" classList={{ current: index() === crumbs().length - 1 }} title={crumbTitle(crumb, index())}>{crumb}</span>
               </>
             )}
           </For>

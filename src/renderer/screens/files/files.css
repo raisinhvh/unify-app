@@ -93,7 +93,6 @@
   overflow-y: auto;
   overflow-x: hidden;
   padding-bottom: 12px;
-  scrollbar-width: thin;
 }
 
 .files-dir > .tree-folder-row .tree-label {
@@ -117,7 +116,7 @@
 }
 
 .files-panel .tree-item {
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
 }
 
 .files-panel .tree-row.selected {
@@ -211,7 +210,7 @@
   padding: 0 5px;
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   background: var(--bg);
   border: 1px solid var(--text3);
   border-radius: 4px;
@@ -290,7 +289,7 @@
   display: inline-flex;
   gap: 4px;
   flex: none;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 14px;
   font-variant-numeric: tabular-nums;
 }
@@ -350,7 +349,7 @@
   padding: 0 6px 0 8px;
   border-radius: var(--radius-control);
   color: var(--text3);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
   white-space: nowrap;
   cursor: pointer;
@@ -382,7 +381,7 @@
   flex: none;
   padding: 0 4px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale, 1));
   line-height: 14px;
   color: var(--text3);
   background: var(--hover);
@@ -499,12 +498,11 @@
   inset: 0;
   overflow: auto;
   padding: 8px 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 18px;
   font-variant-ligatures: contextual;
   color: var(--text);
   background: var(--surface);
-  scrollbar-width: thin;
 }
 
 .files-plain-line {

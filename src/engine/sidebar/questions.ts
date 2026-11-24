@@ -32,5 +32,6 @@ export function answersByQuestion(args: Record<string, unknown>, answers: string
 /** Text returned to the agent. `answers` is null when the user skipped. */
 export function formatAnswers(questions: SidebarQuestion[], answers: string[] | null): string {
   if (!answers) return 'The user skipped these questions without answering. Continue with your best judgement or ask again in plain text.';
-  return questions.map((item, index) => `${index + 1}. ${item.question}\n   Answer: ${text(answers[index], 2000) || '(no answer)'}`).join('\n');
+  // 4000 leaves room for the appended "Notes:" text (the UI caps notes at 1000 chars) on top of a 2000-char answer.
+  return questions.map((item, index) => `${index + 1}. ${item.question}\n   Answer: ${text(answers[index], 4000) || '(no answer)'}`).join('\n');
 }

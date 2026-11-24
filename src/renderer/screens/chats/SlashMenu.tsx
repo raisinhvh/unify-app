@@ -35,6 +35,7 @@ type SlashCommand = (typeof viewState)['slashCommands'][number];
  */
 const builtInCommands: SlashCommand[] = [
   { name: 'job', description: 'Plan a checklist from your spec, then work and review until it passes', usage: '/job <spec>' },
+  { name: 'noquestions', description: 'Agents stop asking you questions and state their assumptions instead (toggle)', usage: '/noquestions [on | off]' },
   { name: 'permissions', description: 'Show or change the approval mode for this workspace', usage: '/permissions [ask | auto | full]' },
   { name: 'schedule', description: 'Send a prompt later, after a delay or at a time', usage: '/schedule <when> <prompt>' },
   { name: 'shutdown', description: 'Shut the PC down once every chat and subagent finishes', usage: '/shutdown' },

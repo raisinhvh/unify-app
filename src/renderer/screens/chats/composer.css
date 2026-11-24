@@ -36,7 +36,7 @@
   background: transparent;
   border: 0;
   outline: none;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 20px;
   user-select: text;
 }
@@ -109,7 +109,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
 }
 
 .composer-attachment-remove {

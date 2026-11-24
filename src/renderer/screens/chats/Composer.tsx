@@ -27,8 +27,10 @@ import { post } from '../../bridge';
 import { readPersisted } from '../../persist';
 import type { SidebarImage } from '../../protocol';
 import { rememberSentImages, setEngineError, viewState } from '../../store';
+import type { VoiceAction, VoicePart } from '../../../engine/voice/dictation';
 import { MentionMenu, type MentionMenuApi } from './MentionMenu';
 import { SlashMenu, type SlashMenuApi } from './SlashMenu';
+import { createVoiceSession, VoiceButton, VoiceHint } from './VoiceButton';
 import './composer.css';
 
 const maxAttachments = 8;
@@ -211,6 +213,73 @@ export function Composer(props: ComposerProps): JSX.Element {
     send();
   }
 
+  /** The last dictated text and where it starts, so "scratch that" can remove it while it is still unchanged. */
+  let lastDictation: { start: number; value: string } | undefined;
+
+  /** Dictation parts arrive in spoken order: text goes in at the caret, keywords run as editing actions. */
+  function applyDictation(parts: VoicePart[]): void {
+    for (const part of parts) {
+      if ('text' in part) insertDictated(part.text);
+      else applyVoiceAction(part.action);
+    }
+  }
+
+  function insertDictated(spoken: string): void {
+    const words = spoken.trim();
+    if (!words) return;
+    const current = text();
+    const start = input?.selectionStart ?? current.length;
+    const end = input?.selectionEnd ?? start;
+    // A space separates the new words from whatever is before the caret, unless it's already whitespace.
+    const before = current.slice(0, start);
+    const value = (before && !/\s$/.test(before) ? ' ' : '') + words;
+    replaceRange(start, end, value);
+    lastDictation = { start, value };
+  }
+
+  function applyVoiceAction(action: VoiceAction): void {
+    const caret = input?.selectionStart ?? text().length;
+    switch (action) {
+      case 'newLine':
+        insertNewline(caret);
+        break;
+      case 'send':
+        submit();
+        break;
+      case 'stop':
+        voice.stop();
+        break;
+      case 'clear':
+        lastDictation = undefined;
+        replaceRange(0, text().length, '');
+        break;
+      case 'deleteWord': {
+        // Drops trailing spaces and the word before the caret.
+        const cut = text().slice(0, caret).replace(/\s*\S+\s*$/, '');
+        lastDictation = undefined;
+        replaceRange(cut.length, caret, '');
+        break;
+      }
+      case 'deletePhrase': {
+        const last = lastDictation;
+        lastDictation = undefined;
+        if (last && text().slice(last.start, last.start + last.value.length) === last.value) {
+          replaceRange(last.start, last.start + last.value.length, '');
+        }
+        break;
+      }
+    }
+  }
+
+  function insertNewline(caret: number): void {
+    const end = input?.selectionEnd ?? caret;
+    lastDictation = undefined;
+    replaceRange(caret, end, '\n');
+  }
+
+  // Unmounting while listening stops the microphone (createVoiceSession's cleanup).
+  const voice = createVoiceSession(applyDictation);
+
   const sendMenuItems: MenuEntry[] = [
     { id: 'interrupt', label: 'Send now', hint: 'stops this turn' },
     { id: 'queue', label: 'Queue', hint: 'after this turn' },
@@ -307,6 +376,11 @@ export function Composer(props: ComposerProps): JSX.Element {
           onKeyUp={readCaret}
           onPointerUp={readCaret}
           onKeyDown={event => {
+            if (event.ctrlKey && event.shiftKey && (event.key === ' ' || event.code === 'Space')) {
+              event.preventDefault();
+              if (voice.enabled()) voice.toggle();
+              return;
+            }
             if (slashMenu()?.handleKey(event)) return;
             if (mentionMenu()?.handleKey(event)) return;
             if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
@@ -323,6 +397,7 @@ export function Composer(props: ComposerProps): JSX.Element {
             }
           }}
         />
+        <VoiceHint voice={voice} />
         <div class="composer-bar">
           <IconButton
             icon="paperclip"
@@ -350,6 +425,9 @@ export function Composer(props: ComposerProps): JSX.Element {
               onClick={() => post({ type: 'cancel', chatId: props.chatId })}
             />
           </Presence>
+          <Show when={voice.enabled()}>
+            <VoiceButton voice={voice} />
+          </Show>
           <Button
             ref={setSendButton}
             type="submit"

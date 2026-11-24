@@ -8,11 +8,15 @@
  *
  * The side panel holds the Chats tree. Clicking Chats in the rail while already on chats folds it away
  * (width springs 280 → 0 with the Panel token); the choice is persisted.
- * Content is the tiled PaneGrid on the chats route, or the route's screen (screens/index.ts) otherwise.
- * The PaneGrid stays mounted while another screen is up so chats keep their scroll and drafts.
+ * Content is the pane workspace (PaneGrid, on the chats route) or the route's screen (screens/index.ts) otherwise.
+ * The workspace stays mounted while another screen is up so chats keep their scroll and drafts.
+ * The layout menu (LayoutMenu) sits in the title strip of the content area, on the chats route only.
  *
- * Feature toggles: Files hides with editor.enabled, Hub with toolpacks.hub (hubEnabled), the rail usage meter
- * with usage.railMeter. When the route on screen turns unavailable, the Shell goes back to chats.
+ * Rail: Chats, then Files, Knowledge, Terminal and Source Control, which are panes (openPane) rather than routes. An entry is
+ * highlighted for the focused pane's kind on the chats route. Files hides with editor.enabled (and closes its pane
+ * when turned off); Toolpacks, Agents and Providers are routes; Hub with toolpacks.hub (hubEnabled); the rail usage
+ * meter with usage.railMeter. A persisted `files` or `knowledge` route opens that pane and moves to chats.
+ * When the route on screen turns unavailable, the Shell goes back to chats.
  * Pop-outs: chats shown in their own window (bridge onPopoutsChanged) close their pane here and never open as
  * panes; opening one focuses its window instead (shell/layout.ts). A pop-out closing changes nothing here.
  *
@@ -26,32 +30,47 @@ import { ShutdownOverlay } from '../components/ShutdownOverlay';
 import { createSpring, Presence } from '../motion';
 import { readPersisted, writePersisted } from '../persist';
 import { navigate, railRoutes, route, type RouteId } from '../router';
-import { ChatPane } from '../screens/chats/ChatPane';
-import { ChatsPanel } from '../screens/chats/ChatsPanel';
+import { ChatsPanel, placeChatFromList } from '../screens/chats/ChatsPanel';
 import { Home } from '../screens/chats/Home';
 import { hubEnabled } from '../screens/hub/hubAdapter';
 import { SetupWizard, shouldShowSetup } from '../screens/setup/SetupWizard';
 import { routeHasScreen, screenFor } from '../screens';
 import { setChatVisibilityCheck, viewState } from '../store';
 import { feature } from '../store/features';
-import { isChatOnScreen, layout, openChats, setPoppedOutChats } from './layout';
+import { closePane, focusedChatId, focusedPane, isChatOnScreen, openChats, openPane, panes, setPoppedOutChats } from './layout';
+import { LayoutMenu } from './LayoutMenu';
 import { NavRail, type NavRailItem } from './NavRail';
+import { PaneContent, EmptySlot } from './PaneContent';
 import { PaneGrid } from './PaneGrid';
 import './shell.css';
 
 const panelWidth = 280;
 
+type PaneEntry = 'files' | 'knowledge' | 'terminal' | 'git';
+
 /** Whether a route may show right now (its feature toggle is on). */
 function routeAvailable(id: RouteId): boolean {
-  if (id === 'files') return feature('editor.enabled');
   if (id === 'hub') return hubEnabled();
   return true;
 }
 
-const navItems: NavRailItem[] = railRoutes.map(info => ({
-  ...info,
-  visible: () => routeAvailable(info.id),
-}));
+const isPaneEntry = (id: string): id is PaneEntry => id === 'files' || id === 'knowledge' || id === 'terminal' || id === 'git';
+
+const paneEntries: NavRailItem[] = [
+  { id: 'files', icon: 'files', label: 'Files', visible: () => feature('editor.enabled') },
+  { id: 'knowledge', icon: 'knowledge', label: 'Knowledge', visible: () => true },
+  // No terminal glyph in components/icons.ts yet; the prompt chevron is the closest.
+  { id: 'terminal', icon: 'chevronRight', label: 'Terminal', visible: () => true },
+  // No branch glyph in components/icons.ts yet; the toolpacks icon is the closest available.
+  { id: 'git', icon: 'branch', label: 'Source Control', visible: () => true },
+];
+
+const [chatsInfo, ...otherRoutes] = railRoutes;
+const navItems: NavRailItem[] = [
+  { ...chatsInfo, visible: () => routeAvailable(chatsInfo.id) },
+  ...paneEntries,
+  ...otherRoutes.map(info => ({ ...info, visible: () => routeAvailable(info.id) })),
+];
 
 export function Shell(): JSX.Element {
   const [panelOpen, setPanelOpenSignal] = createSignal(readPersisted('panelOpen', true));
@@ -69,13 +88,16 @@ export function Shell(): JSX.Element {
   const chromeOpacity = createSpring(() => (showSetup() ? 0 : 1), 'modal', { fadeOnly: true });
   // 0..1 while the notice row opens; the pane grid and screens move down with it.
   const [noticeProgress, setNoticeProgress] = createSignal(0);
+  const isMac = () => bridge().platform === 'darwin';
+  // Right inset of the layout menu: clear of the window controls (or the power glyph while shutdown is armed).
+  const layoutMenuRight = () => (isMac() ? 10 : 128) + (viewState.shutdown?.armed ? 32 : 0);
 
   // A chat counts as seen only while it is in a pane on the chats route (drives unread "done").
   setChatVisibilityCheck(sessionId => onChats() && !showSetup() && isChatOnScreen(sessionId));
 
   // Focusing a pane makes its chat the engine's active session (composer defaults, model state...).
   createEffect(on(
-    () => layout().cells[layout().focused],
+    () => focusedChatId(),
     chatId => {
       if (chatId && chatId !== viewState.activeSessionId) post({ type: 'selectSession', sessionId: chatId });
     },
@@ -85,14 +107,43 @@ export function Shell(): JSX.Element {
   const stopPopouts = bridge().onPopoutsChanged?.(chatIds => setPoppedOutChats(chatIds));
   if (stopPopouts) onCleanup(stopPopouts);
 
+  // Files and Knowledge used to be routes: a persisted one opens its pane on the chats route instead.
+  createEffect(() => {
+    const current = route();
+    if (current !== 'files' && current !== 'knowledge') return;
+    if (current === 'knowledge' || feature('editor.enabled')) openPane(current);
+    navigate('chats');
+  });
+
+  // Turning the editor off takes its Files pane with it.
+  createEffect(() => {
+    if (feature('editor.enabled')) return;
+    for (const pane of panes()) {
+      if (pane.kind === 'files') closePane(pane.id);
+    }
+  });
+
   // A toggle that hides the route on screen (or a persisted route that is off) sends the window back to chats.
   createEffect(() => {
     if (!routeAvailable(route())) navigate('chats');
   });
 
+  // The rail entry that is lit: a focused pane's kind on the chats route, else the route itself.
+  const activeEntry = (): string => {
+    if (!onChats()) return route();
+    const kind = focusedPane()?.kind;
+    return kind && isPaneEntry(kind) ? kind : route();
+  };
+
   const selectRoute = (id: string) => {
-    if (id === 'chats' && onChats()) {
-      setPanelOpen(!panelOpen());
+    if (id === 'chats') {
+      if (onChats()) setPanelOpen(!panelOpen());
+      else navigate('chats');
+      return;
+    }
+    if (isPaneEntry(id)) {
+      if (!onChats()) navigate('chats');
+      openPane(id);
       return;
     }
     navigate(id as RouteId);
@@ -109,7 +160,7 @@ export function Shell(): JSX.Element {
       <div class="app-layers">
         <NavRail
           items={navItems}
-          active={route()}
+          active={activeEntry()}
           onSelect={selectRoute}
           settingsActive={route() === 'settings'}
           onSettings={() => navigate('settings')}
@@ -121,11 +172,17 @@ export function Shell(): JSX.Element {
         </div>
         <main class="content" style={{ '--notice-progress': String(noticeProgress()) }}>
           <TitleBar />
+          <Show when={onChats() && !showSetup()}>
+            <div class="shell-layout-menu no-drag" style={{ right: `${layoutMenuRight()}px` }}>
+              <LayoutMenu />
+            </div>
+          </Show>
           <EngineNotice onProgress={setNoticeProgress} />
           <div class="content-chats shell-chrome" classList={{ hidden: !onChats() }} inert={showSetup()}>
             <PaneGrid
-              renderPane={context => <ChatPane context={context} />}
-              renderEmpty={() => <div class="pane-empty type-label">Drop a chat here, or pick one from Chats</div>}
+              renderPane={context => <PaneContent context={context} />}
+              renderEmpty={context => <EmptySlot context={context} />}
+              onChatDropped={placeChatFromList}
             />
           </div>
           <Show when={routeHasScreen(route())}>

@@ -1,0 +1,49 @@
+/* Voice dictation: the mic button beside Send and the status line under the composer input. */
+
+.voice-button {
+  position: relative;
+}
+
+.voice-button.listening {
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+/* A ring that expands while recording, to show the mic is live. Reduced motion keeps the accent colour only. */
+.voice-button.listening::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border: 1.5px solid var(--accent);
+  border-radius: inherit;
+  pointer-events: none;
+  animation: voice-pulse 1.6s ease-out infinite;
+}
+
+@keyframes voice-pulse {
+  0% { opacity: 0.6; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.35); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-button.listening::after {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+.voice-hint {
+  padding: 0 12px 6px;
+  font-size: calc(12px * var(--text-scale, 1));
+  line-height: 16px;
+  color: var(--text3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: italic;
+}
+
+.voice-hint.error {
+  color: var(--text2);
+  font-style: normal;
+}

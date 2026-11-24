@@ -24,6 +24,7 @@ export const ENGINE_FEATURE_DEFAULTS = {
   'agents.imagesToParent': true,
   'agents.explorerRanges': true,
   'agents.stuckCommandMinutes': 5,
+  'agents.noQuestions': false,
   'tools.rangeEdits': true,
   'chats.showYourWork': true,
   'chat.friendlyInternalRows': true,
@@ -86,8 +87,17 @@ export function setUnifyFeature(id: string, value: UnifyFeatureValue): void {
   values[id] = value;
   const settingsFile = settingsFilePath();
   fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+  // settings.json also holds other settings (unify.models, accessibility, ...) written by the shim; keep them.
+  let rest: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(fs.readFileSync(settingsFile, 'utf8')) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) rest = parsed as Record<string, unknown>;
+  } catch (error) {
+    // A file that exists but does not parse must not be replaced by features alone.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('settings.json could not be read; not overwriting it.');
+  }
   const temporaryFile = `${settingsFile}.tmp`;
-  fs.writeFileSync(temporaryFile, JSON.stringify({ features: values }, null, 2));
+  fs.writeFileSync(temporaryFile, JSON.stringify({ ...rest, features: values }, null, 2));
   fs.renameSync(temporaryFile, settingsFile);
   for (const listener of listeners) listener(id, value);
 }

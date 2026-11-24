@@ -33,7 +33,8 @@ const targets = [
     // esbuild is loaded at runtime for toolpack transforms; the DSH CLI (and
     // its plugin tree) is spawned as a separate Node process. electron-updater
     // is bundled with the app by electron-builder and required at runtime.
-    external: ['electron', 'esbuild', '@deepseek-ai/dsh', 'electron-updater'],
+    // node-pty is a native module (integrated terminals) and must be loaded from node_modules at runtime.
+    external: ['electron', 'esbuild', '@deepseek-ai/dsh', 'electron-updater', 'node-pty'],
   },
   {
     name: 'preload',

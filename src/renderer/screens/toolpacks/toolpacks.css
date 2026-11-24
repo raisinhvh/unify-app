@@ -24,7 +24,6 @@
   height: 100%;
   overflow-y: auto;
   padding: 28px 40px 40px;
-  scrollbar-width: thin;
 }
 
 .tp-column {
@@ -197,7 +196,7 @@
   padding: 0;
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   background: transparent;
   border: 0;
   outline: none;
@@ -236,7 +235,7 @@
 }
 
 .tp-group-name {
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
 }
 
 .tp-group-count {
@@ -249,7 +248,7 @@
 }
 
 .tp-group-row .select {
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   margin-right: -6px;
 }
 

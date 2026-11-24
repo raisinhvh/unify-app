@@ -134,6 +134,15 @@ const optionLabels: Record<string, string> = {
   everyone: 'Everyone',
   'same-chat': 'Same chat only',
   'parent-child': 'Parent and child only',
+  'space-mono': 'Space Mono',
+  'ibm-plex-mono': 'IBM Plex Mono',
+  'jetbrains-mono': 'JetBrains Mono',
+  'geist-mono': 'Geist Mono',
+  'ibm-plex-sans': 'IBM Plex Sans',
+  'space-grotesk': 'Space Grotesk',
+  'fira-code': 'Fira Code',
+  'source-code-pro': 'Source Code Pro',
+  'cascadia-code': 'Cascadia Code',
 };
 
 export function humanize(value: string): string {

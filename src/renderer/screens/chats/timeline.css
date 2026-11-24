@@ -4,7 +4,6 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  scrollbar-width: thin;
   user-select: text;
 }
 
@@ -113,7 +112,7 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 4px;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 16px;
   white-space: nowrap;
 }
@@ -200,11 +199,30 @@
 
 .markdown code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   padding: 1px 4px;
   color: var(--text);
   background: var(--raised);
   border-radius: 4px;
+}
+
+/* File references (`src/main/index.ts:42`): open in the Files pane. */
+.markdown code.file-ref {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--text3) 60%, transparent);
+  text-underline-offset: 2px;
+  transition: background-color 120ms ease, text-decoration-color 120ms ease;
+}
+
+.markdown code.file-ref:hover {
+  background: var(--hover);
+  text-decoration-color: var(--text2);
+}
+
+.markdown code.file-ref:focus-visible {
+  outline: 1px solid var(--text3);
+  outline-offset: 1px;
 }
 
 .markdown pre {
@@ -231,8 +249,77 @@
 .markdown h2,
 .markdown h3 {
   margin: 12px 0 6px;
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale, 1));
   font-weight: var(--weight-heading);
+}
+
+/* Tables: hairline grid, tinted header row. A wide table scrolls sideways inside the message
+   (display: block keeps it from pushing the bubble past the pane). */
+.markdown table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 0 8px;
+  overflow-x: auto;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font-size: calc(12px * var(--text-scale, 1));
+  line-height: 18px;
+}
+
+/* Column alignment (:---:) arrives as an inline text-align from markdown-it and wins over this default. */
+.markdown th,
+.markdown td {
+  padding: 5px 10px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+.markdown th + th,
+.markdown td + td {
+  border-left: 1px solid var(--border);
+}
+
+.markdown th {
+  color: var(--text);
+  font-weight: var(--weight-heading);
+  background: var(--surface);
+  white-space: nowrap;
+}
+
+.markdown td {
+  color: var(--text2);
+}
+
+.markdown tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.markdown blockquote {
+  margin: 0 0 8px;
+  padding: 0 0 0 12px;
+  color: var(--text2);
+  border-left: 2px solid var(--border);
+}
+
+.markdown hr {
+  margin: 12px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+/* Task lists: the checkbox sits where the bullet was. */
+.markdown li:has(> input[type='checkbox']) {
+  list-style: none;
+}
+
+.markdown li > input[type='checkbox'] {
+  margin: 0 6px 0 -18px;
+  vertical-align: -2px;
+  accent-color: var(--accent);
 }
 
 /* Tool rows */
@@ -243,7 +330,7 @@
   min-width: 0;
   height: 20px;
   color: var(--text2);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 14px;
 }
 
@@ -289,7 +376,7 @@
   min-width: 0;
   height: 20px;
   color: var(--text2);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   border-radius: 4px;
   text-align: left;
 }
@@ -436,7 +523,7 @@
   color: var(--text2);
   border: 1px solid var(--border);
   border-radius: 4px;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   transition: background-color 120ms ease, color 120ms ease;
 }
 
@@ -452,7 +539,7 @@
 
 .question-option-description {
   color: var(--text3);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -572,7 +659,7 @@
 
 .subagent-model {
   color: var(--text3);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
 }
 
 .subagent-detail {
@@ -580,7 +667,7 @@
   min-width: 0;
   text-align: right;
   color: var(--text3);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -659,7 +746,7 @@
   padding: 2px 0 2px 14px;
   color: var(--text2);
   border-left: 1px solid var(--border);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 16px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -685,7 +772,7 @@
 .subagent-strip-label {
   flex: none;
   color: var(--text3);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   font-variant-numeric: tabular-nums;
 }
 
@@ -718,7 +805,7 @@
   background: var(--raised);
   border: 1px solid var(--border);
   border-radius: 4px;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 18px;
   white-space: nowrap;
   transition: color 120ms ease, border-color 120ms ease;
@@ -759,7 +846,7 @@
   display: flex;
   gap: 6px;
   color: var(--text3);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 16px;
 }
 
@@ -773,7 +860,7 @@
 
 .agent-message-text {
   color: var(--text2);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 18px;
   white-space: pre-wrap;
   word-break: break-word;

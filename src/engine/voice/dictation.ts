@@ -108,9 +108,13 @@ public static class UnifyRecorder {
 	const int FrameSamples = 800;            // 50 ms
 	const int BufferCount = 10;
 	const int StartFrames = 3;               // 150 ms of loud audio starts a phrase
-	const int EndFrames = 16;                // 800 ms of quiet ends it
-	const int PrerollFrames = 8;             // keeps 400 ms before the start so first sounds aren't clipped
-	const int MinimumVoicedFrames = 5;
+	// Dictation tuning. Phrases were cut too eagerly: a 800 ms pause split sentences, so each half was transcribed
+	// with no context and short fragments were dropped. Now a 1 s pause ends a phrase, a 600 ms pre-roll keeps soft
+	// word onsets, and a 150 ms voiced minimum keeps short answers like "yes" or "no".
+	const int EndFrames = 20;                // 1000 ms of quiet ends a phrase (was 800 ms, which split sentences mid-thought)
+	const int PrerollFrames = 12;            // keeps 600 ms before the start so soft first sounds aren't clipped (was 400 ms)
+	const int MinimumVoicedFrames = 3;       // 150 ms of voice keeps short words (was 250 ms, which dropped "yes" and "no")
+	const int PadBytes = SampleRate * 2 * 3 / 10; // 300 ms of silence added to each end of a phrase, see WriteWave
 	const int MaximumBytes = SampleRate * 2 * 28;
 
 	static readonly object Gate = new object();
@@ -127,7 +131,11 @@ public static class UnifyRecorder {
 		return "\"" + (value ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
 	}
 
-	static void WriteWave(string path, byte[] samples) {
+	static void WriteWave(string path, byte[] speech) {
+		// Whisper misses or invents words at the very start and end of a clip that begins and ends mid-sound,
+		// so each phrase gets silence on both sides.
+		var samples = new byte[speech.Length + PadBytes * 2];
+		Buffer.BlockCopy(speech, 0, samples, PadBytes, speech.Length);
 		using (var file = new BinaryWriter(File.Create(path))) {
 			file.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
 			file.Write(36 + samples.Length);
@@ -432,8 +440,11 @@ export class Dictation {
         this.transcribing = false;
         void rm(path, { force: true }).catch(() => undefined);
         if (this.finished) return;
+        // One failed phrase (a slow run hitting the timeout, say) used to end the whole session and drop every
+        // phrase after it. Now it's skipped; the error is still reported when dictation ends.
         if (error) {
-          this.finish(`Whisper could not transcribe: ${error.message.split('\n')[0]}`);
+          this.failure = `Whisper could not transcribe: ${error.message.split('\n')[0]}`;
+          this.pump();
           return;
         }
         const text = cleanTranscript(stdout);

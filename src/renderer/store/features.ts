@@ -26,6 +26,10 @@ export interface FeatureDefinition {
 }
 
 export const featureDefinitions = {
+	// Appearance (fonts: values are Fontsource ids, applied by theme/fonts.ts)
+	'appearance.uiFont': { group: 'Appearance', label: 'Interface font', description: 'Titles, labels and chat text.', defaultValue: 'space-mono', options: ['space-mono', 'ibm-plex-mono', 'jetbrains-mono', 'geist-mono', 'ibm-plex-sans', 'space-grotesk'], scope: 'ui' },
+	'appearance.codeFont': { group: 'Appearance', label: 'Code font', description: 'Code blocks, diffs, commands, the editor and the terminal.', defaultValue: 'jetbrains-mono', options: ['jetbrains-mono', 'fira-code', 'source-code-pro', 'ibm-plex-mono', 'geist-mono', 'cascadia-code'], scope: 'ui' },
+
 	// Motion
 	'motion.organic': { group: 'Motion', label: 'Human-like edits', description: 'Agent edits look typed by a person (rename, create, delete, move).', defaultValue: true, scope: 'ui' },
 	'motion.organic.rename': { group: 'Motion', label: 'Retype renames', description: 'Backspace and retype names the agent changes.', defaultValue: true, scope: 'ui' },
@@ -46,6 +50,7 @@ export const featureDefinitions = {
 	'agents.imagesToParent': { group: 'Agents', label: 'Subagents send real images', description: 'Images a subagent sends reach the main agent as images, not file paths.', defaultValue: true, scope: 'engine' },
 	'agents.explorerRanges': { group: 'Agents', label: 'Explorer returns code ranges', description: 'The explorer ends with the exact file ranges it found, so the main agent reads only those lines.', defaultValue: true, scope: 'engine' },
 	'agents.stuckCommandMinutes': { group: 'Agents', label: 'Stop stuck commands after (minutes)', description: 'A command an agent runs that shows no CPU or disk activity for this long is stopped, so the agent never waits on it forever. 0 turns this off.', defaultValue: 5, scope: 'engine' },
+	'agents.noQuestions': { group: 'Agents', label: 'No questions', description: 'Agents may not ask you questions; they use their best judgement and list the assumptions they made. Toggle with /noquestions.', defaultValue: false, scope: 'engine' },
 	'tools.rangeEdits': { group: 'Agents', label: 'Range reads and edits', description: 'Agents can read several line ranges in one call and replace just those lines, with a check that the lines have not changed.', defaultValue: true, scope: 'engine' },
 	'chats.showYourWork': { group: 'Agents', label: 'Show your work', description: 'Agents send screenshots, renders and before/after images of what they made. Images you have already seen are never sent twice.', defaultValue: true, scope: 'engine' },
 
@@ -55,6 +60,9 @@ export const featureDefinitions = {
 
 	// Chats
 	'chats.layoutPicker': { group: 'Chats', label: 'Layout picker on drag', description: 'Hold-drag a pane header to pick a layout.', defaultValue: true, scope: 'ui' },
+	'layout.snapGutters': { group: 'Chats', label: 'Snap split handles', description: 'Split handles snap to halves, thirds, quarters and line up with other splits. Hold Alt while dragging to place freely.', defaultValue: true, scope: 'ui' },
+	'layout.edgeZones': { group: 'Chats', label: 'Drop on workspace edges', description: 'Dropping a pane or image at the very edge of the workspace makes a full-height or full-width strip.', defaultValue: true, scope: 'ui' },
+	'layout.gap': { group: 'Chats', label: 'Gap between panes (px)', description: 'Space between panes in the workspace.', defaultValue: 8, scope: 'ui' },
 	'chats.maxPerProject': { group: 'Chats', label: 'Chats shown per project', description: 'Before "Show N more".', defaultValue: 5, scope: 'ui' },
 	'chats.imagesInBubble': { group: 'Chats', label: 'Images in my messages', description: 'Show attached images in your own bubble.', defaultValue: true, scope: 'ui' },
 	'chats.toolImages': { group: 'Chats', label: 'Images agents look at', description: 'Show a thumbnail on any tool call that gave an agent an image (screenshots, renders, image files).', defaultValue: true, scope: 'ui' },

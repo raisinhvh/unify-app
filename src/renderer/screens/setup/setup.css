@@ -111,7 +111,7 @@
 .setup-lede {
   margin: 8px 0 0;
   color: var(--text2);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 20px;
 }
 
@@ -164,7 +164,7 @@
   padding: 6px 12px;
   border-radius: var(--radius-menu);
   color: var(--text);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   text-align: left;
 }
 

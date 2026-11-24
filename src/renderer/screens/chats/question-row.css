@@ -1,0 +1,54 @@
+/* Notes field at the bottom of the agent-question card. Matches .question-other-input in timeline.css. */
+
+.question-row .question-block,
+.question-row .question-notes {
+  min-width: 0;
+}
+
+.question-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.question-notes-label {
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.question-notes-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  max-height: 160px;
+  margin: 0;
+  padding: 6px 10px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+  font: inherit;
+  line-height: 1.4;
+}
+
+.question-notes-input:focus {
+  border-color: var(--text3);
+}
+
+.question-notes-input::placeholder {
+  color: var(--text3);
+}
+
+.question-row .interrupt-actions {
+  flex-wrap: wrap;
+  min-width: 0;
+}

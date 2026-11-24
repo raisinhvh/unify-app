@@ -1,0 +1,309 @@
+/* Pane bodies for the non-chat panes (PaneContent.tsx). Headers reuse .chat-pane-header from chat-pane.css. */
+
+.pane-frame {
+  min-width: 0;
+}
+
+.pane-body {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------- files / knowledge halves */
+
+/* The screens' panels are absolute side-panels sized by --panel-width; here they fill their half instead. */
+.pane-side {
+  position: relative;
+  flex: none;
+  width: min(280px, 45%);
+  height: 100%;
+  min-width: 0;
+}
+
+/* Holds the panel; when the tree is dragged narrower than full size it is zoomed down (inline style). */
+.pane-side-scale {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.pane-side-scale > .side-panel {
+  width: 100%;
+}
+
+/* Divider between tree and main: a zero-width flex item with a wider invisible grab area over the border. */
+.pane-split-handle {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  width: 0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.pane-split-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+}
+
+.pane-split-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  width: 2px;
+  background: var(--text3);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.pane-split-handle:hover::after,
+.pane-body.resizing .pane-split-handle::after {
+  opacity: 1;
+}
+
+.pane-body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.pane-body.resizing .pane-main {
+  pointer-events: none;
+}
+
+.pane-main {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.pane-main > * {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Narrow: one half at a time, the shown one takes the whole body. */
+.pane-body.narrow .pane-side {
+  width: 100%;
+}
+
+.pane-body.narrow .pane-main {
+  flex: 1 1 auto;
+}
+
+/* Terminal header: which folder the shell runs in. A compact ProjectSwitch that shrinks to its icon before the
+   actions get crowded; the full path is in its tooltip. */
+.project-switch.pane-cwd {
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 220px;
+  height: 26px;
+  margin-right: 4px;
+  padding: 0 6px 0 8px;
+  gap: 6px;
+}
+
+.project-switch.pane-cwd .project-switch-path {
+  display: none;
+}
+
+/* Tree | Editor toggle in the header, shown only when narrow. */
+.pane-segmented {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: 4px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.pane-segmented button {
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+  color: var(--text2);
+  font-size: calc(11px * var(--text-scale, 1));
+  white-space: nowrap;
+  border-radius: 4px;
+}
+
+.pane-segmented button[aria-pressed='true'] {
+  color: var(--text);
+  background: var(--hover);
+}
+
+/* Layout menu in the title strip of the content area (Shell.tsx); right inset set inline, clear of the controls. */
+.shell-layout-menu {
+  position: absolute;
+  top: 0;
+  z-index: 41;
+  display: flex;
+  align-items: center;
+  height: var(--titlebar-height);
+  -webkit-app-region: no-drag;
+}
+
+/* ---------------------------------------------------------------- terminal */
+
+.pane-terminal {
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.pane-terminal > * {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------------- source control */
+
+.pane-git {
+  flex-direction: column;
+  background: var(--surface);
+}
+
+.pane-git > * {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------------- image */
+
+.pane-image {
+  background: #111;
+  cursor: default;
+  touch-action: none;
+  user-select: none;
+}
+
+.pane-image.zoomed {
+  cursor: grab;
+}
+
+.pane-image.panning {
+  cursor: grabbing;
+}
+
+.pane-image-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform-origin: center;
+  pointer-events: none;
+}
+
+.pane-image-missing {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 12px;
+  color: var(--text3);
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------- empty slot */
+
+.pane-empty {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.pane-empty-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 28px 20px 18px;
+  box-sizing: border-box;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.pane-empty-card.focused {
+  border-color: var(--text3);
+}
+
+.pane-empty-title {
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.pane-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.pane-empty-actions > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.pane-empty-hint {
+  max-width: 100%;
+  margin: 0;
+  color: var(--text3);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.pane-empty-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: var(--text3);
+  border-radius: 4px;
+}
+
+.pane-empty-close:hover {
+  color: var(--text);
+  background: var(--hover);
+}

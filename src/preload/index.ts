@@ -15,6 +15,8 @@ const messageListeners = new Set<Listener>();
 const uiListeners = new Set<(request: unknown) => void>();
 const maximizedListeners = new Set<(maximized: boolean) => void>();
 const popoutListeners = new Set<(chatIds: string[]) => void>();
+const terminalDataListeners = new Set<(id: string, data: string) => void>();
+const terminalExitListeners = new Set<(id: string, code: number) => void>();
 let lastMessage: HostMessage | undefined;
 
 /** Absolute path of the open project folder, read once from the main process. */
@@ -64,6 +66,17 @@ ipcRenderer.on('unify:maximized', (_event, maximized: boolean) => {
 ipcRenderer.on('unify:popouts', (_event, chatIds: unknown) => {
   const ids = popoutChatIds(chatIds);
   for (const listener of [...popoutListeners]) listener(ids);
+});
+
+ipcRenderer.on('unify:term-data', (_event, id: unknown, data: unknown) => {
+  if (typeof id !== 'string' || typeof data !== 'string') return;
+  for (const listener of [...terminalDataListeners]) listener(id, data);
+});
+
+ipcRenderer.on('unify:term-exit', (_event, id: unknown, code: unknown) => {
+  if (typeof id !== 'string') return;
+  const exitCode = typeof code === 'number' ? code : -1;
+  for (const listener of [...terminalExitListeners]) listener(id, exitCode);
 });
 
 const api = {
@@ -187,6 +200,90 @@ const api = {
 
   respondToUi(id: string, result: unknown): void {
     ipcRenderer.send('unify:ui-response', { id, result });
+  },
+
+  /** Integrated terminals: one shell per renderer-chosen id (the pane id). */
+  terminal: {
+    create(id: string, opts: { cols: number; rows: number; cwd?: string }): Promise<{ ok: boolean; shell?: string; cwd?: string; error?: string }> {
+      return ipcRenderer.invoke('unify:term-create', { id, cols: opts.cols, rows: opts.rows, cwd: opts.cwd }) as Promise<
+        { ok: boolean; shell?: string; cwd?: string; error?: string }
+      >;
+    },
+    write(id: string, data: string): void {
+      ipcRenderer.send('unify:term-input', id, data);
+    },
+    resize(id: string, cols: number, rows: number): void {
+      ipcRenderer.send('unify:term-resize', id, cols, rows);
+    },
+    kill(id: string): void {
+      ipcRenderer.send('unify:term-kill', id);
+    },
+    onData(listener: (id: string, data: string) => void): () => void {
+      terminalDataListeners.add(listener);
+      return () => terminalDataListeners.delete(listener);
+    },
+    onExit(listener: (id: string, code: number) => void): () => void {
+      terminalExitListeners.add(listener);
+      return () => terminalExitListeners.delete(listener);
+    },
+  },
+
+  /** Source Control: git in the main process (src/main/git.ts). Results are typed in renderer/bridge.ts (UnifyGitApi). */
+  git: {
+    status(cwd?: string): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-status', cwd) as Promise<unknown>;
+    },
+    log(cwd?: string): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-log', cwd) as Promise<unknown>;
+    },
+    diff(cwd: string | undefined, path: string, options: { staged?: boolean; untracked?: boolean }): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-diff', cwd, path, options) as Promise<unknown>;
+    },
+    stage(cwd: string | undefined, paths: string[] | null): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-stage', cwd, paths) as Promise<unknown>;
+    },
+    unstage(cwd: string | undefined, paths: string[]): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-unstage', cwd, paths) as Promise<unknown>;
+    },
+    discard(cwd: string | undefined, items: { path: string; untracked: boolean }[]): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-discard', cwd, items) as Promise<unknown>;
+    },
+    commit(cwd: string | undefined, message: string, options: { amend?: boolean } = {}): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-commit', cwd, message, options) as Promise<unknown>;
+    },
+    pull(cwd?: string, options: { rebase?: boolean } = {}): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-pull', cwd, options) as Promise<unknown>;
+    },
+    push(cwd?: string): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-push', cwd) as Promise<unknown>;
+    },
+    fetch(cwd?: string): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-fetch', cwd) as Promise<unknown>;
+    },
+    sync(cwd?: string): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-sync', cwd) as Promise<unknown>;
+    },
+    branches(cwd?: string): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-branches', cwd) as Promise<unknown>;
+    },
+    checkout(cwd: string | undefined, branch: string): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-checkout', cwd, branch) as Promise<unknown>;
+    },
+    createBranch(cwd: string | undefined, name: string): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-create-branch', cwd, name) as Promise<unknown>;
+    },
+    stash(cwd: string | undefined, options: { includeUntracked?: boolean } = {}): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-stash', cwd, options) as Promise<unknown>;
+    },
+    stashPop(cwd?: string): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-stash-pop', cwd) as Promise<unknown>;
+    },
+    undoLastCommit(cwd?: string): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-undo-commit', cwd) as Promise<unknown>;
+    },
+    init(cwd?: string): Promise<unknown> {
+      return ipcRenderer.invoke('unify:git-init', cwd) as Promise<unknown>;
+    },
   },
 };
 

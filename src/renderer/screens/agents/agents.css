@@ -46,7 +46,7 @@
 .agents-panel-header h2 {
   flex: 1;
   margin: 0;
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale, 1));
   line-height: 20px;
 }
 
@@ -96,7 +96,7 @@
   margin: 0;
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 20px;
+  font-size: calc(20px * var(--text-scale, 1));
   font-weight: 700;
   line-height: 28px;
   letter-spacing: -0.015em;
@@ -111,7 +111,7 @@
   margin: 0;
   overflow: hidden;
   color: var(--text3);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
   white-space: nowrap;
 }
@@ -129,7 +129,7 @@
 .ag-section-heading {
   margin: 0;
   color: var(--text);
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale, 1));
   font-weight: 700;
   line-height: 28px;
 }
@@ -154,7 +154,7 @@
   padding: 0 11px;
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-control);

@@ -63,7 +63,7 @@
   padding: 0;
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   background: transparent;
   border: 0;
   outline: none;
@@ -115,7 +115,7 @@
   padding: 0 8px 0 6px;
   border-radius: var(--radius-row);
   color: var(--text2);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   text-align: left;
   white-space: nowrap;
   transition: color 140ms ease;
@@ -177,7 +177,7 @@
 .settings-lede {
   margin: 6px 0 0;
   color: var(--text2);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 20px;
 }
 
@@ -263,7 +263,7 @@
 
 .theme-row-name {
   color: var(--text2);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 18px;
   transition: color 140ms ease;
 }
@@ -427,7 +427,7 @@
   align-items: baseline;
   gap: 8px;
   color: var(--text);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 18px;
 }
 
@@ -527,7 +527,7 @@
   padding: 0;
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   background: transparent;
   border: 0;
   outline: none;

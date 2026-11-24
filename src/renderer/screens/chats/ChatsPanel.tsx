@@ -6,7 +6,8 @@
  *   Active      chats that run, need you, or finished unread — DSH's activity rail ordering (store/activity.ts)
  *   projects    one folder per project, newest first; 5 chats, then "Show N more"
  *
- * Click opens the chat in the focused pane; Ctrl/⌘-click or middle-click opens it beside the others.
+ * Click opens the chat in the focused pane; Ctrl/⌘-click or middle-click opens it beside the others. Dragging a row
+ * onto the workspace opens it at that snap zone, or moves it there when it is already open (shell/chatDrag.ts).
  *
  * Organic motion (motion.organic.*): a renamed chat backspaces and retypes its title, a chat that moves up in
  * Active lifts, travels and settles, and the counts roll like an odometer.
@@ -20,7 +21,8 @@ import { readPersisted, writePersisted } from '../../persist';
 import type { SidebarProject, SidebarSession } from '../../protocol';
 import { markRead, viewState } from '../../store';
 import { activeChats, activityDetail, activityStatus, pendingInterrupt } from '../../store/activity';
-import { isChatOnScreen, layout, openChat } from '../../shell/layout';
+import { focusedChatId, openChat, placeChat, type PlaceTarget } from '../../shell/layout';
+import { makeChatDraggable } from '../../shell/chatDrag';
 import { chatAction, actionLabel } from '../../components/loaders/actions';
 import { openNextNewSession } from './Home';
 import { chatTime, knownProjects, newSessionTarget, noFolderProject, parentFolder, projectGroups, projectName, selectProject, shortPath } from './projects';
@@ -51,6 +53,13 @@ function toggleShowAll(key: string): void {
 /** Opens a chat in the focused pane (or beside the others) and tells the engine which chat is active. */
 export function openChatFromList(sessionId: string, beside: boolean): void {
   openChat(sessionId, { beside });
+  markRead(sessionId);
+  post({ type: 'selectSession', sessionId });
+}
+
+/** A row dragged onto the workspace: opens (or moves) the chat at that snap target, like openChatFromList. */
+export function placeChatFromList(sessionId: string, target: PlaceTarget): void {
+  if (!placeChat(sessionId, target)) return;
   markRead(sessionId);
   post({ type: 'selectSession', sessionId });
 }
@@ -128,6 +137,7 @@ function ChatRow(props: { session: SidebarSession; trailing: string; trailingWar
       <TreeItem
         ref={element => {
           setRow(element);
+          makeChatDraggable(element, () => props.session.id);
           tooltip(element, () => <ChatTip session={props.session} />, { placement: 'right-start', delay: 600 });
         }}
         class={armed() ? 'chat-row delete-armed' : 'chat-row'}
@@ -152,7 +162,7 @@ function ChatRow(props: { session: SidebarSession; trailing: string; trailingWar
         }
         trailingTone={props.trailingWarn ? 'warn' : undefined}
         tone={props.warn ? 'warn' : undefined}
-        selected={isChatOnScreen(props.session.id) && layout().cells[layout().focused] === props.session.id}
+        selected={focusedChatId() === props.session.id}
         onClick={event => onRowClick(event, props.session.id)}
         onAuxClick={event => onRowAuxClick(event, props.session.id)}
         onContextMenu={event => {

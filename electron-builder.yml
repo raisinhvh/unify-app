@@ -51,10 +51,16 @@ nsis:
   perMachine: false
   allowElevation: true
   allowToChangeInstallationDirectory: true
+  # Wizard pages: welcome, license (LICENSE at the repo root, plain text),
+  # install folder, progress, finish. Finish launches Unify.
+  license: LICENSE
+  runAfterFinish: true
   createDesktopShortcut: always
   createStartMenuShortcut: true
   shortcutName: Unify
   uninstallDisplayName: Unify
+  # Keep user data (chats, settings) when Unify is uninstalled.
+  deleteAppDataOnUninstall: false
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
 

@@ -43,7 +43,7 @@
 .providers-panel-header h2 {
   flex: 1;
   margin: 0;
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale, 1));
   line-height: 20px;
 }
 
@@ -130,7 +130,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -139,7 +139,7 @@
 .pv-account-caption {
   flex: none;
   color: var(--text3);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 14px;
 }
 
@@ -153,7 +153,7 @@
   margin-left: 6px;
   padding: 0;
   color: var(--text2);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 16px;
   white-space: nowrap;
 }
@@ -204,7 +204,7 @@
   margin: 0;
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 20px;
+  font-size: calc(20px * var(--text-scale, 1));
   font-weight: 700;
   line-height: 28px;
   letter-spacing: -0.015em;
@@ -216,7 +216,7 @@
 .pv-page-status {
   margin: 0;
   color: var(--text3);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
 }
 
@@ -242,7 +242,7 @@
 .pv-combined-value {
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 56px;
+  font-size: calc(56px * var(--text-scale, 1));
   font-weight: 700;
   line-height: 56px;
   letter-spacing: -0.04em;
@@ -251,7 +251,7 @@
 .pv-combined-caption {
   padding-bottom: 8px;
   color: var(--text3);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 18px;
 }
 
@@ -278,7 +278,7 @@
 .pv-section-heading {
   margin: 20px 0 0;
   color: var(--text);
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale, 1));
   font-weight: 700;
   line-height: 28px;
 }
@@ -326,7 +326,7 @@
 .pv-usage-name {
   min-width: 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -345,7 +345,7 @@
 .pv-usage-plan {
   overflow: hidden;
   color: var(--text2);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 16px;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -354,14 +354,14 @@
 .pv-usage-share,
 .pv-usage-used {
   color: var(--text2);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
 }
 
 .pv-usage-limit {
   overflow: hidden;
   color: var(--text2);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -384,7 +384,7 @@
 
 .pv-usage-reset {
   overflow: hidden;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 14px;
   text-align: right;
   white-space: nowrap;
@@ -423,7 +423,7 @@
 .pv-link {
   flex: none;
   color: var(--text2);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
 }
 
@@ -470,7 +470,7 @@
 .pv-crumb-link {
   overflow: hidden;
   color: var(--text3);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 14px;
   text-overflow: ellipsis;
 }
@@ -518,7 +518,7 @@
   margin: 0;
   overflow: hidden;
   color: var(--text2);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 18px;
   white-space: nowrap;
 }
@@ -551,7 +551,7 @@
   margin-top: 16px;
   padding: 10px 12px;
   color: var(--text2);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
   background: var(--raised);
   border: 1px solid var(--border);
@@ -570,7 +570,7 @@
 .pv-notice-action.button {
   flex: none;
   height: 28px;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
 }
 
 .pv-account-divider {
@@ -617,7 +617,7 @@
 .pv-section-note {
   margin-left: auto;
   color: var(--text3);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 14px;
 }
 
@@ -632,7 +632,7 @@
   flex: none;
   width: 168px;
   color: var(--text3);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 18px;
 }
 
@@ -643,7 +643,7 @@
   gap: 8px;
   min-width: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 18px;
 }
 
@@ -651,7 +651,7 @@
   flex: none;
   margin-left: auto;
   color: var(--text2);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
 }
 
@@ -665,7 +665,7 @@
   padding: 0 11px;
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
@@ -709,7 +709,7 @@
   grid-auto-rows: 36px;
   column-gap: 16px;
   align-items: center;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
 }
 
 .pv-metric-row {
@@ -723,7 +723,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text3);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -746,12 +746,12 @@
 
 .pv-metric-used {
   color: var(--text2);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
 }
 
 .pv-metric-reset {
   color: var(--text3);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 14px;
   white-space: nowrap;
 }
@@ -762,7 +762,7 @@
   justify-self: end;
   gap: 6px;
   color: var(--text2);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
   white-space: nowrap;
 }
@@ -791,7 +791,7 @@
   padding-right: 12px;
   overflow: hidden;
   color: var(--text);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -803,7 +803,7 @@
 
 .pv-model-context {
   color: var(--text3);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 14px;
 }
 
@@ -820,7 +820,7 @@
   background: transparent;
   color: var(--text2);
   cursor: pointer;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
 }
 
 .pv-model-edit:hover,
@@ -860,7 +860,7 @@
 .pv-models-empty-action.button {
   flex: none;
   height: 28px;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
 }
 
 .pv-model-form-shell {
@@ -890,7 +890,7 @@
   margin: 0;
   padding: 2px 0 4px 180px;
   color: var(--text3);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
 }
 
@@ -908,7 +908,7 @@
 .pv-model-save.button {
   height: 28px;
   padding: 0 12px;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
 }
 
 .pv-spinner {
@@ -1012,7 +1012,7 @@
 
 .pv-add-title {
   flex: none;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   line-height: 18px;
 }
 
@@ -1049,7 +1049,7 @@
   flex: none;
   width: 96px;
   color: var(--text3);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
 }
 

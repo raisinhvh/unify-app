@@ -14,6 +14,92 @@ export interface UnifyWindowControls {
   isMaximized(): Promise<boolean>;
 }
 
+/** One changed file. `status`: M modified, A added, D deleted, R renamed, C conflicted, U untracked. */
+export interface GitChange {
+  path: string;
+  status: 'M' | 'A' | 'D' | 'R' | 'C' | 'U';
+  origPath?: string;
+}
+
+export type GitStatusResult =
+  | { repo: false }
+  | {
+      repo: true;
+      /** Repository root; every path below is relative to it. */
+      root: string;
+      branch: string;
+      ahead: number;
+      behind: number;
+      hasUpstream: boolean;
+      staged: GitChange[];
+      unstaged: GitChange[];
+    }
+  | { error: string };
+
+export interface GitCommit {
+  hash: string;
+  short: string;
+  subject: string;
+  author: string;
+  /** Relative date, e.g. "3 days ago". */
+  date: string;
+  /** Decorations: "HEAD -> main", "origin/main", "tag: v1". */
+  refs: string[];
+  parents: string[];
+}
+
+export type GitLogResult = { commits: GitCommit[] } | { error: string };
+export type GitDiffResult = { text: string; truncated: boolean } | { error: string };
+export type GitActionResult = { ok: true } | { error: string };
+export type GitBranchesResult = { current: string; local: string[]; remote: string[] } | { error: string };
+
+/**
+ * Source control (main process git, see src/main/git.ts). `cwd` is optional: unset means the project folder.
+ * Failures come back as `{ error }`; nothing rejects. Outside Electron the whole API is missing.
+ */
+export interface UnifyGitApi {
+  status(cwd?: string): Promise<GitStatusResult>;
+  log(cwd?: string): Promise<GitLogResult>;
+  diff(cwd: string | undefined, path: string, options: { staged?: boolean; untracked?: boolean }): Promise<GitDiffResult>;
+  /** Stages `paths`; `null` stages every change (`git add -A`). */
+  stage(cwd: string | undefined, paths: string[] | null): Promise<GitActionResult>;
+  unstage(cwd: string | undefined, paths: string[]): Promise<GitActionResult>;
+  /** Tracked files revert to the index; untracked files are deleted. Ask the user before calling. */
+  discard(cwd: string | undefined, items: { path: string; untracked: boolean }[]): Promise<GitActionResult>;
+  commit(cwd: string | undefined, message: string, options?: { amend?: boolean }): Promise<GitActionResult>;
+  pull(cwd?: string, options?: { rebase?: boolean }): Promise<GitActionResult>;
+  push(cwd?: string): Promise<GitActionResult>;
+  fetch(cwd?: string): Promise<GitActionResult>;
+  /** Pull, then push (only the push when the branch has no upstream yet). Stops at the first failure. */
+  sync(cwd?: string): Promise<GitActionResult>;
+  branches(cwd?: string): Promise<GitBranchesResult>;
+  /** Switches to a local branch, or to a remote-only name (origin/foo) through a new tracking branch. */
+  checkout(cwd: string | undefined, branch: string): Promise<GitActionResult>;
+  createBranch(cwd: string | undefined, name: string): Promise<GitActionResult>;
+  stash(cwd: string | undefined, options?: { includeUntracked?: boolean }): Promise<GitActionResult>;
+  stashPop(cwd?: string): Promise<GitActionResult>;
+  /** `reset --soft HEAD~1`: the commit's changes stay staged. */
+  undoLastCommit(cwd?: string): Promise<GitActionResult>;
+  /** `git init` in the project folder. */
+  init(cwd?: string): Promise<GitActionResult>;
+}
+
+/** Integrated terminal sessions (main process node-pty). Each id is one shell, keyed by the renderer's pane id. */
+export interface UnifyTerminalApi {
+  /**
+   * Starts a shell for `id` (replacing any existing one). Resolves `{ ok: false, error }` when it cannot start;
+   * on success `cwd` is the folder it started in (the requested one, else the project folder, else home).
+   */
+  create(id: string, opts: { cols: number; rows: number; cwd?: string }): Promise<{ ok: boolean; shell?: string; cwd?: string; error?: string }>;
+  write(id: string, data: string): void;
+  resize(id: string, cols: number, rows: number): void;
+  kill(id: string): void;
+  /** Output for any session; filter by `id`. Returns an unsubscribe function. */
+  onData(listener: (id: string, data: string) => void): () => void;
+  /** The shell for `id` exited with `code`; the session is gone. Returns an unsubscribe function. */
+  onExit(listener: (id: string, code: number) => void): () => void;
+}
+
 export interface UnifyBridge {
   post(message: SidebarWebviewMessage): void;
   onMessage(listener: (message: SidebarHostMessage) => void): () => void;
@@ -46,6 +132,10 @@ export interface UnifyBridge {
   pickContextFolder?(): Promise<string | undefined>;
   /** Absolute path of the open project folder (main process `projectPath`). */
   projectPath?: string;
+  /** Integrated terminals (node-pty in the main process). Missing outside Electron. */
+  terminal?: UnifyTerminalApi;
+  /** Source Control (git in the main process). Missing outside Electron. */
+  git?: UnifyGitApi;
 }
 
 /** The chat this window shows on its own, when it is a pop-out window (`?popout=<chatId>`). */

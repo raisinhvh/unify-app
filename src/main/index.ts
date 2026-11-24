@@ -19,6 +19,8 @@ import { activate, deactivate } from '../engine/extension';
 import { getSidebarHtml, initialSidebarState } from '../engine/sidebar/view';
 import { configureGithubSecretStore } from '../engine/unify/github';
 import { installMediaProtocol, registerMediaSchemes } from './mediaProtocol';
+import { registerGitIpc } from './git';
+import { killAllTerminals, registerTerminalIpc } from './terminal';
 import { checkForUpdatesNow, startUpdater, stopUpdater } from './updater';
 import {
   bootWebview, configureNotifications, prepareUnify, receiveRendererMessage, setUiAdapter, shimSetupStatus,
@@ -1041,6 +1043,8 @@ function installIpc(): void {
     pendingUi.get(payload.id)?.(payload.result);
     pendingUi.delete(payload.id);
   });
+  registerTerminalIpc(() => projectPath);
+  registerGitIpc(() => projectPath);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1183,11 +1187,15 @@ if (!hasSingleInstanceLock) {
       .catch(() => undefined)
       .finally(() => {
         persistRendererState();
+        killAllTerminals();
         app.exit(0);
       });
     // Never hang shutdown on a stuck engine save.
     setTimeout(() => app.exit(0), 3000);
   });
+
+  // app.exit() skips will-quit, so before-quit also kills terminals; this covers any other quit path.
+  app.on('will-quit', () => killAllTerminals());
 
   app.on('window-all-closed', () => {
     // macOS apps stay running with no windows, as the platform expects.

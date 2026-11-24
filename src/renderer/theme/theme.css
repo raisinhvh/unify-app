@@ -41,6 +41,14 @@
   --panel-width: 280px;
   --titlebar-height: 32px;
 
+  /* Accessibility scales. theme/accessibility.ts sets --text-scale, --line-scale and --space-scale inline on
+     <html>; these defaults are the neutral values. Row tokens derive from --space-scale (Density). */
+  --text-scale: 1;
+  --line-scale: 1;
+  --space-scale: 1;
+  --row-h: calc(28px * var(--space-scale));
+  --row-pad-y: calc(4px * var(--space-scale));
+
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.36), 0 2px 6px rgba(0, 0, 0, 0.24);
 
   color-scheme: dark;
@@ -63,8 +71,9 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 13px;
-  line-height: 20px;
+  /* Unitless line-height so it grows with the font; px would stay fixed when Text size changes. */
+  font-size: calc(13px * var(--text-scale));
+  line-height: calc(1.5385 * var(--line-scale));
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   user-select: none;
@@ -94,66 +103,140 @@ textarea {
   background: var(--accent-tint);
 }
 
+/* One slim, quiet scrollbar everywhere: a floating pill (inset from the edge) that firms up on hover.
+   Don't set scrollbar-width / scrollbar-color on elements: in Chromium either one turns these styles off
+   and brings back the stock scrollbar. Use scrollbar-width: none only to hide one. */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border: 3px solid transparent;
-  border-radius: 6px;
-  background-clip: padding-box;
-}
-
-::-webkit-scrollbar-track {
   background: transparent;
 }
 
+::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  min-width: 32px;
+  background-color: color-mix(in srgb, var(--text3) 35%, transparent);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--text3) 65%, transparent);
+  border-width: 2px;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--text3);
+  border-width: 2px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
 /* Type scale */
+/* Sizes multiply by --text-scale (Text size); line heights are ratios times --line-scale (Line spacing). */
 .type-display {
   font-weight: var(--weight-display);
-  font-size: 56px;
-  line-height: 56px;
+  font-size: calc(56px * var(--text-scale));
+  line-height: calc(1 * var(--line-scale));
   letter-spacing: -0.03em;
 }
 
 .type-title {
   font-weight: var(--weight-title);
-  font-size: 20px;
-  line-height: 28px;
+  font-size: calc(20px * var(--text-scale));
+  line-height: calc(1.4 * var(--line-scale));
   letter-spacing: -0.015em;
 }
 
 .type-heading {
   font-weight: var(--weight-heading);
-  font-size: 14px;
-  line-height: 20px;
+  font-size: calc(14px * var(--text-scale));
+  line-height: calc(1.4286 * var(--line-scale));
 }
 
 .type-body {
   font-weight: 400;
-  font-size: 13px;
-  line-height: 20px;
+  font-size: calc(13px * var(--text-scale));
+  line-height: calc(1.5385 * var(--line-scale));
 }
 
 .type-label {
   font-weight: var(--weight-label);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: calc(12px * var(--text-scale));
+  line-height: calc(1.3333 * var(--line-scale));
 }
 
 .type-caption {
   font-weight: 400;
-  font-size: 11px;
-  line-height: 14px;
+  font-size: calc(11px * var(--text-scale));
+  line-height: calc(1.2727 * var(--line-scale));
 }
 
 .type-mono {
   font-family: var(--font-mono);
   font-weight: 400;
-  font-size: 12px;
-  line-height: 18px;
+  font-size: calc(12px * var(--text-scale));
+  line-height: calc(1.5 * var(--line-scale));
+}
+
+/* Accessibility preferences (theme/accessibility.ts sets these data attributes on <html>). */
+
+/* Letter spacing: inherited by all text; elements with their own letter-spacing (.type-display) keep theirs. */
+:root[data-letter-spacing="wide"] body {
+  letter-spacing: 0.04em;
+}
+
+/* Density. Row heights and padding follow --space-scale; compact and roomy override the padding on the list rows. */
+:root[data-density="compact"] .menu-item,
+:root[data-density="compact"] .chat-row,
+:root[data-density="compact"] .tree-row,
+:root[data-density="compact"] .setting-row,
+:root[data-density="compact"] .model-picker-row {
+  padding-top: var(--row-pad-y);
+  padding-bottom: var(--row-pad-y);
+}
+
+:root[data-density="roomy"] .menu-item,
+:root[data-density="roomy"] .chat-row,
+:root[data-density="roomy"] .tree-row,
+:root[data-density="roomy"] .setting-row,
+:root[data-density="roomy"] .model-picker-row {
+  padding-top: calc(10px * var(--space-scale));
+  padding-bottom: calc(10px * var(--space-scale));
+}
+
+/* High contrast: !important so these beat the inline colour variables theme/index.ts writes on <html>. */
+:root[data-high-contrast] {
+  --text2: #D8CFC5 !important;
+  --text3: #B3A99E !important;
+  --border: #5C5049 !important;
+}
+
+/* Larger click targets: buttons and rows get a minimum hit area. Switches keep their fixed pill shape
+   (a min-height would stretch the 16px track into a tall block). */
+:root[data-large-targets] button:not(.toggle),
+:root[data-large-targets] [role="menuitem"],
+:root[data-large-targets] [role="option"] {
+  min-height: 32px;
+}
+
+:root[data-large-targets] .icon-button {
+  min-width: 32px;
+  min-height: 32px;
+}
+
+/* Underline links: links stay underlined, not only on hover. */
+:root[data-underline-links] a,
+:root[data-underline-links] a[href] {
+  text-decoration: underline;
 }
 
 /* Theme crossfade (View Transitions). */

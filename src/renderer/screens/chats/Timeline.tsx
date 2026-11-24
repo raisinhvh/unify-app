@@ -21,6 +21,7 @@
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch, type Accessor, type JSX } from 'solid-js';
 import { Button, Icon, Loader, actionLoader, toolAction, tooltip, type IconName } from '../../components';
 import { isImage, mediaKey, openMediaViewer, thumbSource, uniqueMedia, type MediaItem } from '../../components/media';
+import { imageDragProps } from '../../shell/imageDrag';
 import { Collapse, Presence } from '../../motion';
 import { post } from '../../bridge';
 import type {
@@ -39,7 +40,7 @@ import { EditRow, LiveEditDetail } from './EditPreview';
 import { InternalIcon, internalLoader } from './internalTools';
 import { SubagentStrip, ToolMediaLine } from './MediaLines';
 import { QuestionRow } from './QuestionRow';
-import { handleMarkdownClick, renderMarkdown } from './markdown';
+import { handleMarkdownClick, handleMarkdownKeyDown, renderMarkdown } from './markdown';
 import './timeline.css';
 
 type ToolLike = Pick<SidebarToolEvent, 'title' | 'detail' | 'full' | 'kind'> & {
@@ -378,7 +379,7 @@ function UserMessage(props: {
                   ref={element => thumbs.set(mediaKey(image), element)}
                   onClick={() => openImage(image)}
                 >
-                  <img src={thumbSource(image)} alt="" draggable={false} />
+                  <img src={thumbSource(image)} alt="" {...imageDragProps(() => image.file, () => image.name)} />
                 </button>
               )}
             </For>
@@ -410,7 +411,14 @@ function UserMessage(props: {
 }
 
 function AssistantMessage(props: { text: string }): JSX.Element {
-  return <div class="feed-entry assistant markdown" innerHTML={renderMarkdown(props.text)} onClick={handleMarkdownClick} />;
+  return (
+    <div
+      class="feed-entry assistant markdown"
+      innerHTML={renderMarkdown(props.text)}
+      onClick={handleMarkdownClick}
+      onKeyDown={handleMarkdownKeyDown}
+    />
+  );
 }
 
 /* Approvals */
@@ -474,7 +482,12 @@ function MediaEntry(props: { item: Extract<FeedItem, { kind: 'media' }>; sender?
   return (
     <div class="feed-entry assistant media-entry" classList={{ generated: !!props.item.generated }}>
       <Show when={props.item.caption}>
-        <div class="markdown" innerHTML={renderMarkdown(props.item.caption!)} onClick={handleMarkdownClick} />
+        <div
+          class="markdown"
+          innerHTML={renderMarkdown(props.item.caption!)}
+          onClick={handleMarkdownClick}
+          onKeyDown={handleMarkdownKeyDown}
+        />
       </Show>
       <div class="media-items">
         <Show
@@ -501,7 +514,7 @@ function MediaEntry(props: { item: Extract<FeedItem, { kind: 'media' }>; sender?
                     <img
                       src={props.item.generated ? thumbSource(media) : media.file}
                       alt={media.name}
-                      draggable={false}
+                      {...imageDragProps(() => media.file, () => media.name)}
                     />
                   </Show>
                 </button>
@@ -859,6 +872,7 @@ export function Timeline(props: { chatId: string }): JSX.Element {
   return (
     <div
       class="timeline"
+      data-chat-id={props.chatId}
       ref={scroller}
       onScroll={event => {
         const element = event.currentTarget;

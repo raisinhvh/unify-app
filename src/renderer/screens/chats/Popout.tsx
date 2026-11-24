@@ -45,9 +45,12 @@ export function Popout(props: { chatId: string }): JSX.Element {
   });
   onCleanup(stopListening);
 
+  // A pop-out is not a leaf of the workspace: no leaf key, always focused, never dragged.
   const context: PaneContext = {
+    paneId: `popout:${props.chatId}`,
+    pane: () => ({ id: `popout:${props.chatId}`, kind: 'chat', chatId: props.chatId }),
     chatId: props.chatId,
-    cellIndex: () => 0,
+    leafKey: () => '',
     focused: () => true,
     dragging: () => false,
     startDrag: () => undefined,

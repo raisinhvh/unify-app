@@ -2,7 +2,7 @@
   min-width: 0;
   max-width: 320px;
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
   color: var(--text);
   pointer-events: none;

@@ -9,6 +9,7 @@ import { readPersisted, writePersisted } from '../persist';
 import { prefersReducedMotion } from '../motion/reducedMotion';
 import { defaultTheme, lightThemes, sharedTokens, themes, type ThemeId, type ThemeTokens } from './themes';
 import './fonts';
+import { applyFontChoices } from './fontChoice';
 import './theme.css';
 
 export * from './themes';
@@ -40,6 +41,7 @@ function writeVariables(id: ThemeId): void {
 /** Applies the persisted theme. Call once before mounting. */
 export function installTheme(): void {
   writeVariables(currentTheme());
+  applyFontChoices();
 }
 
 interface ViewTransitionDocument {

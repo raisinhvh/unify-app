@@ -6,6 +6,7 @@
  */
 import { Show, type JSX } from 'solid-js';
 import { pressable } from '../../motion';
+import { imageDragProps } from '../../shell/imageDrag';
 import { Icon } from '../Icon';
 import { isImage, thumbSource, type MediaItem } from './media';
 import './media.css';
@@ -35,6 +36,9 @@ export function MediaThumb(props: MediaThumbProps): JSX.Element {
       aria-label={props.label ?? props.media.name}
       aria-pressed={props.active ? 'true' : 'false'}
       title={props.media.name}
+      // On the button, not the <img>: prints set `pointer-events: none` on their image, so it never starts a drag.
+      {...imageDragProps(() => (isImage(props.media) ? props.media.file : undefined), () => props.media.name)}
+      draggable={isImage(props.media)}
       ref={element => {
         button = element;
         pressable(element, 0.94);
@@ -53,11 +57,7 @@ export function MediaThumb(props: MediaThumbProps): JSX.Element {
           </span>
         }
       >
-        <img
-          src={thumbSource(props.media)}
-          alt={props.media.name}
-          draggable={false}
-        />
+        <img src={thumbSource(props.media)} alt={props.media.name} draggable={false} />
       </Show>
     </button>
   );

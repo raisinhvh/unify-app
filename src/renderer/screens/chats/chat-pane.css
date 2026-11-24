@@ -41,7 +41,7 @@
 }
 
 .chat-pane-title {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   margin: 0;
   min-width: 0;
   overflow: hidden;
@@ -63,9 +63,46 @@
   outline: none;
 }
 
+/* The folder the agent works in, right after the title; it shrinks (ellipsis) before the title does. */
+.chat-pane-dir {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 4 auto;
+  min-width: 0;
+  max-width: 50%;
+  height: 22px;
+  margin-left: 8px;
+  padding: 0 6px;
+  color: var(--text3);
+  font-size: calc(11px * var(--text-scale, 1));
+  white-space: nowrap;
+  border-radius: 4px;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.chat-pane-dir > svg {
+  flex: none;
+}
+
+.chat-pane-dir-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-pane-dir:not(.static):hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.chat-pane-dir.static {
+  cursor: default;
+}
+
 /* Empty drag area; it gives way first when the pane gets narrow. */
 .chat-pane-spacer {
-  flex: 0 1 8px;
+  flex: 1 1 8px;
   min-width: 0;
   align-self: stretch;
   cursor: grab;
@@ -88,8 +125,16 @@
 }
 
 /* Narrow panes: drop the pop-out button first (More still has every action), then the model line, so More and Close never clump. */
+/* The folder shows only its icon when there is little room, and goes with the pop-out button. */
+@container chat-pane (max-width: 420px) {
+  .chat-pane-dir-path {
+    display: none;
+  }
+}
+
 @container chat-pane (max-width: 320px) {
-  .chat-pane-popout {
+  .chat-pane-popout,
+  .chat-pane-dir {
     display: none;
   }
 }
@@ -124,7 +169,7 @@
   height: 24px;
   padding: 0 12px 4px;
   color: var(--text2);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
 }
 
 .chat-status-label {
@@ -161,7 +206,7 @@
   height: 28px;
   padding-right: 14px;
   color: var(--text);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   text-align: left;
 }
 
@@ -199,12 +244,12 @@
 
 .diff-add {
   color: var(--add);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
 }
 
 .diff-del {
   color: var(--del);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
 }
 
 .changes-list {
@@ -226,7 +271,7 @@
   white-space: nowrap;
   color: var(--text2);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   text-align: left;
 }
 

@@ -103,13 +103,7 @@ test('attached images go inline as base64 blocks; unreadable or unsupported ones
   const blocks = userContent('Look', [{ path: png, mimeType: 'image/png' }, { path: join(isolatedUnifyHome, 'x.bmp'), mimeType: 'image/bmp' }]);
   assert.deepEqual(blocks[0], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AQID' } });
   assert.equal(blocks.length, 2);
-  assert.match(blocks[1].text, /^Look
-
-Attached images (shown above; saved at):
-.*shot.png
-
-Attached images (view these files):
-.*x.bmp$/);
+  assert.match(blocks[1].text, /^Look\n\nAttached images \(shown above; saved at\):\n.*shot\.png\n\nAttached images \(view these files\):\n.*x\.bmp$/);
   assert.deepEqual(userContent('Hi', undefined), [{ type: 'text', text: 'Hi' }]);
 });
 

@@ -75,7 +75,7 @@
   height: 28px;
   padding: 0 8px;
   color: var(--text);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
   text-align: left;
   border-radius: var(--radius-row);

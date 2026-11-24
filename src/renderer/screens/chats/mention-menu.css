@@ -16,7 +16,6 @@
   flex-direction: column;
   max-height: min(320px, 40vh);
   overflow-y: auto;
-  scrollbar-width: thin;
 }
 
 /* One block for the whole list; it glides to the highlighted row. */
@@ -42,7 +41,7 @@
   padding: 0 8px;
   border-radius: var(--radius-row);
   color: var(--text);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   cursor: pointer;
 }
 
@@ -66,7 +65,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text3);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
 }
 
 .mention-empty {

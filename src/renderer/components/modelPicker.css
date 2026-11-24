@@ -80,7 +80,7 @@
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
 }
 
 .model-picker-search-input::placeholder {
@@ -125,7 +125,7 @@
   padding: 0 8px;
   border-radius: var(--radius-row);
   color: var(--text);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   white-space: nowrap;
   cursor: default;
   background-color: rgb(from var(--hover) r g b / 0);

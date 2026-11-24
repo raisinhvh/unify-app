@@ -1,7 +1,8 @@
 /**
  * One chat in a tiled pane (Figma 12 Chat pane 306:3030, 11 Shell 306:2201).
  *
- *   header    grip (hold-drag to rearrange, see shell/PaneGrid) · title · model picker · pop out · more · close
+ *   header    grip (hold-drag to rearrange, see shell/PaneGrid) · title · working folder · model picker · pop out ·
+ *             more · close
  *   job       JobBar.tsx: the chat's /job run (round, phase, criteria), only while it has one
  *   timeline  Timeline.tsx
  *   status    what the agent is doing right now (loader + label) while it runs
@@ -18,10 +19,15 @@ import { bridge, post } from '../../bridge';
 import type { PaneContext } from '../../shell/PaneGrid';
 import { markRead, viewState } from '../../store';
 import { ModelPicker } from '../../components/ModelPicker';
+import type { SidebarProject } from '../../protocol';
+import { openProjectInFiles } from '../../shell/fileLinks';
+import { feature } from '../../store/features';
+import { shortPath } from './projects';
 import { Composer } from './Composer';
 import { JobBar } from './JobBar';
 import { ScheduleBar } from './ScheduleBar';
 import { ShutdownBar } from './ShutdownBar';
+import { NoQuestionsBar } from './NoQuestionsBar';
 import { Timeline } from './Timeline';
 import './chat-pane.css';
 
@@ -112,6 +118,31 @@ function ChangesBar(props: { chatId: string }): JSX.Element {
   );
 }
 
+/**
+ * The folder the agent works in, beside the title: the project's last two segments ("Programs/Unify"), full path in
+ * the tooltip. Clicking shows it in the Files pane (not in pop-outs, which have no panes). No project means the
+ * chat runs in its own scratch folder.
+ */
+function ChatFolder(props: { project: SidebarProject | undefined; standalone: boolean }): JSX.Element {
+  const path = () => props.project?.path || '';
+  const clickable = () => !!path() && !props.standalone && feature('editor.enabled');
+  return (
+    <button
+      type="button"
+      class="chat-pane-dir"
+      classList={{ static: !clickable() }}
+      title={path() ? (clickable() ? `${path()}\nShow in Files` : path()) : 'No folder: this chat works in its own scratch folder'}
+      tabIndex={clickable() ? 0 : -1}
+      onClick={() => {
+        if (clickable() && props.project) openProjectInFiles(props.project);
+      }}
+    >
+      <Icon name="folder" size={12} />
+      <span class="chat-pane-dir-path">{path() ? shortPath(path()) : 'No folder'}</span>
+    </button>
+  );
+}
+
 export function ChatPane(props: { context: PaneContext }): JSX.Element {
   const chatId = () => props.context.chatId;
   const session = () => viewState.sessions.find(item => item.id === chatId());
@@ -182,6 +213,9 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
             {session()?.name || 'New chat'}
           </h3>
         </Show>
+        <Show when={!renaming()}>
+          <ChatFolder project={session()?.project} standalone={!!props.context.standalone} />
+        </Show>
         <span class="chat-pane-spacer" onPointerDown={event => props.context.startDrag(event)} />
         <ModelPicker
           class="chat-pane-model"
@@ -211,6 +245,7 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
         <ChangesBar chatId={chatId()} />
         <ScheduleBar chatId={chatId()} />
         <ShutdownBar />
+        <NoQuestionsBar />
         <Composer chatId={chatId()} placeholder="Reply, @ to mention a file" />
       </div>
       <Menu anchor={moreAnchor()} open={moreOpen()} onClose={() => setMoreOpen(false)} placement="bottom-end" items={moreItems()} onSelect={onMore} />

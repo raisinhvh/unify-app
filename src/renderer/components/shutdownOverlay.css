@@ -47,7 +47,7 @@
 .shutdown-seconds {
   font-family: var(--font-ui);
   font-weight: var(--weight-display);
-  font-size: 56px;
+  font-size: calc(56px * var(--text-scale, 1));
   line-height: 56px;
   letter-spacing: -0.03em;
   color: var(--text);

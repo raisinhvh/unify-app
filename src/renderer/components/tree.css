@@ -44,7 +44,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text3);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   line-height: 14px;
 }
 

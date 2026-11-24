@@ -5,8 +5,7 @@ One folder per route. `screens/index.tsx` maps each route to its screen.
 | Route | Folder | Entry | Figma |
 | --- | --- | --- | --- |
 | chats (Home, panes, Chats panel) | `chats/` | `Home`, `ChatPane`, `ChatsPanel` (drawn by the Shell) | 10, 10b, 11, 11b, 12, 13, 14 |
-| files | `files/` | `FilesScreen` (+ `FilesPanel` for the side panel) | 20 |
-| knowledge | `knowledge/` | `KnowledgeScreen` (+ `KnowledgePanel`) | 21 |
+| files, knowledge, terminal, image | `files/`, `knowledge/`, `terminal/` | not routes: panes in the workspace (`shell/PaneContent.tsx`) use `FilesPanel` + `FilesEditor`, `KnowledgePanel` + `KnowledgeContent`, `TerminalView` | 20, 21 |
 | toolpacks | `toolpacks/` | `ToolpacksScreen` | 22 |
 | hub | `hub/` | `HubScreen` | 23 |
 | providers | `providers/` | `ProvidersScreen` (+ `ProvidersPanel`) | 24, 24b, 24c |
@@ -27,6 +26,10 @@ the setup wizard. Drop it from a fixture to capture the wizard.
 
 The Shell draws the screen inside `.content-screen` (a surface card under the title bar). Home and its
 backdrop stay underneath; never draw your own backdrop.
+
+Files, Knowledge and Terminal are no longer routes. They are pane kinds (`shell/layout.ts`), opened from the rail
+with `openPane(kind)`, and their bodies come from `shell/PaneContent.tsx`, which reuses the screens' exported
+panels and content halves. Persisted `files` or `knowledge` routes migrate to the chats route with that pane open.
 
 ## Use the foundation
 

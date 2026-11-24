@@ -136,20 +136,21 @@
   transition: opacity 160ms ease;
 }
 
+/* The grip line is centred in the hit area and never longer than the handle itself (any gutter length). */
 .gutter-vertical::after {
-  left: 3px;
+  left: 50%;
   top: 50%;
   width: 2px;
-  height: 32px;
-  translate: 0 -50%;
+  height: min(32px, calc(100% - 8px));
+  translate: -50% -50%;
 }
 
 .gutter-horizontal::after {
-  top: 3px;
+  top: 50%;
   left: 50%;
   height: 2px;
-  width: 32px;
-  translate: -50% 0;
+  width: min(32px, calc(100% - 8px));
+  translate: -50% -50%;
 }
 
 .gutter:hover::after {
@@ -181,15 +182,196 @@ body.dragging-pane * {
   pointer-events: none;
 }
 
-/* Layout picker (Figma 11b) */
+/* Five-zone hint on the leaf under a drag: outer bands are edges, the middle is the centre swap. */
+.zone-hint {
+  position: absolute;
+  z-index: 9;
+  border-radius: var(--radius-pane);
+  outline: 1px solid color-mix(in srgb, var(--text3) 30%, transparent);
+  pointer-events: none;
+}
+
+.zone-hint-zone {
+  position: absolute;
+  background: color-mix(in srgb, var(--text3) 7%, transparent);
+  transition: background-color 120ms ease;
+}
+
+.zone-hint-zone.top,
+.zone-hint-zone.bottom {
+  left: 0;
+  right: 0;
+  height: 28%;
+}
+
+.zone-hint-zone.top {
+  top: 0;
+  border-radius: var(--radius-pane) var(--radius-pane) 0 0;
+}
+
+.zone-hint-zone.bottom {
+  bottom: 0;
+  border-radius: 0 0 var(--radius-pane) var(--radius-pane);
+}
+
+.zone-hint-zone.left,
+.zone-hint-zone.right {
+  top: 28%;
+  bottom: 28%;
+  width: 28%;
+}
+
+.zone-hint-zone.left {
+  left: 0;
+}
+
+.zone-hint-zone.right {
+  right: 0;
+}
+
+.zone-hint-zone.center {
+  top: 28%;
+  bottom: 28%;
+  left: 28%;
+  right: 28%;
+}
+
+.zone-hint-zone.active {
+  background: var(--accent-tint);
+}
+
+/* Snap guide across a split while its handle snaps. */
+.snap-guide {
+  position: absolute;
+  z-index: 12;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.snap-guide.vertical {
+  width: 1px;
+  translate: -0.5px 0;
+}
+
+.snap-guide.horizontal {
+  height: 1px;
+  translate: 0 -0.5px;
+}
+
+/* "33% | 67%" beside the pointer while a split handle is dragged. */
+.ratio-label {
+  position: absolute;
+  z-index: 13;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--raised);
+  box-shadow: var(--shadow-pop);
+  color: var(--text2);
+  font-size: calc(11px * var(--text-scale, 1));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Title-bar layout menu (LayoutMenu.tsx). */
+.layout-menu-root {
+  display: inline-flex;
+  -webkit-app-region: no-drag;
+}
+
+.layout-menu {
+  width: 272px;
+  padding: 8px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-menu);
+  box-shadow: var(--shadow-pop);
+}
+
+.layout-menu-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.layout-menu-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 6px 4px 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.layout-menu-tile:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.layout-menu-tile .layout-thumb-cell {
+  background: var(--hover);
+}
+
+.layout-menu-tile:hover .layout-thumb-cell {
+  background: color-mix(in srgb, var(--hover) 70%, var(--text3));
+}
+
+.layout-menu-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(11px * var(--text-scale, 1));
+  line-height: 1.2;
+}
+
+.layout-menu-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+}
+
+.layout-menu-separator {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border);
+}
+
+.layout-menu-row {
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: calc(13px * var(--text-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+
+.layout-menu-row:hover {
+  background: var(--hover);
+}
+
+/* Layout picker (Figma 11b): twelve presets, six per row. */
 .layout-picker {
   position: absolute;
   top: 0;
   left: 50%;
   translate: -50% 0;
   z-index: 30;
-  display: flex;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(6, max-content);
+  justify-content: center;
+  gap: 10px 12px;
+  max-width: calc(100% - 16px);
   padding: 10px 12px 8px;
   background: var(--raised);
   border: 1px solid var(--border);
@@ -205,23 +387,24 @@ body.dragging-pane * {
   gap: 6px;
 }
 
-.layout-tile-cells {
+.layout-thumb {
   position: relative;
+  flex: none;
 }
 
-.layout-tile-cell {
+.layout-thumb-cell {
   position: absolute;
   border-radius: 3px;
   background: var(--hover);
   transition: background-color 120ms ease;
 }
 
-.layout-tile.hovered .layout-tile-cell {
+.layout-tile.hovered .layout-thumb-cell {
   background: color-mix(in srgb, var(--hover) 70%, var(--text3));
 }
 
-.layout-tile-cell.hovered,
-.layout-tile.hovered .layout-tile-cell.hovered {
+.layout-thumb-cell.hovered,
+.layout-tile.hovered .layout-thumb-cell.hovered {
   background: var(--accent);
 }
 

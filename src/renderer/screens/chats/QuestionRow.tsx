@@ -14,6 +14,7 @@ import { Collapse } from '../../motion';
 import { post } from '../../bridge';
 import type { SidebarQuestion } from '../../protocol';
 import './timeline.css';
+import './question-row.css';
 
 interface Draft {
   option?: number;
@@ -22,6 +23,13 @@ interface Draft {
 }
 
 const drafts = new Map<string, Draft[]>();
+const noteDrafts = new Map<string, string>();
+
+/** Grows a notes textarea to fit its content (capped by CSS max-height). */
+const fitHeight = (element: HTMLTextAreaElement) => {
+  element.style.height = 'auto';
+  element.style.height = `${element.scrollHeight}px`;
+};
 
 interface QuestionItem {
   id: string;
@@ -36,6 +44,7 @@ export function QuestionRow(props: { chatId: string; item: QuestionItem }): JSX.
   const questionId = () => props.item.id.slice('question:'.length);
   const draftKey = () => `${props.chatId}\0${questionId()}`;
   const [answers, setAnswers] = createSignal<Draft[]>(drafts.get(draftKey()) || []);
+  const [notes, setNotes] = createSignal(noteDrafts.get(draftKey()) || '');
 
   const update = (index: number, draft: Draft) => {
     const next = [...answers()];
@@ -61,12 +70,17 @@ export function QuestionRow(props: { chatId: string; item: QuestionItem }): JSX.
       }
       return draft.option !== undefined ? question.options[draft.option]?.label || '' : otherText(draft);
     });
+    // Notes travel inside the last answer so the message protocol (string[] answers) stays unchanged.
+    const note = notes().trim();
+    if (note && result.length) result[result.length - 1] = `${result[result.length - 1]}\n\nNotes: ${note}`;
     drafts.delete(draftKey());
+    noteDrafts.delete(draftKey());
     post({ type: 'questionResponse', id: questionId(), answers: result, chatId: props.chatId });
   };
 
   const skip = () => {
     drafts.delete(draftKey());
+    noteDrafts.delete(draftKey());
     post({ type: 'questionResponse', id: questionId(), answers: null, chatId: props.chatId });
   };
 
@@ -179,6 +193,32 @@ export function QuestionRow(props: { chatId: string; item: QuestionItem }): JSX.
             );
           }}
         </For>
+        <div class="question-notes">
+          <label class="question-notes-label type-caption" for={`question-notes-${props.item.id}`}>Notes</label>
+          <textarea
+            id={`question-notes-${props.item.id}`}
+            ref={element => queueMicrotask(() => fitHeight(element))}
+            class="question-notes-input"
+            rows={1}
+            maxLength={1000}
+            placeholder="Notes for the agent (optional)"
+            value={notes()}
+            onInput={event => {
+              const value = event.currentTarget.value;
+              fitHeight(event.currentTarget);
+              setNotes(value);
+              if (value) noteDrafts.set(draftKey(), value);
+              else noteDrafts.delete(draftKey());
+            }}
+            onKeyDown={event => {
+              // Enter inserts a newline; Ctrl/Cmd+Enter submits when every question is answered.
+              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && ready()) {
+                event.preventDefault();
+                submit();
+              }
+            }}
+          />
+        </div>
         <div class="interrupt-actions">
           <Button variant="primary" disabled={!ready()} onClick={submit}>Submit</Button>
           <Button variant="secondary" onClick={skip}>Skip</Button>

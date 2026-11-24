@@ -1,8 +1,11 @@
 /**
  * Top-level routes. One signal, persisted per window.
  *
- *   chats      Home underneath + the tiled chat panes (the Chats side panel is open)
- *   files, knowledge, toolpacks, agents, providers   rail items with their own screen
+ *   chats      Home underneath + the tiled workspace (chats, Files, Knowledge, Terminal and image panes; the
+ *              Shell draws the rail entries for the panes, see shell/Shell.tsx)
+ *   toolpacks, agents, providers   rail items with their own screen
+ *   files, knowledge   no longer routes: kept in the union so a persisted route can be read; the Shell opens
+ *              the matching pane and moves to chats (shell/Shell.tsx)
  *   hub        reached from Toolpacks (no rail item, as in Figma)
  *   settings   the gear at the bottom of the rail
  *   setup      first-run flow (full window, no rail)
@@ -23,11 +26,12 @@ export interface RouteInfo {
   icon: IconName;
 }
 
-/** Rail order matches Figma Rail 306:785. */
+/**
+ * Rail order matches Figma Rail 306:785. Files, Knowledge and Terminal are pane entries built in the Shell
+ * (they sit between Chats and Toolpacks there).
+ */
 export const railRoutes: RouteInfo[] = [
   { id: 'chats', label: 'Chats', icon: 'chats' },
-  { id: 'files', label: 'Files', icon: 'files' },
-  { id: 'knowledge', label: 'Knowledge', icon: 'knowledge' },
   { id: 'toolpacks', label: 'Toolpacks', icon: 'toolpacks' },
   { id: 'agents', label: 'Agents', icon: 'bot' },
   { id: 'providers', label: 'Providers', icon: 'providers' },

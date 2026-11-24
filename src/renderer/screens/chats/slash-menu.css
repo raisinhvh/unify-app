@@ -67,7 +67,7 @@
   align-items: baseline;
   gap: 10px;
   min-width: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   line-height: 16px;
 }
 
@@ -83,7 +83,7 @@
   white-space: nowrap;
   color: var(--text3);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
 }
 
 /* Up to two lines, so longer descriptions (/job) read in full; the highlight block measures each row. */
