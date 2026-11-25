@@ -103,15 +103,55 @@
   transform-origin: center bottom;
 }
 
-/* Footer under Settings: the app version, and a DEV badge on runs started from run.cmd / run.sh. */
+/* Updates button above Settings (only while an update is pending); the dot marks "ready to install". */
+.nav-rail-updates {
+  position: relative;
+  transform-origin: center;
+}
+
+.nav-rail-update-dot {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
+  pointer-events: none;
+  transform-origin: center;
+}
+
+/* Footer under Settings: the app version, and a DEV badge on runs started from run.cmd / run.sh. Opens Updates. */
 .rail-footer {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
   width: 40px;
-  cursor: default;
+  /* The padding gives the hover some room; the negative margin keeps the text where it was. */
+  margin: -4px 0;
+  padding: 4px 0;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
   user-select: none;
+}
+
+.rail-footer:hover {
+  background: color-mix(in srgb, var(--hover) 60%, transparent);
+}
+
+.rail-footer:hover .rail-version {
+  color: var(--text2);
+}
+
+.rail-footer:focus-visible {
+  outline: 1px solid var(--border);
+  outline-offset: 1px;
 }
 
 .rail-version {

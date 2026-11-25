@@ -18,7 +18,7 @@ globalThis.__dshDelegateTestSpawn = (command, args, options) => {
 };
 
 const bundled = await build({
-  entryPoints: ['src/engine/runtime/oauthCli.ts'], bundle: true, write: false, format: 'esm', platform: 'node',
+  entryPoints: ['src/engine/runtime/oauthCli.ts'], bundle: true, loader: { '.sh': 'text' }, write: false, format: 'esm', platform: 'node',
   plugins: [{ name: 'fake-cli', setup(builder) {
     builder.onResolve({ filter: /^node:child_process$/ }, () => ({ path: 'process', namespace: 'fake' }));
     builder.onResolve({ filter: /accounts\/oauthCli$/ }, () => ({ path: 'accounts', namespace: 'fake' }));

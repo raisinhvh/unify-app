@@ -10,7 +10,7 @@ const bundle = await build({
     export { OAuthCliRuntime } from './runtime/oauthCli';
     export { terminateProcessTree } from './runtime/cancellation';
     export { WorkspaceMirror } from './runtime/shadow';`, resolveDir: resolve('src/engine'), loader: 'ts' },
-  bundle: true, write: false, platform: 'node', format: 'esm',
+  bundle: true, loader: { '.sh': 'text' }, write: false, platform: 'node', format: 'esm',
   plugins: [{ name: 'runtime-stubs', setup(builder) {
     builder.onResolve({ filter: /^node:child_process$/ }, () => ({ path: 'spawn', namespace: 'stub' }));
     builder.onResolve({ filter: /^vscode$/ }, () => ({ path: 'vscode', namespace: 'stub' }));

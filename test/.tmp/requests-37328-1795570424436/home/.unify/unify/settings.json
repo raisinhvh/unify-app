@@ -1,0 +1,9 @@
+{
+  "unify.models": [
+    {
+      "name": "Claude Default",
+      "provider": "claude-cli",
+      "enabled": true
+    }
+  ]
+}

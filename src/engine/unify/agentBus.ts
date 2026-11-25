@@ -61,5 +61,7 @@ export interface AgentBus {
   send(fromAgentId: string, toAgentId: string, text: string, replyToId?: string): AgentMessage;
   /** Undelivered messages for an agent; marks them delivered. */
   takeInbox(agentId: string): AgentMessage[];
+  /** Whether the agent has undelivered messages, without taking them. */
+  hasInbox(agentId: string): boolean;
   onEvent(listener: (event: AgentBusEvent) => void): () => void;
 }

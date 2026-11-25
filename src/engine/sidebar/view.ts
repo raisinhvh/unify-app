@@ -98,7 +98,7 @@ export interface SidebarNameModel { model?: string; effort?: string; speed?: str
 /** One entry of the Smart Auto ranking; the list runs from smartest to least smart. */
 export interface SidebarSmartAutoRank { model: string; effort?: string; note?: string }
 /** A slash command offered in the composer menu. */
-export interface SidebarSlashCommand { name: string; description: string; usage: string }
+export interface SidebarSlashCommand { name: string; description: string; usage: string; aliases?: string[] }
 /**
  * A prompt queued by `/schedule` to be sent later. `chatId` is the chat it was scheduled from (undefined from Home:
  * it then starts a new chat when it fires). `dueAt` is epoch ms. Prompts that came due while Unify was closed
@@ -463,8 +463,9 @@ export interface SidebarSubagent {
   /**
    * 'user' rows are agent messages sent to this subagent (send_message), shown as incoming bubbles.
    * `from` names the sender when it is not the subagent's own parent.
+   * Rows with `to` are messages this subagent sent (send_message), shown as quiet `me → to` rows.
    */
-  messages: { id: string; role: 'assistant' | 'tool' | 'user'; text: string; from?: string; tool?: SidebarSubagentTool; media?: SidebarMedia[] }[];
+  messages: { id: string; role: 'assistant' | 'tool' | 'user'; text: string; from?: string; to?: string; tool?: SidebarSubagentTool; media?: SidebarMedia[] }[];
   /** Unify: the delegate profile name. 'explorer' renders as an inline "Explored" row (no tab, strip, roster badge or subagent count). */
   profile?: string;
   /** Unify, explorer only: the ranges parsed from its answer, set when it completes. */
@@ -557,7 +558,7 @@ type SidebarHostPayload =
   | { type: 'toolState'; tools: SidebarToolEvent[] }
   /** Unify: the full list of one chat's background processes, posted whenever it changes and on `ready`. */
   | { type: 'backgroundProcesses'; sessionId: string; processes: SidebarBackgroundProcess[] }
-  | { type: 'subagentEvent'; sessionId: string; agentId: string; title?: string; model?: string; prompt?: string; files?: string[]; state?: SidebarSubagent['state']; delegated?: boolean; text?: string; messageId?: string; role?: 'assistant' | 'tool' | 'user'; from?: string; tool?: SidebarSubagentTool; media?: SidebarMedia[]; sentToParent?: SidebarMedia[]; profile?: string; ranges?: SidebarExplorerRange[]; tokens?: number }
+  | { type: 'subagentEvent'; sessionId: string; agentId: string; title?: string; model?: string; prompt?: string; files?: string[]; state?: SidebarSubagent['state']; delegated?: boolean; text?: string; messageId?: string; role?: 'assistant' | 'tool' | 'user'; from?: string; to?: string; tool?: SidebarSubagentTool; media?: SidebarMedia[]; sentToParent?: SidebarMedia[]; profile?: string; ranges?: SidebarExplorerRange[]; tokens?: number }
   | { type: 'diff'; diff: SidebarDiff }
   | { type: 'diffState'; diffs: SidebarDiff[] }
   /** Unify: one chat's edits (applied ones stay until kept or undone), for that chat's changes bar. */

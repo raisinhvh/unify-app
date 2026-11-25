@@ -17,6 +17,8 @@ const maximizedListeners = new Set<(maximized: boolean) => void>();
 const popoutListeners = new Set<(chatIds: string[]) => void>();
 const terminalDataListeners = new Set<(id: string, data: string) => void>();
 const terminalExitListeners = new Set<(id: string, code: number) => void>();
+const updateStateListeners = new Set<(snapshot: unknown) => void>();
+const openUpdatesListeners = new Set<() => void>();
 let lastMessage: HostMessage | undefined;
 
 /** Absolute path of the open project folder, read once from the main process. */
@@ -89,6 +91,14 @@ ipcRenderer.on('unify:term-exit', (_event, id: unknown, code: unknown) => {
   if (typeof id !== 'string') return;
   const exitCode = typeof code === 'number' ? code : -1;
   for (const listener of [...terminalExitListeners]) listener(id, exitCode);
+});
+
+ipcRenderer.on('unify:update-state', (_event, snapshot: unknown) => {
+  for (const listener of [...updateStateListeners]) listener(snapshot);
+});
+
+ipcRenderer.on('unify:open-updates', () => {
+  for (const listener of [...openUpdatesListeners]) listener();
 });
 
 const api = {
@@ -205,6 +215,28 @@ const api = {
   /** Asks the main-process updater to check GitHub Releases now. */
   checkForUpdates(): Promise<unknown> {
     return ipcRenderer.invoke('unify:check-for-updates') as Promise<unknown>;
+  },
+
+  /** App updates (src/main/updater.ts). Types: renderer/bridge.ts UnifyUpdatesApi. */
+  updates: {
+    state(): Promise<unknown> {
+      return ipcRenderer.invoke('unify:update-state') as Promise<unknown>;
+    },
+    check(): Promise<unknown> {
+      return ipcRenderer.invoke('unify:check-for-updates') as Promise<unknown>;
+    },
+    install(): Promise<unknown> {
+      return ipcRenderer.invoke('unify:install-update') as Promise<unknown>;
+    },
+    onState(listener: (snapshot: unknown) => void): () => void {
+      updateStateListeners.add(listener);
+      return () => updateStateListeners.delete(listener);
+    },
+    /** The update notification was clicked: show the Updates screen. */
+    onOpen(listener: () => void): () => void {
+      openUpdatesListeners.add(listener);
+      return () => openUpdatesListeners.delete(listener);
+    },
   },
 
   /** New renderer: receive native UI requests and answer them by id. */

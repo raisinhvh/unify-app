@@ -23,6 +23,8 @@ const shared = {
   logLevel: 'info',
   alias: { vscode: join(root, 'src', 'shim', 'vscode', 'index.ts') },
   external: ['electron'],
+  // Shell scripts the engine writes out at runtime (src/engine/runtime/agentShims.sh).
+  loader: { '.sh': 'text' },
 };
 
 const targets = [

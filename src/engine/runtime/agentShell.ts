@@ -1,4 +1,4 @@
-import { rustToolsInstructions, withRustTools } from './rustTools';
+import { withRustTools } from './rustTools';
 
 /**
  * Settings for the shells agents run commands in. Each harness spawn passes its environment through agentEnv,
@@ -32,5 +32,5 @@ export const BACKGROUND_CLEANUP = 'Stop servers, watchers and other background c
 
 /** Shell guidance for agents, following the current settings. */
 export function shellInstructions(): string {
-  return [rustToolsInstructions(), powershellSpeedups && process.platform === 'win32' ? POWERSHELL_SPEEDUPS : ''].filter(Boolean).join('\n');
+  return powershellSpeedups && process.platform === 'win32' ? POWERSHELL_SPEEDUPS : '';
 }

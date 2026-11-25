@@ -5,7 +5,7 @@ import { build } from 'esbuild';
 // Bundle the module the same way the extension build does; no vscode or extension host is involved.
 const bundle = await build({
   entryPoints: ['src/engine/runtime/stuckCommands.ts'],
-  bundle: true,
+  bundle: true, loader: { '.sh': 'text' },
   write: false,
   format: 'esm',
   platform: 'node',
@@ -256,7 +256,7 @@ test('sampleProcesses lists this process with positive CPU time', { timeout: 300
 test('ACP runtime YAML patch caps tool-jobs wait timeouts', { timeout: 30000 }, async () => {
   const acpBundle = await build({
     entryPoints: ['src/engine/runtime/acp.ts'],
-    bundle: true,
+    bundle: true, loader: { '.sh': 'text' },
     write: false,
     format: 'esm',
     platform: 'node',

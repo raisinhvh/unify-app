@@ -8,7 +8,7 @@
  * read the saved PATH too and `refreshPath` merges it into `process.env.PATH` after an install.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { PackSetupInstall } from './types';
@@ -100,6 +100,21 @@ function searchDirs(): string[] {
   return [...new Set([...current, ...windowsSavedPath(), ...wingetLinks(), ...extra, ...pythonUserScripts()])];
 }
 
+/**
+ * Whether a program file is there. Windows app execution aliases (winget, python in WindowsApps) are reparse
+ * points that `stat` can't open (EACCES), so `existsSync` says no; `lstat` reads the link itself.
+ */
+function programExists(candidate: string): boolean {
+  if (existsSync(candidate)) return true;
+  if (process.platform !== 'win32') return false;
+  try {
+    lstatSync(candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Where a program is, looking in PATH, the saved Windows PATH and installer folders. */
 export function findCommand(name: string): string | undefined {
   if (!name || /[\\/]/.test(name)) return undefined;
@@ -110,7 +125,7 @@ export function findCommand(name: string): string | undefined {
   for (const dir of searchDirs()) {
     for (const ext of hasExtension ? [''] : extensions) {
       const candidate = path.join(dir, `${name}${ext}`);
-      if (existsSync(candidate)) return candidate;
+      if (programExists(candidate)) return candidate;
     }
   }
   return undefined;

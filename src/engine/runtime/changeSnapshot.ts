@@ -30,7 +30,7 @@ async function fingerprint(root: string, rel: string): Promise<string> {
 }
 
 /** Adds every file under a directory (not following symlinks), up to the cap. */
-async function walk(root: string, dir: string, out: Map<string, string>): Promise<void> {
+async function walk(root: string, dir: string, out: Set<string>): Promise<void> {
   if (out.size >= MAX_FILES) return;
   let entries;
   try {
@@ -44,28 +44,42 @@ async function walk(root: string, dir: string, out: Map<string, string>): Promis
     if (entry.isDirectory()) {
       if (!SKIPPED_DIRS.has(entry.name)) await walk(root, rel, out);
     } else if (entry.isFile()) {
-      out.set(rel, await fingerprint(root, rel));
+      out.add(rel);
     }
   }
 }
+
+/** Files fingerprinted at once; reading them one by one made a folder snapshot about 4x slower. */
+const HASH_CONCURRENCY = 32;
 
 /**
  * Fingerprints each path: a file gets the sha1 of its content, a missing file the '' marker, and a path ending in '/'
  * is walked recursively. Paths outside `root` are ignored.
  */
 export async function snapshotFiles(root: string, paths: string[]): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
+  // Listing stays sequential so the cap keeps the same files every time; only the reads run in parallel.
+  const files = new Set<string>();
   for (const raw of paths) {
     const rel = normalize(root, raw);
     if (!rel) continue;
     if (rel.endsWith('/')) {
-      await walk(root, rel.slice(0, -1), out);
-    } else if (out.size < MAX_FILES) {
-      out.set(rel, await fingerprint(root, rel));
+      await walk(root, rel.slice(0, -1), files);
+    } else if (files.size < MAX_FILES) {
+      files.add(rel);
     }
-    if (out.size >= MAX_FILES) break;
+    if (files.size >= MAX_FILES) break;
   }
-  return out;
+  const list = [...files];
+  const hashes = new Array<string>(list.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < list.length) {
+      const index = next++;
+      hashes[index] = await fingerprint(root, list[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(HASH_CONCURRENCY, list.length) }, worker));
+  return new Map(list.map((rel, index) => [rel, hashes[index]]));
 }
 
 /** The paths whose fingerprint differs between two snapshots: added, removed or changed. Sorted. */

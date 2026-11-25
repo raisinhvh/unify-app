@@ -1,9 +1,11 @@
+import { spawn, type ChildProcess } from 'node:child_process';
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { ToolpackContent } from '../toolpacks/types';
 import { getUnifyFeature } from '../unify/settings';
 import { isLineRange, mergeLineRanges, RANGE_CONTEXT_LINES, rangeHash } from './rangeEdit';
 import type { LineRange } from './rangeEdit';
+import { activeRustTool } from './rustTools';
 
 /**
  * Advanced batching: one `batch` call on the Unify bridge runs several tool calls and returns one result.
@@ -23,6 +25,11 @@ const MAX_SEARCH_FILE_BYTES = 1_000_000;
 const MAX_LIST_ENTRIES = 500;
 const MAX_READ_RANGES = 50;
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.unify', '.hg', '.svn', '__pycache__', '.venv', '.next', '.turbo']);
+/** A ripgrep search still running after this long is stopped and returns what it found. */
+const RIPGREP_TIMEOUT_MS = 30_000;
+/** Matches collected from rg before it is stopped; only the first max_results of them (in path order) are shown. */
+const RIPGREP_MAX_MATCHES = 5000;
+const MAX_HIT_CHARS = 200;
 
 /** Runs one forEach call may expand to, and how many of them run at once. */
 export const MAX_FOREACH_RUNS = 50;
@@ -397,8 +404,11 @@ const display = (cwd: string, absolute: string): string => {
   return (leavesRoot(rel) ? absolute : rel).split(sep).join('/') || '.';
 };
 
-/** Options for the batch file tools; `outside` lets them read beyond the working copy. */
-export interface BatchFileOptions { outside?: boolean }
+/**
+ * Options for the batch file tools; `outside` lets them read beyond the working copy. `ripgrep` is the rg command
+ * search runs (default: the managed rg, else rg on PATH); false always uses the built-in scanner.
+ */
+export interface BatchFileOptions { outside?: boolean; ripgrep?: string | false }
 
 const IMAGE_TYPES: Record<string, Extract<ToolpackContent, { type: 'image' }>['mimeType']> = {
   '.png': 'image/png',
@@ -508,16 +518,185 @@ async function searchTool(cwd: string, args: Record<string, unknown>, options: B
   let regex: RegExp;
   try { regex = searchRegex(source, args.ignore_case === true); } catch (error) { return { text: `Invalid pattern: ${error instanceof Error ? error.message : String(error)}`, isError: true }; }
   const glob = typeof args.glob === 'string' && args.glob.trim() ? args.glob.trim() : undefined;
-  const globRegex = glob ? globPattern(glob) : undefined;
   const max = Math.max(1, Math.min(Math.floor(Number(args.max_results) || 100), 500));
   const start = await insidePath(cwd, args.path, options.outside);
-  const hits: string[] = [];
-  const groups: string[] = [];
-  let lastFile: string | undefined;
+  const request: SearchRequest = { cwd, start, source, regex, ignoreCase: args.ignore_case === true, glob, max };
+  const command = options.ripgrep === false ? undefined : options.ripgrep ?? activeRustTool('rg') ?? 'rg';
+  const hits = (command && await ripgrepSearch(command, request)) || await scanSearch(request);
+  return { text: hits.text() };
+}
+
+interface SearchRequest {
+  cwd: string;
+  /** Absolute file or folder to search, already checked against the working copy. */
+  start: string;
+  /** The pattern as given, inline flags included; `regex` is its JS form. */
+  source: string;
+  regex: RegExp;
+  ignoreCase: boolean;
+  glob?: string;
+  max: number;
+}
+
+/** Search hits grouped under their file, in the order they are added, up to the request's cap. */
+class SearchHits {
+  private readonly groups: string[] = [];
+  private readonly globRegex: RegExp | undefined;
+  private lastFile: string | undefined;
+  private count = 0;
+  public truncated = false;
+  public note = 'narrow path or glob';
+
+  public constructor(private readonly request: SearchRequest) {
+    this.globRegex = request.glob ? globPattern(request.glob) : undefined;
+  }
+
+  public get full(): boolean {
+    return this.count >= this.request.max;
+  }
+
+  /** Whether a file passes the glob: matched against its relative path when the glob has a slash, else its name. */
+  public wants(rel: string): boolean {
+    if (!this.globRegex) return true;
+    return this.globRegex.test(this.request.glob!.includes('/') ? rel : rel.split('/').pop()!);
+  }
+
+  /** Adds a hit on a 1-based line; false once the cap is reached. */
+  public add(rel: string, lineNumber: number, text: string): boolean {
+    if (this.full) {
+      this.truncated = true;
+      return false;
+    }
+    const line = text.trim();
+    if (this.lastFile !== rel) {
+      if (this.groups.length) this.groups.push('');
+      this.groups.push(rel);
+      this.lastFile = rel;
+    }
+    this.groups.push(`  ${lineNumber}: ${line.length > MAX_HIT_CHARS ? `${line.slice(0, MAX_HIT_CHARS)}…` : line}`);
+    this.count += 1;
+    if (this.full) this.truncated = true;
+    return !this.full;
+  }
+
+  public text(): string {
+    if (!this.count) return this.truncated ? `No matches before the search was stopped; ${this.note}.` : 'No matches.';
+    return `${this.groups.join('\n')}${this.truncated ? `\n[stopped at ${this.count} matches; ${this.note}]` : ''}`;
+  }
+}
+
+/** rg commands that could not be started, so later searches go straight to the built-in scanner. */
+const missingRipgrep = new Set<string>();
+
+function ripgrepText(data: { text?: unknown; bytes?: unknown } | undefined): string | undefined {
+  if (typeof data?.text === 'string') return data.text;
+  if (typeof data?.bytes === 'string') return Buffer.from(data.bytes, 'base64').toString('utf8');
+  return undefined;
+}
+
+/** Orders paths the way the scanner walks them: folder by folder, names compared within each folder. */
+function compareWalkOrder(left: string, right: string): number {
+  const a = left.split('/');
+  const b = right.split('/');
+  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
+    if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
+  }
+  return a.length - b.length;
+}
+
+/**
+ * Searches with ripgrep, which also skips files the repository's .gitignore excludes. Resolves undefined when rg is
+ * missing or rejects the pattern (JS-only syntax such as lookbehind), so the caller falls back to the built-in scanner.
+ * rg runs unsorted (sorting makes it single-threaded and about 4x slower), so matches are collected, up to
+ * RIPGREP_MAX_MATCHES, and sorted here.
+ */
+function ripgrepSearch(command: string, request: SearchRequest): Promise<SearchHits | undefined> {
+  if (missingRipgrep.has(command)) return Promise.resolve(undefined);
+  const hits = new SearchHits(request);
+  const args = ['--json', '--no-config', '--no-messages', '--hidden', '--crlf', '--max-filesize', String(MAX_SEARCH_FILE_BYTES)];
+  if (request.ignoreCase) args.push('--ignore-case');
+  // A glob with a slash is relative to the working copy, which rg globs are not; SearchHits filters those instead.
+  if (request.glob && !request.glob.includes('/')) args.push('--glob', request.glob);
+  for (const name of SKIP_DIRS) args.push('--glob', `!${name}`);
+  args.push('--regexp', request.source, '--', request.start);
+  return new Promise(resolvePromise => {
+    let child: ChildProcess;
+    try {
+      child = spawn(command, args, { cwd: request.cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      missingRipgrep.add(command);
+      resolvePromise(undefined);
+      return;
+    }
+    const files = new Map<string, { lineNumber: number; text: string }[]>();
+    let collected = 0;
+    let pending = '';
+    let finished = false;
+    let stopped = false;
+    const stop = (): void => {
+      stopped = true;
+      hits.truncated = true;
+      child.kill();
+    };
+    const timer = setTimeout(() => {
+      hits.note = `ran past ${RIPGREP_TIMEOUT_MS / 1000} s; narrow path or glob`;
+      stop();
+    }, RIPGREP_TIMEOUT_MS);
+    const handle = (line: string): void => {
+      if (stopped || !line) return;
+      let event: { type?: string; data?: { path?: { text?: unknown; bytes?: unknown }; lines?: { text?: unknown; bytes?: unknown }; line_number?: unknown } };
+      try { event = JSON.parse(line); } catch { return; }
+      if (event.type === 'summary') finished = true;
+      if (event.type !== 'match' || typeof event.data?.line_number !== 'number') return;
+      const path = ripgrepText(event.data.path);
+      const text = ripgrepText(event.data.lines);
+      if (path === undefined || text === undefined) return;
+      const rel = display(request.cwd, resolve(request.cwd, path));
+      if (!hits.wants(rel)) return;
+      const lines = files.get(rel) ?? [];
+      lines.push({ lineNumber: event.data.line_number, text });
+      files.set(rel, lines);
+      collected += 1;
+      if (collected >= RIPGREP_MAX_MATCHES) stop();
+    };
+    child.stdout!.setEncoding('utf8');
+    child.stdout!.on('data', (chunk: string) => {
+      const lines = (pending + chunk).split('\n');
+      pending = lines.pop() ?? '';
+      for (const line of lines) handle(line);
+    });
+    child.on('error', () => {
+      clearTimeout(timer);
+      missingRipgrep.add(command);
+      resolvePromise(undefined);
+    });
+    child.on('close', () => {
+      clearTimeout(timer);
+      handle(pending);
+      // Without a summary rg never searched: the pattern was rejected before any file was read.
+      if (!finished && !stopped) {
+        resolvePromise(undefined);
+        return;
+      }
+      outer: for (const rel of [...files.keys()].sort(compareWalkOrder)) {
+        for (const match of files.get(rel)!) {
+          if (!hits.add(rel, match.lineNumber, match.text)) break outer;
+        }
+      }
+      resolvePromise(hits);
+    });
+  });
+}
+
+/** The built-in scanner: walks the folder in name order and tests each line with the JS regex. */
+async function scanSearch(request: SearchRequest): Promise<SearchHits> {
+  const hits = new SearchHits(request);
   let scanned = 0;
-  let truncated = false;
   const visit = async (path: string): Promise<void> => {
-    if (hits.length >= max || scanned >= MAX_SEARCH_FILES) { truncated = true; return; }
+    if (hits.full || scanned >= MAX_SEARCH_FILES) {
+      hits.truncated = true;
+      return;
+    }
     const info = await lstat(path).catch(() => undefined);
     if (!info || info.isSymbolicLink()) return;
     if (info.isDirectory()) {
@@ -525,33 +704,23 @@ async function searchTool(cwd: string, args: Record<string, unknown>, options: B
       for (const name of entries.sort()) {
         if (SKIP_DIRS.has(name)) continue;
         await visit(join(path, name));
-        if (hits.length >= max) { truncated = true; return; }
+        if (hits.full) return;
       }
       return;
     }
     if (!info.isFile() || info.size > MAX_SEARCH_FILE_BYTES) return;
-    const rel = display(cwd, path);
-    if (globRegex && !globRegex.test(glob!.includes('/') ? rel : rel.split('/').pop()!)) return;
+    const rel = display(request.cwd, path);
+    if (!hits.wants(rel)) return;
     scanned += 1;
     const buffer = await readFile(path).catch(() => undefined);
     if (!buffer || looksBinary(buffer)) return;
     const lines = buffer.toString('utf8').split(/\r?\n/);
     for (let index = 0; index < lines.length; index += 1) {
-      if (!regex.test(lines[index])) continue;
-      const line = lines[index].trim();
-      if (lastFile !== rel) {
-        if (groups.length) groups.push('');
-        groups.push(rel);
-        lastFile = rel;
-      }
-      hits.push(`${index + 1}: ${line.length > 200 ? `${line.slice(0, 200)}…` : line}`);
-      groups.push(`  ${hits[hits.length - 1]}`);
-      if (hits.length >= max) { truncated = true; return; }
+      if (request.regex.test(lines[index]) && !hits.add(rel, index + 1, lines[index])) return;
     }
   };
-  await visit(start);
-  if (!hits.length) return { text: 'No matches.' };
-  return { text: `${groups.join('\n')}${truncated ? `\n[stopped at ${hits.length} matches; narrow path or glob]` : ''}` };
+  await visit(request.start);
+  return hits;
 }
 
 async function listDirTool(cwd: string, args: Record<string, unknown>, options: BatchFileOptions): Promise<BatchOutcome> {

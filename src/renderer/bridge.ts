@@ -100,6 +100,43 @@ export interface UnifyTerminalApi {
   onExit(listener: (id: string, code: number) => void): () => void;
 }
 
+/** Mirrors `AppUpdateStatus` in src/main/updater.ts. */
+export type AppUpdateStatus =
+  | { state: 'unavailable'; message: string }
+  | { state: 'idle' }
+  | { state: 'checking' }
+  | { state: 'current' }
+  | { state: 'downloading'; version: string; percent: number; transferred: number; total: number; bytesPerSecond: number }
+  | { state: 'ready'; version: string }
+  | { state: 'installing'; version: string }
+  | { state: 'error'; message: string; detail?: string };
+
+export interface AppUpdateRelease {
+  version: string;
+  date?: string;
+  /** Plain text. */
+  notes?: string;
+  url: string;
+}
+
+export interface AppUpdateSnapshot {
+  currentVersion: string;
+  status: AppUpdateStatus;
+  lastCheckedAt?: number;
+  release?: AppUpdateRelease;
+}
+
+/** App updater in the main process (src/main/updater.ts). */
+export interface UnifyUpdatesApi {
+  state(): Promise<AppUpdateSnapshot>;
+  check(): Promise<{ status: 'unavailable' | 'checking' | 'error'; message?: string }>;
+  /** Only works in `ready`: shows the installer window, quits, and the installer reopens Unify. */
+  install(): Promise<{ ok: boolean; message?: string }>;
+  onState(listener: (snapshot: AppUpdateSnapshot) => void): () => void;
+  /** The "update ready" notification was clicked. */
+  onOpen(listener: () => void): () => void;
+}
+
 export interface UnifyBridge {
   post(message: SidebarWebviewMessage): void;
   onMessage(listener: (message: SidebarHostMessage) => void): () => void;
@@ -138,6 +175,8 @@ export interface UnifyBridge {
   terminal?: UnifyTerminalApi;
   /** Source Control (git in the main process). Missing outside Electron. */
   git?: UnifyGitApi;
+  /** App updates. Missing outside Electron (the browser preview). */
+  updates?: UnifyUpdatesApi;
 }
 
 /** The chat this window shows on its own, when it is a pop-out window (`?popout=<chatId>`). */

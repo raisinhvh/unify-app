@@ -235,6 +235,7 @@ export class UnifySidebarProvider implements vscode.WebviewViewProvider {
             agent.messages.push({
               id, role: message.role || 'assistant', text,
               ...(message.from ? { from: message.from } : {}),
+              ...(message.to ? { to: message.to } : {}),
               ...(message.tool ? { tool: message.tool } : {}),
               ...(message.media?.length ? { media: message.media } : {}),
             });

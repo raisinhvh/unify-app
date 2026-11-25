@@ -5,7 +5,7 @@ import { build } from 'esbuild';
 
 // Expose the host only in this test bundle; no extension activation or model calls.
 const bundle = await build({
-  entryPoints: ['src/engine/extension.ts'], bundle: true, write: false, format: 'esm', platform: 'node',
+  entryPoints: ['src/engine/extension.ts'], bundle: true, loader: { '.sh': 'text' }, write: false, format: 'esm', platform: 'node',
   external: ['@deepseek-ai/dsh'],
   plugins: [{ name: 'host-test', setup(builder) {
     builder.onResolve({ filter: /^vscode$/ }, () => ({ path: 'vscode', namespace: 'fake' }));

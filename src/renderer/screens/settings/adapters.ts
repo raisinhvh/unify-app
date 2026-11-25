@@ -22,23 +22,13 @@ export function onRequestReply<Message extends { type: string }>(type: Message['
   });
 }
 
-/* App info and updates (About). */
-
-export type UpdateStatus =
-  | { state: 'idle' }
-  | { state: 'checking' }
-  | { state: 'current'; checkedAt: number }
-  | { state: 'available'; version: string; notesUrl?: string }
-  | { state: 'downloading'; version: string; progress: number }
-  | { state: 'ready'; version: string }
-  | { state: 'error'; message: string };
+/* App info (About). App updates come from the main process instead: screens/updates/updateState.ts. */
 
 export interface AppInfo {
   version: string;
   channel: 'stable' | 'beta' | 'dev';
   /** Where settings, rules and memory live, e.g. C:/Users/me/.unify */
   dataFolder: string;
-  update: UpdateStatus;
 }
 
 interface AppInfoMessage {
@@ -51,32 +41,10 @@ export { appInfo };
 
 let appInfoRequested = false;
 
-/** Asks the engine for version and update state once; later `appInfo` messages keep it current. */
+/** Asks the engine for version and data folder once; later `appInfo` messages keep it current. */
 export function requestAppInfo(): void {
   if (appInfoRequested) return;
   appInfoRequested = true;
   onRequestReply<AppInfoMessage>('appInfo', message => setAppInfo(message.info));
   postRequest({ type: 'getAppInfo' });
-}
-
-/** The preload's update check; missing in builds without the updater (and in the browser preview). */
-function bridgeUpdateCheck(): (() => unknown) | undefined {
-  const bridge = (window as unknown as { unify?: { checkForUpdates?: () => unknown } }).unify;
-  return typeof bridge?.checkForUpdates === 'function' ? bridge.checkForUpdates.bind(bridge) : undefined;
-}
-
-export function canCheckForUpdates(): boolean {
-  return !!bridgeUpdateCheck();
-}
-
-export function checkForUpdates(): void {
-  const check = bridgeUpdateCheck();
-  if (!check) return;
-  const current = appInfo();
-  if (current) setAppInfo({ ...current, update: { state: 'checking' } });
-  void check();
-}
-
-export function installUpdate(): void {
-  postRequest({ type: 'installUpdate' });
 }

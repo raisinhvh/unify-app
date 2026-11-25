@@ -251,6 +251,8 @@ const DELEGATE_SERVER = 'unify';
 const LIMIT_COOLDOWN_MS = 30 * 60 * 1000;
 /** A chat approval or question left unanswered this long resolves as rejected/skipped, so a lost reply cannot hang a turn. */
 const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
+/** Turns other agents' messages may start for an idle chat before the user next writes in it. */
+const MAX_MESSAGE_WAKES = 10;
 /** A ChatGPT (Codex) runtime launches with at least this much token validity left, so long turns do not outlive it. */
 const CODEX_TOKEN_MARGIN_MS = 45 * 60 * 1000;
 /** Errors from a ChatGPT (Codex) turn that mean its access token was rejected. */
@@ -341,6 +343,8 @@ class ExtensionHost implements vscode.Disposable {
   private readonly chats = new Map<string, Chat>();
   private readonly chatLoads = new Map<string, Promise<Chat>>();
   private readonly promptStarts = new Map<string, Promise<void>>();
+  /** Turns started by other agents' messages since the chat's last user message, per chat id. */
+  private readonly messageWakes = new Map<string, number>();
   private readonly deletedSessions = new Set<string>();
   private readonly childRuns = new Set<ChildRun>();
   /** Root sets for friendly internal rows, built once per chat instead of per runtime event. */
@@ -746,6 +750,26 @@ class ExtensionHost implements vscode.Disposable {
     const message: AgentMessage = event.message;
     const chatId = this.agentRoster.get(message.toId)?.chatId ?? this.agentRoster.get(message.fromId)?.chatId ?? message.toId;
     this.sidebar.postMessage({ type: 'agentMessage', chatId, message });
+    // The sender's chat shows what it sent too, when that is a different chat (e.g. a message to another chat's agent).
+    const senderChatId = this.agentRoster.get(message.fromId)?.chatId;
+    if (senderChatId && senderChatId !== chatId) this.sidebar.postMessage({ type: 'agentMessage', chatId: senderChatId, message });
+    // A message from a subagent lands in that subagent's own feed as an outgoing row.
+    const sender = [...this.childRuns].find(run => run.agentId === message.fromId);
+    if (sender) {
+      this.sidebar.postMessage({
+        type: 'subagentEvent',
+        sessionId: sender.parent.record.id,
+        agentId: sender.agentId,
+        messageId: `agentMessage:${message.id}:sent`,
+        role: 'assistant',
+        text: message.text,
+        to: message.toName,
+      });
+    }
+    // A message to an idle main chat starts a turn for it; a running one reads it next turn or with read_messages.
+    // Deferred so the sender's send_message call returns before the recipient's turn starts.
+    const recipientChat = this.chats.get(message.toId);
+    if (recipientChat) setImmediate(() => this.wakeForMessages(recipientChat));
     // A message to a subagent also lands in that subagent's own feed, as an incoming bubble.
     const recipient = [...this.childRuns].find(run => run.agentId === message.toId);
     if (recipient) {
@@ -1894,6 +1918,36 @@ class ExtensionHost implements vscode.Disposable {
     return chat;
   }
 
+  /**
+   * `/clearcontext` (`/mib`): the chat's agent starts over in a new backend session with no handoff, summary or
+   * transcript. The feed keeps what was said, with a note where the fresh session starts. The system prompt and
+   * tools are the same as before, so the next turn reuses their cached prefix.
+   */
+  private async clearContext(chatId?: string): Promise<void> {
+    const chat = this.chatForMessage(chatId);
+    if (!chat) return;
+    if (chat.running || chat.jobActive) throw new Error('Stop this chat or wait for it to finish before clearing its context.');
+    const record = chat.record;
+    await this.freshBackendSession(chat, 'clearing context');
+    // Nothing from the old session may be carried over: not its summary, checkpoint or resume id.
+    record.previousCliSessionId = undefined;
+    record.checkpoint = undefined;
+    record.idleHandoff = undefined;
+    record.resumeNotice = undefined;
+    record.contextTokens = undefined;
+    // Archived parts belong to the cleared conversation; the fresh one writes its own if it compacts.
+    if (record.parts) await rm(join(chat.mirror.cwd, ...partsDir(record.id).split('/')), { recursive: true, force: true }).catch(() => undefined);
+    record.parts = undefined;
+    chat.pendingCheckpoint = undefined;
+    chat.handoffPending = false;
+    chat.sent = undefined;
+    this.transcripts.set(record.id, []);
+    this.sidebar.postMessage({ type: 'noteMessage', sessionId: record.id, entryId: `clear:${Date.now()}`, icon: 'restart_alt', text: 'Neuralyzed, fresh session' });
+    await this.saveSession(record);
+    await this.saveTranscripts();
+    this.refreshSessions();
+  }
+
   private async saveTranscripts(): Promise<void> {
     const keep = new Set(this.sessions().map(item => item.id));
     const data: Record<string, TranscriptItem[]> = {};
@@ -2400,6 +2454,8 @@ class ExtensionHost implements vscode.Disposable {
     const historyPrompt = [prompt.trim(), fileLabel(files || [])].filter(Boolean).join('\n\n');
     const shown = options.shown ?? [prompt.trim(), fileLabel(nonImageFiles)].filter(Boolean).join('\n\n');
     let attachmentMedia: MediaItem[] = [];
+    // A user message resets the cap on turns other agents' messages may start on their own.
+    if (!options.internal && !options.job) this.messageWakes.delete(recordToLoad.id);
     const turnEntryId = randomUUID();
     let displayed = false;
     const echo = (): void => {
@@ -3872,8 +3928,27 @@ class ExtensionHost implements vscode.Disposable {
     if (tasks.some(task => !task.done)) { this.postRun(id, 'tool', `${tasks.filter(task => !task.done).length} subagent${tasks.filter(task => !task.done).length === 1 ? '' : 's'} working…`); return; }
     this.postRun(id, 'idle', 'Ready');
     const ready = tasks.filter(task => task.afterTurn === 'resume');
-    if (!ready.length) return;
+    // Messages that arrived during the turn and were not read wake the chat again.
+    if (!ready.length) { this.wakeForMessages(chat); return; }
     void this.guarded(() => this.sendPrompt(`Background subagent results (your earlier turn ended before you collected them). Continue the task with them.\n\n${this.takeBackgroundResults(chat, ready.map(task => task.id))}`,
+      undefined, [], id, 'queue', { internal: true }));
+  }
+
+  /**
+   * Starts a turn for an idle chat whose agent has unread messages from other agents; the turn's prompt
+   * takes the inbox. Wakes without a user message in between are capped, so two agents cannot answer each other forever.
+   */
+  private wakeForMessages(chat: Chat): void {
+    const id = chat.record.id;
+    if (!getUnifyFeature('agents.messaging') || !agentBus.hasInbox(id)) return;
+    if (this.deletedSessions.has(id) || this.chats.get(id) !== chat || chat.running || chat.jobActive || this.promptStarts.has(id)) return;
+    const wakes = this.messageWakes.get(id) ?? 0;
+    if (wakes >= MAX_MESSAGE_WAKES) {
+      this.output.appendLine(`Not waking ${chat.record.name} for agent messages: ${MAX_MESSAGE_WAKES} wakes since the user's last message. They wait for the next one.`);
+      return;
+    }
+    this.messageWakes.set(id, wakes + 1);
+    void this.guarded(() => this.sendPrompt('Another agent messaged you while you were idle (see above). Act on it, and answer with send_message if a reply is needed.',
       undefined, [], id, 'queue', { internal: true }));
   }
 
@@ -4863,6 +4938,10 @@ class ExtensionHost implements vscode.Disposable {
             // Arms the one-shot shutdown; the controller answers with shutdownArmed and the chat shows its bar.
             setUnifyFeature('power.shutdownWhenIdle', true);
             this.postUnifyFeatures();
+          } else if (slash?.name === 'clearcontext') {
+            await this.clearContext(message.chatId);
+            // "/clearcontext <prompt>" starts the fresh session with that prompt.
+            if (slash.args || message.images?.length) await this.sendPrompt(slash.args, message.images, undefined, undefined, 'interrupt', { chatId: message.chatId });
           } else {
             await this.sendPrompt(message.prompt, message.images, undefined, undefined, message.mode === 'queue' ? 'queue' : 'interrupt', { chatId: message.chatId });
           }

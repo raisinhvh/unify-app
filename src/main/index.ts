@@ -21,7 +21,7 @@ import { configureGithubSecretStore } from '../engine/unify/github';
 import { installMediaProtocol, registerMediaSchemes } from './mediaProtocol';
 import { registerGitIpc } from './git';
 import { killAllTerminals, registerTerminalIpc } from './terminal';
-import { checkForUpdatesNow, startUpdater, stopUpdater } from './updater';
+import { checkForUpdatesNow, getUpdateSnapshot, installUpdateNow, startUpdater, stopUpdater, type AppUpdateSnapshot } from './updater';
 import {
   bootWebview, configureNotifications, prepareUnify, receiveRendererMessage, setUiAdapter, shimSetupStatus,
   type UiAdapter, type UiRequest,
@@ -64,7 +64,7 @@ const activeNotifications = new Set<Notification>();
  * OS notification used by `window.unify.notify()` in the renderer and by the
  * engine's `vscode.env.notify()` through the shim's notification adapter.
  */
-function showNotification(title: string, body?: string): void {
+function showNotification(title: string, body?: string, onClick?: () => void): void {
   if (!Notification.isSupported()) {
     mainLog(`notifications unsupported on this system: ${title}`);
     return;
@@ -72,6 +72,7 @@ function showNotification(title: string, body?: string): void {
   try {
     const notification = new Notification({ title, body });
     activeNotifications.add(notification);
+    if (onClick) notification.on('click', onClick);
     notification.once('close', () => activeNotifications.delete(notification));
     notification.once('failed', () => activeNotifications.delete(notification));
     notification.show();
@@ -694,6 +695,21 @@ function flushRendererMessages(): void {
   }
 }
 
+/** Pushes the updater's state to the main window (the Updates screen and the rail badge). */
+function announceUpdateState(snapshot: AppUpdateSnapshot): void {
+  if (!mainWindow || mainWindow.isDestroyed() || !windowLoaded) return;
+  mainWindow.webContents.send('unify:update-state', snapshot);
+}
+
+/** Notification click: bring the main window forward on the Updates screen. */
+function openUpdatesScreen(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  if (windowLoaded) mainWindow.webContents.send('unify:open-updates');
+}
+
 /** Tells the main window which chats currently have a pop-out (the preload forwards this). */
 function announcePopouts(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -1042,6 +1058,8 @@ function installIpc(): void {
   });
   ipcMain.handle('unify:setup-status', () => shimSetupStatus());
   ipcMain.handle('unify:check-for-updates', () => checkForUpdatesNow());
+  ipcMain.handle('unify:update-state', () => getUpdateSnapshot());
+  ipcMain.handle('unify:install-update', () => installUpdateNow());
   ipcMain.on('unify:ui-response', (_event, payload: { id?: string; result?: unknown }) => {
     if (!payload?.id) return;
     pendingUi.get(payload.id)?.(payload.result);
@@ -1123,7 +1141,7 @@ async function boot(): Promise<void> {
 
   await loadShell(mainWindow);
   if (cli.screenshot) void captureScreenshot(mainWindow);
-  startUpdater({ notify: showNotification });
+  startUpdater({ notify: showNotification, onChange: announceUpdateState, openUpdates: openUpdatesScreen });
 }
 
 function readPackageDefaults(): Record<string, unknown> {

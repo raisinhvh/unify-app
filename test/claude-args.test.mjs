@@ -25,7 +25,7 @@ globalThis.__dshClaudeArgsTestSpawn = (command, args, options) => {
 
 const bundled = await build({
   stdin: { contents: "export * from './runtime/oauthCli.ts'; export { resetUnifySettingsCache } from './unify/settings.ts';", resolveDir: 'src/engine', loader: 'ts' },
-  bundle: true, write: false, format: 'esm', platform: 'node',
+  bundle: true, loader: { '.sh': 'text' }, write: false, format: 'esm', platform: 'node',
   plugins: [{ name: 'fake-cli', setup(builder) {
     builder.onResolve({ filter: /^node:child_process$/ }, () => ({ path: 'process', namespace: 'fake' }));
     builder.onResolve({ filter: /accounts\/oauthCli$/ }, () => ({ path: 'accounts', namespace: 'fake' }));

@@ -820,6 +820,25 @@ function SubagentFeed(props: { agent: SidebarSubagent }): JSX.Element {
       <For each={props.agent.messages}>
         {message => (
           <Switch fallback={<AssistantMessage text={message.text} />}>
+            <Match when={message.to}>
+              {to => (
+                <AgentMessageRow
+                  item={{
+                    id: `${props.agent.id}:${message.id}`,
+                    kind: 'agentMessage',
+                    message: {
+                      id: message.id,
+                      fromId: props.agent.id,
+                      fromName: props.agent.title,
+                      toId: to(),
+                      toName: to(),
+                      text: message.text,
+                      sentAt: 0,
+                    },
+                  }}
+                />
+              )}
+            </Match>
             <Match when={message.role === 'user'}>
               <div class="feed-entry bubble user">
                 <Show when={message.from}>

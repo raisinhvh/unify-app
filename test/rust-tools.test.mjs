@@ -21,7 +21,8 @@ try {
   assert.equal(env.Path, `${bin}${delimiter}existing`);
   assert.equal(env.UNIFY_USER_BASH_ENV, 'user-env');
   assert.equal(env.BASH_ENV, join(storage, 'dependencies', 'rust-tools', 'bash-env.sh'));
-  assert.match(readFileSync(env.BASH_ENV, 'utf8'), /case \$- in/);
+  assert.match(readFileSync(env.BASH_ENV, 'utf8'), /__unify_grep G "\$@"/);
+  assert.doesNotMatch(readFileSync(env.BASH_ENV, 'utf8'), /\r/);
 } finally {
   rmSync(storage, { recursive: true, force: true });
 }

@@ -60,6 +60,17 @@ test('a directory path is walked recursively, skipping node_modules, .git and di
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('overlapping paths are fingerprinted once and each hash belongs to its own file', async () => {
+  const root = await workspace();
+  try {
+    const snap = await snapshotFiles(root, ['src/', 'src/a.ts', 'top.md']);
+    assert.deepEqual([...snap.keys()], ['src/a.ts', 'src/nested/b.ts', 'top.md']);
+    const single = await snapshotFiles(root, ['src/nested/b.ts']);
+    assert.equal(snap.get('src/nested/b.ts'), single.get('src/nested/b.ts'));
+    assert.notEqual(snap.get('src/a.ts'), snap.get('top.md'));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('paths outside the workspace are ignored', async () => {
   const root = await workspace();
   try {

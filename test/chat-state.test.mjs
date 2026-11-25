@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 const source = await readFile('src/engine/extension.ts', 'utf8');
 const bundle = await build({
   stdin: { contents: source + '\nexport { ExtensionHost, UnifySidebarProvider, WorkspaceMirror };', resolveDir: resolve('src/engine'), loader: 'ts' },
-  bundle: true, write: false, platform: 'node', format: 'esm',
+  bundle: true, loader: { '.sh': 'text' }, write: false, platform: 'node', format: 'esm',
   logOverride: { 'import-is-undefined': 'silent' },
   plugins: [{ name: 'vscode-stub', setup(builder) {
     builder.onResolve({ filter: /^vscode$/ }, () => ({ path: 'vscode', namespace: 'stub' }));
@@ -29,7 +29,7 @@ function navigationHost(records) {
   const store = new Map([['unify.ide.sessions.v1', records], ['unify.ide.activeSession.v1', records[0]?.id]]);
   const messages = [];
   Object.assign(host, {
-    active: records[0], chats: new Map(), chatLoads: new Map(), promptStarts: new Map(), deletedSessions: new Set(),
+    active: records[0], chats: new Map(), chatLoads: new Map(), promptStarts: new Map(), messageWakes: new Map(), deletedSessions: new Set(),
     placesByChat: new Map(),
     transcripts: new Map(), timelines: {}, modelChoices: {}, selectedModel: 'Model',
     context: { globalStorageUri: { fsPath: '/storage' }, workspaceState: {

@@ -1,10 +1,11 @@
 /** Slash commands typed at the start of a chat message. Add an entry here to offer a new command in the composer menu. */
-export interface SlashCommand { name: string; description: string; usage: string }
+export interface SlashCommand { name: string; description: string; usage: string; aliases?: string[] }
 
 /** Usage text shared by the command menu and the `/schedule` parse errors. */
 export const SCHEDULE_USAGE = '/schedule <in 2h | at 15:30 | 9am tomorrow> <prompt>';
 
 export const SLASH_COMMANDS: SlashCommand[] = [
+  { name: 'clearcontext', aliases: ['mib'], description: "Clear this chat's agent context and start a fresh session (the feed stays)", usage: '/clearcontext [prompt]' },
   { name: 'job', description: 'Plan a checklist from your spec, then work and review until it passes', usage: '/job <spec>' },
   { name: 'noquestions', description: 'Agents stop asking you questions and state their assumptions instead (toggle)', usage: '/noquestions [on | off]' },
   { name: 'permissions', description: 'Show or change the approval mode for this workspace', usage: '/permissions [ask | auto | most | full]' },
@@ -38,11 +39,12 @@ export function parseApprovalMode(value: string): ApprovalMode | undefined {
   return Object.prototype.hasOwnProperty.call(APPROVAL_MODES, mode) ? mode as ApprovalMode : undefined;
 }
 
-/** Splits a message that starts with a known `/name`. Unknown commands return undefined so they are sent as ordinary text. */
+/** Splits a message that starts with a known `/name` (or an alias, returned as the command's name). Unknown commands return undefined so they are sent as ordinary text. */
 export function parseSlash(text: string): { name: string; args: string } | undefined {
   const match = /^\s*\/([a-z][\w-]*)(?:\s+([\s\S]*))?$/i.exec(text);
   if (!match) return undefined;
-  const name = match[1].toLowerCase();
-  if (!SLASH_COMMANDS.some(command => command.name === name)) return undefined;
-  return { name, args: (match[2] || '').trim() };
+  const typed = match[1].toLowerCase();
+  const command = SLASH_COMMANDS.find(item => item.name === typed || item.aliases?.includes(typed));
+  if (!command) return undefined;
+  return { name: command.name, args: (match[2] || '').trim() };
 }

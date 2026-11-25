@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "id": "import-plugin",
+      "title": "Import the demo plugin",
+      "detail": "Copied from ${PACK} into ${PACK_SETUP_TEST_DIR}. Unify home is ${HOME}.",
+      "kind": "auto",
+      "check": {
+        "exists": "${PACK}/bin/tool.exe"
+      }
+    },
+    {
+      "id": "manual-copy",
+      "title": "Paste the key",
+      "detail": "Use the copied value.",
+      "kind": "manual",
+      "copy": "${PACK}/keys/demo.txt",
+      "open": "${PACK}/docs"
+    }
+  ]
+}

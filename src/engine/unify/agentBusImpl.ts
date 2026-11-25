@@ -180,6 +180,10 @@ export const agentBus: AgentBus = {
     return inbox.splice(0, inbox.length).map(message => ({ ...message }));
   },
 
+  hasInbox(agentId: string): boolean {
+    return (inboxes.get(agentId)?.length ?? 0) > 0;
+  },
+
   onEvent(listener: AgentBusListener): () => void {
     listeners.add(listener);
     return () => {

@@ -34,6 +34,7 @@ type SlashCommand = (typeof viewState)['slashCommands'][number];
  * `slashCommandsState`, so the menu never opens empty.
  */
 const builtInCommands: SlashCommand[] = [
+  { name: 'clearcontext', aliases: ['mib'], description: "Clear this chat's agent context and start a fresh session (the feed stays)", usage: '/clearcontext [prompt]' },
   { name: 'job', description: 'Plan a checklist from your spec, then work and review until it passes', usage: '/job <spec>' },
   { name: 'noquestions', description: 'Agents stop asking you questions and state their assumptions instead (toggle)', usage: '/noquestions [on | off]' },
   { name: 'permissions', description: 'Show or change the approval mode for this workspace', usage: '/permissions [ask | auto | most | full]' },
@@ -145,7 +146,7 @@ export function SlashMenu(props: SlashMenuProps): JSX.Element {
 
   const commandEntries = (query: string): SlashEntry[] =>
     commands()
-      .filter(command => command.name.toLowerCase().startsWith(query))
+      .filter(command => [command.name, ...(command.aliases || [])].some(name => name.toLowerCase().startsWith(query)))
       .map(command => ({
         id: command.name,
         label: `/${command.name}`,

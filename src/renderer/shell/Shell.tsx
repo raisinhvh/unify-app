@@ -35,6 +35,7 @@ import { ChatsPanel, placeChatFromList } from '../screens/chats/ChatsPanel';
 import { Home } from '../screens/chats/Home';
 import { hubEnabled } from '../screens/hub/hubAdapter';
 import { SetupWizard, shouldShowSetup } from '../screens/setup/SetupWizard';
+import { updatePending, updateSnapshot } from '../screens/updates/updateState';
 import { routeHasScreen, screenFor } from '../screens';
 import { setChatVisibilityCheck, viewState } from '../store';
 import { feature } from '../store/features';
@@ -171,6 +172,10 @@ export function Shell(): JSX.Element {
           onSelect={selectRoute}
           settingsActive={route() === 'settings'}
           onSettings={() => navigate('settings')}
+          showUpdates={updatePending()}
+          updateReady={updateSnapshot().status.state === 'ready'}
+          updatesActive={route() === 'updates'}
+          onUpdates={() => navigate('updates')}
           showMeter={feature('usage.railMeter')}
           inert={showSetup()}
         />

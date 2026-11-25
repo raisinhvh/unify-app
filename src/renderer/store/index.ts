@@ -401,6 +401,7 @@ export function applyHostMessage(message: SidebarHostMessage): void {
                 role: message.role || 'assistant',
                 text: message.text || '',
                 ...(message.from ? { from: message.from } : {}),
+                ...(message.to ? { to: message.to } : {}),
                 ...(message.tool ? { tool: message.tool } : {}),
                 ...(message.media?.length ? { media: message.media } : {}),
               });

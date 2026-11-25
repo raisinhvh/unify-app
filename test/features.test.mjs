@@ -11,7 +11,7 @@ import { compareVersions, isVersion } from '../dist/update/version.mjs';
 const source = await readFile('src/engine/extension.ts', 'utf8');
 const bundle = await build({
   stdin: { contents: source + '\nexport { ExtensionHost, UnifySidebarProvider };', resolveDir: resolve('src/engine'), loader: 'ts' },
-  bundle: true, write: false, platform: 'node', format: 'esm',
+  bundle: true, loader: { '.sh': 'text' }, write: false, platform: 'node', format: 'esm',
   logOverride: { 'import-is-undefined': 'silent' },
   plugins: [{ name: 'vscode-stub', setup(builder) {
     builder.onResolve({ filter: /^vscode$/ }, () => ({ path: 'vscode', namespace: 'stub' }));
@@ -130,7 +130,7 @@ test('queue mode waits for the running turn while interrupt mode cancels it', as
     const chat = { running: true, record: { id: 'chat' }, queue: [{ prompt: 'earlier', images: [] }] };
     const calls = [];
     Object.assign(host, {
-      active: { id: 'chat' }, chats: new Map([['chat', chat]]), deletedSessions: new Set(), promptStarts: new Map(),
+      active: { id: 'chat' }, chats: new Map([['chat', chat]]), deletedSessions: new Set(), promptStarts: new Map(), messageWakes: new Map(),
       saveImages: async () => [], loadChat: async () => chat, replayTranscript: () => {},
       cancel: (clear, id) => calls.push(['cancel', clear, id]),
       sidebar: { postMessage: message => calls.push(message) },

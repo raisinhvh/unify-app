@@ -1,0 +1,191 @@
+/* Updates: one centred column; header, status, then the release notes. */
+.updates-screen {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.updates-column {
+  display: flex;
+  flex-direction: column;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 72px 32px 56px;
+}
+
+.updates-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 28px;
+  text-align: center;
+}
+
+.updates-version {
+  margin: 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Status: every state's view shares one grid cell; the frame's height springs to the stack's height. */
+.updates-status-frame {
+  overflow: hidden;
+}
+
+.updates-status-stack {
+  display: grid;
+}
+
+.updates-status-stack > * {
+  grid-area: 1 / 1;
+}
+
+.updates-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* Padding, not margin, so the measured height includes the space below the actions. */
+  padding-bottom: 32px;
+  text-align: center;
+  transform-origin: center top;
+}
+
+.updates-status-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text);
+}
+
+.updates-status-leading {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+
+.updates-check {
+  color: var(--add);
+}
+
+.updates-status-detail {
+  max-width: 400px;
+  margin: 6px 0 0;
+  color: var(--text2);
+}
+
+.updates-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+/* Download progress: the fill's width comes from a spring on the percent. */
+.updates-progress {
+  width: 100%;
+  max-width: 400px;
+  margin-top: 16px;
+}
+
+.updates-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--hover);
+}
+
+.updates-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.updates-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
+
+.updates-progress-percent {
+  color: var(--text2);
+}
+
+/* Error details: the raw message, small and selectable. */
+.updates-error-details {
+  width: 400px;
+  max-width: 100%;
+  padding-top: 12px;
+}
+
+.updates-error-detail {
+  max-height: 160px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-row);
+  background: var(--raised);
+  color: var(--text2);
+  font-size: calc(11px * var(--text-scale));
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+/* Release notes */
+.updates-release {
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.updates-release-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.updates-release-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.updates-release-title h2 {
+  margin: 0;
+  color: var(--text);
+}
+
+.updates-release-date {
+  color: var(--text3);
+}
+
+.updates-release-head .button {
+  flex: none;
+  margin-right: -6px;
+}
+
+.updates-notes {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-bottom: 24px;
+  mask-image: linear-gradient(to bottom, black calc(100% - 32px), transparent);
+  color: var(--text2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.updates-release-empty {
+  margin: 0;
+  color: var(--text3);
+}

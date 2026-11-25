@@ -202,7 +202,7 @@ const engineFeatures: { key: EngineFeatureKey; section: SectionId; label: string
   { key: 'trimTools', section: 'runtime', label: 'Trim built-in tools', description: "Leaves out provider tools that cannot work in Unify or that Unify replaces. Saves thousands of tokens per request." },
   { key: 'batching', section: 'runtime', label: 'Advanced batching', description: 'Agents get a batch tool: several tool calls run in parallel and come back as one result.' },
   { key: 'fileSummaries', section: 'runtime', label: 'File summaries', description: 'Outlines come from code for TS/JS, Python, Go, Rust and Lua; the summary model covers the rest.' },
-  { key: 'rustTools', section: 'runtime', label: 'Fast search tools', description: 'Downloads ripgrep, fd and sd (checked against their SHA-256) and steers agent shells to them.' },
+  { key: 'rustTools', section: 'runtime', label: 'Fast search tools', description: 'Downloads ripgrep, fd and sd (checked against their SHA-256). Agent shells run grep, find and sed through them when the command translates exactly.' },
   { key: 'powershellSpeedups', section: 'runtime', label: 'PowerShell speedups', description: 'Starts agent PowerShells without telemetry or update checks and teaches agents the fast patterns.' },
   { key: 'shareRules', section: 'knowledge', label: 'Share global rules and skills', description: "Before each Claude turn, copies your all-project rules and skills into that account." },
   { key: 'updateChecks', section: 'about', label: 'Check for updates', description: 'Looks for a new release when Unify starts and tells you before installing anything.' },

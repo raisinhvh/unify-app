@@ -7,6 +7,8 @@
  * below glide up into its place on the Panel spring, so nothing jumps; showing it again reverses the same springs
  * from wherever they are. The selection highlight glides to the active entry's settled place on the Indicator
  * spring. The usage meter above Settings pops in and out with `showMeter` (feature usage.railMeter).
+ * The Updates button above Settings pops in only while an app update is downloading, ready or installing
+ * (`showUpdates`), with an accent dot once it is ready to install. The version footer opens Updates at any time.
  * Reduced motion: positions snap and only opacity fades (createSpring / Presence handle it).
  */
 import { createMemo, For, mapArray, Show, type Accessor, type JSX } from 'solid-js';
@@ -15,7 +17,7 @@ import { LogoMark } from '../backdrop/Backdrop';
 import { IconButton } from '../components/Button';
 import type { IconName } from '../components/icons';
 import { UsageMeter } from '../components/UsageMeter';
-import { createSpring, Presence } from '../motion';
+import { createSpring, pressable, Presence } from '../motion';
 import './navRail.css';
 
 export interface NavRailItem {
@@ -33,6 +35,13 @@ export interface NavRailProps {
   onSelect: (id: string) => void;
   settingsActive?: boolean;
   onSettings: () => void;
+  /** The Updates button shows while an update is pending (downloading, ready or installing). */
+  showUpdates?: boolean;
+  /** An update is ready to install: the Updates button gets an accent dot. */
+  updateReady?: boolean;
+  updatesActive?: boolean;
+  /** Opens the Updates screen (the Updates button and the version footer). */
+  onUpdates?: () => void;
   showMeter: boolean;
   /** True while something covers the whole app (setup); the rail takes no focus or clicks. */
   inert?: boolean;
@@ -174,6 +183,22 @@ export function NavRail(props: NavRailProps): JSX.Element {
             <UsageMeter />
           </div>
         </Presence>
+        <Presence when={!!props.showUpdates} from={0.85} origin="center" exit="control">
+          <div class="nav-rail-updates" data-rail-updates>
+            <IconButton
+              icon="download"
+              label={props.updateReady ? 'Update ready to install' : 'Updates'}
+              size="large"
+              class="rail-button"
+              active={props.updatesActive}
+              tooltipPlacement="right-end"
+              onClick={props.onUpdates}
+            />
+            <Presence when={!!props.updateReady} from={0.4} origin="center" exit="control">
+              <span class="nav-rail-update-dot" aria-hidden="true" />
+            </Presence>
+          </div>
+        </Presence>
         <IconButton
           icon="settings"
           label="Settings"
@@ -185,15 +210,19 @@ export function NavRail(props: NavRailProps): JSX.Element {
         />
         <Show when={info}>
           {current => (
-            <div
+            <button
+              type="button"
               class="rail-footer"
-              title={current().dev ? `Unify ${displayVersion(current().version)}, running in dev mode (run.cmd / run.sh)` : `Unify ${displayVersion(current().version)}`}
+              ref={element => pressable(element, 0.94)}
+              title={current().dev ? `Unify ${displayVersion(current().version)}, running in dev mode (run.cmd / run.sh). Open Updates` : `Unify ${displayVersion(current().version)}. Open Updates`}
+              aria-label={`Unify ${displayVersion(current().version)}. Open Updates`}
+              onClick={props.onUpdates}
             >
               <Show when={current().dev}>
                 <span class="rail-dev-badge" data-rail-dev>DEV</span>
               </Show>
               <span class="rail-version" data-rail-version>{displayVersion(current().version)}</span>
-            </div>
+            </button>
           )}
         </Show>
       </div>

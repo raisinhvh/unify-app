@@ -310,4 +310,11 @@ export async function installMockBridge(): Promise<void> {
     openExternal: url => window.open(url, '_blank'),
   };
   setBridge(bridge);
+
+  // `?update=<state>`: the app updater in that state (there is no updater bridge here); see updatePreview.ts.
+  const updatePreview = params.get('update');
+  if (updatePreview) {
+    const { applyUpdatePreview } = await import('./updatePreview');
+    applyUpdatePreview(updatePreview);
+  }
 }

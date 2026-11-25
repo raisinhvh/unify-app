@@ -24,7 +24,9 @@ import { navigate } from '../../router';
 import { viewState } from '../../store';
 import { providerNames } from '../../store/providers';
 import { relativeAge } from '../chats/projects';
-import { appInfo, canCheckForUpdates, checkForUpdates, installUpdate, requestAppInfo } from './adapters';
+import { displayVersion } from '../../shell/NavRail';
+import { updateSnapshot } from '../updates/updateState';
+import { appInfo, requestAppInfo } from './adapters';
 import { rowMatches, rowsIn, sectionById, sectionMatches, sections, settingRows, type SectionId } from './catalog';
 import { PageStack } from './PageStack';
 import { SettingRows } from './SettingControls';
@@ -403,30 +405,32 @@ function SyncPage(): JSX.Element {
   );
 }
 
+/** One line about the app updater (updates/updateState.ts); the Updates screen has the rest. */
 function updateCaption(): string {
-  const update = appInfo()?.update;
-  if (!update) return 'Unknown until the engine reports it.';
-  switch (update.state) {
+  const snapshot = updateSnapshot();
+  const status = snapshot.status;
+  switch (status.state) {
+    case 'unavailable':
+      return status.message;
     case 'idle':
       return 'Not checked yet.';
     case 'checking':
-      return 'Checking…';
+      return 'Checking for updates…';
     case 'current':
-      return `Up to date, checked ${relativeAge(update.checkedAt)}`;
-    case 'available':
-      return `Version ${update.version} is available.`;
+      return snapshot.lastCheckedAt ? `Up to date, checked ${relativeAge(snapshot.lastCheckedAt)}` : 'Up to date.';
     case 'downloading':
-      return `Downloading ${update.version}, ${Math.round(update.progress * 100)}%`;
+      return `Downloading ${displayVersion(status.version)}, ${Math.round(status.percent)}%`;
     case 'ready':
-      return `Version ${update.version} is ready. Restart to install.`;
+      return `Unify ${displayVersion(status.version)} is ready to install.`;
+    case 'installing':
+      return `Installing ${displayVersion(status.version)}…`;
     case 'error':
-      return update.message;
+      return status.message;
   }
 }
 
 function AboutPage(): JSX.Element {
   onMount(requestAppInfo);
-  const update = () => appInfo()?.update;
   return (
     <>
       <SectionHead title="Unify" />
@@ -434,18 +438,7 @@ function AboutPage(): JSX.Element {
         <span class="settings-value type-mono">{appInfo()?.version ?? '—'}</span>
       </InfoRow>
       <InfoRow label="Updates" caption={updateCaption()}>
-        <Show
-          when={update()?.state === 'available' || update()?.state === 'ready'}
-          fallback={
-            <Show when={canCheckForUpdates()}>
-              <Button variant="text" icon="refresh" disabled={update()?.state === 'checking' || update()?.state === 'downloading'} onClick={checkForUpdates}>
-                Check for updates
-              </Button>
-            </Show>
-          }
-        >
-          <Button variant="text" onClick={installUpdate}>{update()?.state === 'ready' ? 'Restart' : 'Install'}</Button>
-        </Show>
+        <Button variant="text" onClick={() => navigate('updates')}>Open Updates</Button>
       </InfoRow>
       <SettingRows rows={rowsIn('about')} />
       <InfoRow label="Data folder" caption="Settings, rules and memory.">

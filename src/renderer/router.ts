@@ -8,6 +8,8 @@
  *              the Files pane and moves to chats (shell/Shell.tsx)
  *   hub        reached from Toolpacks (no rail item, as in Figma)
  *   settings   the gear at the bottom of the rail
+ *   updates    app updates: the rail's Updates button (shown while an update is downloading or ready),
+ *              Settings > About, and the "update ready" notification
  *   setup      first-run flow (full window, no rail)
  *
  * Add a screen: see screens/README.md.
@@ -16,9 +18,9 @@ import { createSignal } from 'solid-js';
 import type { IconName } from './components';
 import { readPersisted, writePersisted } from './persist';
 
-export type RouteId = 'chats' | 'files' | 'knowledge' | 'toolpacks' | 'hub' | 'agents' | 'providers' | 'settings' | 'setup';
+export type RouteId = 'chats' | 'files' | 'knowledge' | 'toolpacks' | 'hub' | 'agents' | 'providers' | 'settings' | 'updates' | 'setup';
 
-const routeIds: RouteId[] = ['chats', 'files', 'knowledge', 'toolpacks', 'hub', 'agents', 'providers', 'settings', 'setup'];
+const routeIds: RouteId[] = ['chats', 'files', 'knowledge', 'toolpacks', 'hub', 'agents', 'providers', 'settings', 'updates', 'setup'];
 
 export interface RouteInfo {
   id: RouteId;

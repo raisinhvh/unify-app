@@ -11,6 +11,7 @@
     { "name": "explored-complete", "page": "chat-agents?timed=end" },
     { "name": "internal", "page": "chat-agents?timed=end", "steps": [{ "click": ".tool-batch-head", "wait": 500 }, { "click": ".tool-row-button", "wait": 600 }] },
     { "name": "agent-message-clamped", "page": "chat-agents?timed=end", "size": "640x900", "clip": ".agent-message", "pad": 12 },
-    { "name": "agent-message-open", "page": "chat-agents?timed=end", "size": "640x900", "steps": [{ "click": ".agent-message", "wait": 800 }], "clip": ".agent-message", "pad": 12 }
+    { "name": "agent-message-open", "page": "chat-agents?timed=end", "size": "640x900", "steps": [{ "click": ".agent-message", "wait": 800 }], "clip": ".agent-message", "pad": 12 },
+    { "name": "agent-message-sent", "page": "chat-agents?timed=end", "size": "640x900", "steps": [{ "click": ".subagent-row", "wait": 700 }] }
   ]
 }

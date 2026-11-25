@@ -179,6 +179,45 @@ test('batch file tools read, search and list inside the working copy only', asyn
   }
 });
 
+test('search gives the same results through ripgrep and the built-in scanner', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'unify-search-'));
+  try {
+    await mkdir(join(root, 'src', 'deep'), { recursive: true });
+    await mkdir(join(root, 'node_modules', 'dep'), { recursive: true });
+    await writeFile(join(root, 'src', 'a.ts'), 'one\r\ntwo needle\r\nthree needle\r\n');
+    await writeFile(join(root, 'src', 'deep', 'b.ts'), 'needle here\n');
+    await writeFile(join(root, 'src', 'c.js'), 'needle\n');
+    await writeFile(join(root, 'src', '.hidden.ts'), 'needle hidden\n');
+    await writeFile(join(root, 'node_modules', 'dep', 'd.ts'), 'needle\n');
+    await writeFile(join(root, 'src', 'bin.dat'), Buffer.from([0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0, 1]));
+    const cases = [
+      [{ pattern: 'needle' }, 'src/.hidden.ts\n  1: needle hidden\n\nsrc/a.ts\n  2: two needle\n  3: three needle\n\nsrc/c.js\n  1: needle\n\nsrc/deep/b.ts\n  1: needle here'],
+      [{ pattern: 'needle', max_results: 2 }, 'src/.hidden.ts\n  1: needle hidden\n\nsrc/a.ts\n  2: two needle\n[stopped at 2 matches; narrow path or glob]'],
+      [{ pattern: 'needle$', glob: '*.ts' }, 'src/a.ts\n  2: two needle\n  3: three needle'],
+      [{ pattern: 'NEEDLE H', ignore_case: true, path: 'src/deep' }, 'src/deep/b.ts\n  1: needle here'],
+      [{ pattern: 'needle', glob: 'src/deep/*.ts' }, 'src/deep/b.ts\n  1: needle here'],
+      [{ pattern: '(?<=two )needle' }, 'src/a.ts\n  2: two needle'],
+      [{ pattern: 'missing-pattern' }, 'No matches.'],
+    ];
+    for (const [args, expected] of cases) {
+      assert.equal((await runBatchFileTool(root, 'search', args)).text, expected, `rg ${JSON.stringify(args)}`);
+      assert.equal((await runBatchFileTool(root, 'search', args, { ripgrep: false })).text, expected, `scanner ${JSON.stringify(args)}`);
+    }
+    // A missing rg falls back to the scanner rather than failing.
+    assert.equal((await runBatchFileTool(root, 'search', { pattern: 'here' }, { ripgrep: join(root, 'no-such-rg') })).text, 'src/deep/b.ts\n  1: needle here');
+
+    // Inside a repository rg also skips what .gitignore excludes.
+    await mkdir(join(root, '.git'));
+    await mkdir(join(root, 'build'));
+    await writeFile(join(root, '.gitignore'), 'build/\n');
+    await writeFile(join(root, 'build', 'out.ts'), 'needle built\n');
+    assert.equal((await runBatchFileTool(root, 'search', { pattern: 'built' })).text, 'No matches.');
+    assert.equal((await runBatchFileTool(root, 'search', { pattern: 'built', path: 'build' })).text, 'build/out.ts\n  1: needle built');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('range reads include context, merge nearby windows and respect the feature toggle', async () => {
   const root = await mkdtemp(join(tmpdir(), 'unify-ranges-'));
   try {

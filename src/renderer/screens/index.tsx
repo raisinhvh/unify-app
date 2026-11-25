@@ -12,8 +12,9 @@ import { KnowledgeScreen } from './knowledge/KnowledgeScreen';
 import { ProvidersScreen } from './providers/ProvidersScreen';
 import { SettingsScreen } from './settings/SettingsScreen';
 import { ToolpacksScreen } from './toolpacks/ToolpacksScreen';
+import { UpdatesScreen } from './updates/UpdatesScreen';
 
-type ScreenRoute = 'knowledge' | 'toolpacks' | 'hub' | 'agents' | 'providers' | 'settings' | 'setup';
+type ScreenRoute = 'knowledge' | 'toolpacks' | 'hub' | 'agents' | 'providers' | 'settings' | 'updates' | 'setup';
 
 const screens: Record<ScreenRoute, () => JSX.Element> = {
   knowledge: () => <KnowledgeScreen />,
@@ -22,6 +23,7 @@ const screens: Record<ScreenRoute, () => JSX.Element> = {
   agents: () => <AgentsScreen />,
   providers: () => <ProvidersScreen />,
   settings: () => <SettingsScreen />,
+  updates: () => <UpdatesScreen />,
   setup: () => null,
 };
 

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 import { download, run } from './dependencies';
+import agentShims from './agentShims.sh';
 
 export const RUST_TOOLS = ['rg', 'fd', 'sd'] as const;
 type RustTool = typeof RUST_TOOLS[number];
@@ -87,13 +88,21 @@ export async function ensureRustTools(storage: string, fetchImpl: typeof fetch =
   return promise;
 }
 
-/** Activate the tools and create the agent shell environment. */
+/**
+ * Activate the tools and create the agent shell environment. The BASH_ENV script makes grep, find and sed run
+ * through rg, fd and sd when their arguments translate exactly, so agents need no instructions about them.
+ */
 export function activateRustTools(bin: string): void {
   const directory = dirname(bin);
   mkdirSync(directory, { recursive: true });
-  const script = `[ -n "$UNIFY_USER_BASH_ENV" ] && [ -f "$UNIFY_USER_BASH_ENV" ] && . "$UNIFY_USER_BASH_ENV"\ncase $- in\n  *c*)\n    for name in grep egrep fgrep find sed; do\n      eval "$name() { printf '%s\\n' '$name is not available here. Use rg (search), fd (find files) or sd (replace).' >&2; return 127; }"\n    done\n    ;;\nesac\n`;
-  writeFileSync(join(directory, 'bash-env.sh'), script, 'utf8');
+  // Bash rejects CRLF scripts, and a checkout may have converted the line endings.
+  writeFileSync(join(directory, 'bash-env.sh'), agentShims.replace(/\r\n/g, '\n'), 'utf8');
   activeBin = bin;
+}
+
+/** The managed executable for a tool once the tools are activated; undefined before that or after deactivation. */
+export function activeRustTool(tool: RustTool): string | undefined {
+  return activeBin ? join(activeBin, `${tool}.exe`) : undefined;
 }
 
 /** Stop adding the tools to agents started from now on. */
@@ -110,9 +119,4 @@ export function withRustTools(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (result.BASH_ENV) result.UNIFY_USER_BASH_ENV = result.BASH_ENV;
   result.BASH_ENV = join(dirname(activeBin), 'bash-env.sh');
   return result;
-}
-
-/** Describe the available shell tools to agents. */
-export function rustToolsInstructions(): string {
-  return activeBin ? 'Shell tools: search file contents with rg (ripgrep), find files with fd, and find-and-replace with sd. They are on PATH in every shell. grep, find and sed are not available.' : '';
 }

@@ -1861,7 +1861,7 @@
     { key: 'updateChecks', icon: 'update', title: 'Offer optional updates', desc: 'Checks for DSH-IDE and DSH updates at startup. Required updates still apply.' },
   ];
   const shellInfo = [
-    { key: 'rustTools', icon: 'bolt', windowsOnly: true, title: 'Fast search tools', desc: 'Downloads ripgrep, fd and sd (checked against their release SHA-256), puts them on agents\' PATH and steers agent shells to them instead of grep, find and sed. Applies to agents started after the change.' },
+    { key: 'rustTools', icon: 'bolt', windowsOnly: true, title: 'Fast search tools', desc: 'Downloads ripgrep, fd and sd (checked against their release SHA-256), puts them on agents\' PATH and runs grep, find and sed through them when the arguments translate exactly. Applies to agents started after the change.' },
     { key: 'powershellSpeedups', icon: 'terminal', title: 'PowerShell speedups', desc: 'Starts agent PowerShells without telemetry or update checks, and tells agents the fast PowerShell patterns. Applies to agents started after the change.' },
   ];
   let customizeKey = '';

@@ -10,6 +10,7 @@ One folder per route. `screens/index.tsx` maps each route to its screen.
 | hub | `hub/` | `HubScreen` | 23 |
 | providers | `providers/` | `ProvidersScreen` (+ `ProvidersPanel`) | 24, 24b, 24c |
 | settings | `settings/` | `SettingsScreen` (+ `SettingsPanel`); rows come from `settings/catalog.ts` | 25, 25b |
+| updates | `updates/` | `UpdatesScreen`; state from `updates/updateState.ts` (opened from the rail's Updates button, the version footer, Settings > About and the update notification) | — |
 | setup | `setup/` | `SetupWizard` (drawn by the Shell over Home while `shouldShowSetup()`) | 26a–26f |
 
 A new feature toggle in `store/features.ts` shows up in Settings by itself (`settings/catalog.ts`).
