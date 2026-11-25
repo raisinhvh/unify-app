@@ -9,6 +9,8 @@
  *   Tooltip / TooltipHost  tooltip(el, content) ref helper; one host in App
  *   Toggle                 flat switch on the Control spring
  *   TreeFolder, TreeItem   file-system tree with guide lines, chevron spring, Collapse
+ *   FindBar                find in document (Ctrl+F): controller, DOM / textarea highlight surfaces, scoped shortcuts;
+ *                          contents-search pieces (MatchCaseToggle, MatchSnippet, createContentSearch)
  *   UsageMeter             rail usage meter (the rail itself is shell/NavRail)
  *   TitleBar               frameless window controls
  *   loaders/               15 action loaders with morphing
@@ -22,6 +24,26 @@ export { Select, type SelectOption, type SelectProps } from './Select';
 export { tooltip, TooltipHost, type TooltipOptions } from './Tooltip';
 export { Toggle, type ToggleProps } from './Toggle';
 export { TreeFolder, TreeItem, type TreeFolderProps, type TreeItemProps } from './Tree';
+export {
+  createContentSearch,
+  createFindController,
+  domFindSurface,
+  FindBar,
+  findAll,
+  MatchCaseToggle,
+  MatchSnippet,
+  onFindShortcuts,
+  ownsFindShortcut,
+  selectedFindText,
+  textareaFindSurface,
+  type ContentSearchOptions,
+  type FindBarProps,
+  type FindController,
+  type FindControllerOptions,
+  type FindRange,
+  type FindShortcutOptions,
+  type FindSurface,
+} from './FindBar';
 export { UsageMeter } from './UsageMeter';
 export { ProviderGlyph, providerGlyph, providerGlyphs, type ProviderGlyphName, type ProviderGlyphProps } from './ProviderGlyph';
 export { ModelPicker, type ModelPickerProps, type ModelPickerVariant } from './ModelPicker';

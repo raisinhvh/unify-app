@@ -8,7 +8,8 @@ import { TooltipHost } from './components';
 import { ImageContextMenuHost } from './components/media';
 import { setAppReducedMotion } from './motion';
 import { Shell } from './shell';
-import { pruneChats } from './shell/layout';
+import { post } from './bridge';
+import { openChats, poppedOutChats, pruneChats } from './shell/layout';
 import { connectStore, viewState } from './store';
 import { startNotifySound } from './store/notifySound';
 import { installTheme } from './theme';
@@ -24,6 +25,18 @@ function App(): JSX.Element {
     if (!sessionsSeen && ids.size === 0) return;
     sessionsSeen = true;
     pruneChats(chatId => ids.has(chatId));
+  });
+
+  // The engine never auto-prunes chats that are open here (panes or pop-outs). Sent once the engine has
+  // answered with its session list, then whenever the open set changes.
+  let sentOpenChats = '';
+  createEffect(() => {
+    if (!viewState.sessions.length) return;
+    const chatIds = [...new Set([...openChats(), ...poppedOutChats()])].sort();
+    const key = chatIds.join(',');
+    if (key === sentOpenChats) return;
+    sentOpenChats = key;
+    post({ type: 'openChats', chatIds });
   });
 
   return (

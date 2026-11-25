@@ -223,6 +223,44 @@ function ProcessRow(props: {
   );
 }
 
+/**
+ * The faint line a hidden composer leaves at the bottom of the pane (Composer `autoHide`): a short handle while
+ * nothing else runs, or the running subagent and background counts (icon + number, no words) in its place.
+ */
+export function ActivityPeek(props: { chatId: string }): JSX.Element {
+  const subagents = () =>
+    Object.values(viewState.subagents[props.chatId] ?? {}).filter(
+      agent => !!agent && agent.state === 'running' && agent.profile !== explorerProfile,
+    ).length;
+  const background = () =>
+    backgroundProcesses(props.chatId).filter(process => process.kind !== 'subagent' && process.state === 'running').length;
+  const busy = () => subagents() > 0 || background() > 0;
+  const label = () => {
+    const parts: string[] = [];
+    if (subagents()) parts.push(`${plural(subagents(), 'subagent')} running`);
+    if (background()) parts.push(`${plural(background(), 'background task')} running`);
+    return parts.join(', ') || 'Hover to reply';
+  };
+  return (
+    <div class="activity-peek" aria-label={label()} title={label()}>
+      <Show when={busy()} fallback={<span class="activity-peek-handle" />}>
+        <Show when={subagents() > 0}>
+          <span class="activity-peek-item">
+            <Icon name="bot" size={12} />
+            <span class="activity-indicator-count">{subagents()}</span>
+          </span>
+        </Show>
+        <Show when={background() > 0}>
+          <span class="activity-peek-item">
+            <Icon name="terminal" size={12} />
+            <span class="activity-indicator-count">{background()}</span>
+          </span>
+        </Show>
+      </Show>
+    </div>
+  );
+}
+
 export function BackgroundIndicator(props: { chatId: string }): JSX.Element {
   const live = createMemo(() => backgroundProcesses(props.chatId).filter(process => process.kind !== 'subagent'));
   // Keeps the last list while the line pops away after the engine drops the last process.

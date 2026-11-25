@@ -8,6 +8,12 @@
  *   Skills     one folder per skill with its files; "Drop a skill folder" row (click to pick, or drag in)
  *   Memory     topic folders with notes
  *
+ * search   folds open under the header with a Names | Contents switch. Names filters the tree by name,
+ *          description, topic and skill file; Contents (Ctrl/⌘ Shift F, also the switch) searches the text of every
+ *          item in the current scope (adapter.searchKnowledgeContents, debounced, Aa = match case): results grouped
+ *          by item (+ skill file), one row per occurrence; clicking one selects it and opens the document's FindBar
+ *          on that occurrence (state.findRequest)
+ *
  * Rules, skills and memory are one system: every item opens in the same document view on the right.
  * Dragging a folder anywhere over the panel lights the drop row; dropping imports it as a skill.
  *
@@ -16,24 +22,50 @@
  * search or the scope collapse at once (no sweep: nothing was deleted).
  */
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from 'solid-js';
-import { Icon, IconButton, Menu, TreeFolder, TreeItem, type MenuEntry } from '../../components';
-import { AnimatedList, Collapse, createSpring } from '../../motion';
+import {
+  createContentSearch,
+  Icon,
+  IconButton,
+  MatchCaseToggle,
+  MatchSnippet,
+  Menu,
+  onFindShortcuts,
+  TreeFolder,
+  TreeItem,
+  type IconName,
+  type MenuEntry,
+} from '../../components';
+import { AnimatedList, Collapse, createSpring, Presence } from '../../motion';
 import { OrganicList, RetypeText, type OrganicRow } from '../../motion/organic';
 import { ProjectSwitch } from '../chats/ProjectSwitch';
 import {
   importSkillFolder,
   knowledgeItems,
   knowledgeProject,
+  knowledgeSearchLimit,
   listedProject,
   refreshKnowledge,
   saveKnowledge,
+  searchKnowledgeContents,
   setKnowledgeProject,
   type ImportedFile,
   type KnowledgeItem,
   type KnowledgeKind,
+  type KnowledgeMatch,
+  type KnowledgeSearchResult,
 } from './adapter';
 import { Segmented } from './Segmented';
-import { openFolders, scope, select, selection, setFocusTitle, setFolderOpen, setMode, setScope } from './state';
+import {
+  openFolders,
+  scope,
+  select,
+  selection,
+  setFindRequest,
+  setFocusTitle,
+  setFolderOpen,
+  setMode,
+  setScope,
+} from './state';
 import './knowledge.css';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -225,21 +257,179 @@ function ProjectRow(): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Contents search
+
+const kindIcons: Record<KnowledgeKind, IconName> = {
+  rule: 'file',
+  skill: 'folder',
+  memory: 'knowledge',
+};
+
+/** The matches of one document: an item, or one file inside a skill. */
+interface MatchGroup {
+  key: string;
+  id: string;
+  file?: string;
+  matches: KnowledgeMatch[];
+}
+
+function groupByDocument(matches: KnowledgeMatch[]): MatchGroup[] {
+  const groups = new Map<string, MatchGroup>();
+  for (const match of matches) {
+    const key = `${match.id}\n${match.file ?? ''}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, id: match.id, file: match.file, matches: [] };
+      groups.set(key, group);
+    }
+    group.matches.push(match);
+  }
+  return [...groups.values()];
+}
+
+function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
+/** The selection's `file` for a match: a skill's SKILL.md is the item itself. */
+function selectionFile(file: string | undefined): string | undefined {
+  return file === 'SKILL.md' ? undefined : file;
+}
+
+/** Contents search results: a collapsible row per document, a row per occurrence under it. */
+function ContentResults(props: {
+  result: KnowledgeSearchResult | undefined;
+  searching: boolean;
+  caseSensitive: boolean;
+}): JSX.Element {
+  const groups = createMemo(() => groupByDocument(props.result?.matches ?? []));
+  const [collapsed, setCollapsed] = createSignal<ReadonlySet<string>>(new Set());
+  const [picked, setPicked] = createSignal<string>();
+  const setGroupOpen = (key: string, open: boolean) => {
+    const next = new Set(collapsed());
+    if (open) next.delete(key);
+    else next.add(key);
+    setCollapsed(next);
+  };
+  const summary = () => {
+    const result = props.result;
+    if (!result?.matches.length) return '';
+    if (result.truncated) return `Showing first ${knowledgeSearchLimit} matches`;
+    return `${plural(result.matches.length, 'result')} in ${plural(groups().length, 'document')}`;
+  };
+  const openMatch = (match: KnowledgeMatch) => {
+    const file = selectionFile(match.file);
+    select({ id: match.id, file });
+    setFindRequest({
+      id: match.id,
+      file,
+      query: props.result?.query ?? '',
+      caseSensitive: props.caseSensitive,
+      line: match.line,
+      column: match.column,
+    });
+  };
+  return (
+    <div class="knowledge-results" classList={{ stale: props.searching && !!props.result }}>
+      <Show
+        when={props.result}
+        fallback={
+          <Show when={props.searching}>
+            <p class="knowledge-empty type-caption">Searching…</p>
+          </Show>
+        }
+      >
+        {result => (
+          <Show
+            when={result().matches.length}
+            fallback={<p class="knowledge-empty type-caption">No results</p>}
+          >
+            <p class="knowledge-results-summary type-caption">{summary()}</p>
+          </Show>
+        )}
+      </Show>
+      <AnimatedList each={groups()} key={group => group.key}>
+        {group => {
+          const item = () => knowledgeItems().find(entry => entry.id === group().id);
+          const name = () => item()?.name ?? group().id;
+          return (
+            <TreeFolder
+              class="knowledge-match-document"
+              icon={kindIcons[item()?.kind ?? 'rule']}
+              label={
+                <>
+                  <span class="knowledge-match-name">{name()}</span>
+                  <Show when={group().file}>
+                    <span class="knowledge-match-file">{group().file}</span>
+                  </Show>
+                </>
+              }
+              trailing={<span class="knowledge-match-count">{group().matches.length}</span>}
+              title={group().file ? `${name()} / ${group().file}` : name()}
+              open={!collapsed().has(group().key)}
+              onToggle={open => setGroupOpen(group().key, open)}
+            >
+              <For each={group().matches}>
+                {match => {
+                  const key = `${group().key}:${match.line}:${match.column}`;
+                  return (
+                    <TreeItem
+                      class="knowledge-match"
+                      label={
+                        <MatchSnippet
+                          class="type-mono"
+                          text={match.text}
+                          column={match.column}
+                          length={match.length}
+                        />
+                      }
+                      selected={picked() === key}
+                      title={`${name()}:${match.line}`}
+                      onClick={() => {
+                        setPicked(key);
+                        openMatch(match);
+                      }}
+                    />
+                  );
+                }}
+              </For>
+            </TreeFolder>
+          );
+        }}
+      </AnimatedList>
+    </div>
+  );
+}
+
+/** What the search area searches: item names, or the text inside items. */
+type SearchMode = 'names' | 'contents';
+
+const searchModes: { value: SearchMode; label: string }[] = [
+  { value: 'names', label: 'Names' },
+  { value: 'contents', label: 'Contents' },
+];
+
+// ---------------------------------------------------------------------------------------------------------------
 // Panel
 
 export function KnowledgePanel(): JSX.Element {
   const [query, setQuery] = createSignal('');
   const [searching, setSearching] = createSignal(false);
+  const [searchMode, setSearchMode] = createSignal<SearchMode>('names');
+  const [caseSensitive, setCaseSensitive] = createSignal(false);
   const [newOpen, setNewOpen] = createSignal(false);
   const [dragging, setDragging] = createSignal(false);
   const [importing, setImporting] = createSignal(false);
   const [dropMessage, setDropMessage] = createSignal<string>();
+  let panel: HTMLElement | undefined;
   let newButton: HTMLButtonElement | undefined;
   let searchInput: HTMLInputElement | undefined;
   let folderInput: HTMLInputElement | undefined;
   let dragDepth = 0;
 
-  const searchText = () => query().trim().toLowerCase();
+  /** The name filter; contents mode leaves the tree alone and lists matches instead. */
+  const searchText = () => (searchMode() === 'names' ? query().trim().toLowerCase() : '');
+  const showContents = () => searching() && searchMode() === 'contents' && !!query().trim();
   const inScope = createMemo(() =>
     knowledgeItems().filter(item => {
       if (item.scope !== scope()) return false;
@@ -272,12 +462,41 @@ export function KnowledgePanel(): JSX.Element {
   const forceOpen = () => !!searchText();
   const folderOpen = (key: string) => forceOpen() || openFolders().includes(key);
 
+  /** The search button: opens the name filter, or closes the search area. */
   const toggleSearch = () => {
     const next = !searching();
     setSearching(next);
-    if (next) queueMicrotask(() => searchInput?.focus());
-    else setQuery('');
+    if (next) {
+      setSearchMode('names');
+      queueMicrotask(() => searchInput?.focus());
+    } else {
+      setQuery('');
+    }
   };
+
+  /** Ctrl/⌘ Shift F: the search area in contents mode, its text selected to type over. */
+  const openContentsSearch = () => {
+    setSearching(true);
+    setSearchMode('contents');
+    queueMicrotask(() => {
+      searchInput?.focus();
+      searchInput?.select();
+    });
+  };
+
+  onFindShortcuts({
+    element: () => panel,
+    screen: '.knowledge-screen',
+    onFindAll: openContentsSearch,
+  });
+
+  const contents = createContentSearch({
+    query,
+    caseSensitive,
+    enabled: () => searching() && searchMode() === 'contents',
+    deps: scope,
+    run: (text, matchCase) => searchKnowledgeContents(text, scope(), { caseSensitive: matchCase }),
+  });
 
   const create = async (kind: KnowledgeKind) => {
     const names: Record<KnowledgeKind, string> = { rule: 'New rule', skill: 'new-skill', memory: 'New note' };
@@ -358,6 +577,7 @@ export function KnowledgePanel(): JSX.Element {
 
   return (
     <aside
+      ref={panel}
       class="side-panel knowledge-panel"
       classList={{ dragging: dragging() }}
       aria-label="Knowledge"
@@ -409,19 +629,37 @@ export function KnowledgePanel(): JSX.Element {
         }}
       />
       <Collapse open={searching()}>
-        <label class="knowledge-search">
-          <Icon name="search" size={14} />
-          <input
-            ref={searchInput}
-            type="search"
-            placeholder="Search rules, skills and memory"
-            value={query()}
-            onInput={event => setQuery(event.currentTarget.value)}
-            onKeyDown={event => {
-              if (event.key === 'Escape') toggleSearch();
+        <div class="knowledge-search-area">
+          <Segmented
+            class="knowledge-search-modes"
+            label="Search in"
+            value={searchMode()}
+            options={searchModes}
+            onChange={mode => {
+              setSearchMode(mode);
+              searchInput?.focus();
             }}
           />
-        </label>
+          <label class="knowledge-search">
+            <Icon name="search" size={14} />
+            <input
+              ref={searchInput}
+              type="search"
+              placeholder={searchMode() === 'contents' ? 'Search inside documents' : 'Search rules, skills and memory'}
+              value={query()}
+              onInput={event => setQuery(event.currentTarget.value)}
+              onKeyDown={event => {
+                if (event.key === 'Escape') toggleSearch();
+              }}
+            />
+            <Presence when={searchMode() === 'contents'} from={0.9} origin="center right">
+              <MatchCaseToggle
+                active={caseSensitive()}
+                onChange={setCaseSensitive}
+              />
+            </Presence>
+          </label>
+        </div>
       </Collapse>
       <Segmented
         class="knowledge-scope"
@@ -436,7 +674,19 @@ export function KnowledgePanel(): JSX.Element {
       <Collapse open={scope() === 'project'}>
         <ProjectRow />
       </Collapse>
-      <div class="knowledge-tree">
+      <Show when={showContents()}>
+        <div class="knowledge-tree">
+          <ContentResults
+            result={contents.result()}
+            searching={contents.searching()}
+            caseSensitive={caseSensitive()}
+          />
+        </div>
+      </Show>
+      <div
+        class="knowledge-tree"
+        hidden={showContents()}
+      >
         <TreeFolder
           class="knowledge-section"
           icon="folder"

@@ -4,7 +4,8 @@
  *
  *   workers   Vite `?worker` imports; no Vite plugin and no CDN, so they pass the app's CSP ('self').
  *   theme     'unify' is built from the live CSS variables, so it matches all 7 themes. It is re-defined
- *             whenever the app theme changes (theme/currentTheme).
+ *             whenever the app theme changes (theme/currentTheme). The find widget (Ctrl+F) is themed as a
+ *             raised popover with the FindBar's match tints.
  *   font      the code font (JetBrains Mono, var(--font-mono)) at 12/18 like the Figma editor.
  */
 import * as monaco from 'monaco-editor';
@@ -125,8 +126,25 @@ export function defineUnifyTheme(): void {
       'editor.inactiveSelectionBackground': color('accent', 0.1),
       'editor.selectionHighlightBackground': color('accent', 0.08),
       'editor.wordHighlightBackground': color('accent', 0.08),
-      'editor.findMatchBackground': color('warn', 0.35),
-      'editor.findMatchHighlightBackground': color('warn', 0.18),
+      // Find (Ctrl+F): the same tints as the app's FindBar (components/findBar.css), the widget like a popover.
+      'editor.findMatchBackground': color('warn', 0.5),
+      'editor.findMatchBorder': '#00000000',
+      'editor.findMatchHighlightBackground': color('warn', 0.22),
+      'editor.findMatchHighlightBorder': '#00000000',
+      'editor.findRangeHighlightBackground': color('hover', 0.5),
+      'editorWidget.shadow': light ? '#0000001f' : '#00000066',
+      'editorWidget.resizeBorder': color('border'),
+      'input.placeholderForeground': color('text3'),
+      'inputOption.activeBackground': color('accent', 0.18),
+      'inputOption.activeBorder': '#00000000',
+      'inputOption.activeForeground': color('text'),
+      'inputOption.hoverBackground': color('hover'),
+      'inputValidation.errorBorder': color('del', 0.6),
+      'inputValidation.errorBackground': color('raised'),
+      'icon.foreground': color('text2'),
+      'toolbar.hoverBackground': color('hover'),
+      'toolbar.activeBackground': color('hover'),
+      'errorForeground': color('del'),
       'editorIndentGuide.background1': color('border'),
       'editorIndentGuide.activeBackground1': color('text3'),
       'editorWhitespace.foreground': color('border'),

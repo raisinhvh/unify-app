@@ -1,0 +1,122 @@
+/* Find in document (FindBar.tsx): docked top-right over the document, like an editor's find widget. */
+
+.find-bar {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 0 4px 0 10px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-menu);
+  box-shadow: var(--shadow-pop);
+  will-change: transform, opacity;
+}
+
+.find-bar-input {
+  width: 180px;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: calc(12px * var(--text-scale, 1));
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+/* The bar is the field: no global focus ring around the bare input. */
+.find-bar-input:focus-visible {
+  outline: none;
+}
+
+.find-bar-input::placeholder {
+  color: var(--text3);
+}
+
+.find-bar-count {
+  flex: none;
+  min-width: 56px;
+  margin: 0 4px;
+  color: var(--text3);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.find-bar-count.empty {
+  color: var(--del);
+}
+
+.find-bar-case {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 20px;
+  border-radius: var(--radius-control);
+  color: var(--text3);
+  font-size: calc(11px * var(--text-scale, 1));
+  font-weight: var(--weight-label);
+  background-color: rgb(from var(--hover) r g b / 0);
+  transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+
+.find-bar-case:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.find-bar-case.active {
+  color: var(--text);
+  background: var(--accent-tint);
+}
+
+.find-bar-case:active {
+  transition-duration: 0ms;
+  background-color: color-mix(in srgb, var(--hover), var(--text) 7%);
+}
+
+/* All matches a quiet tint; the current one stronger. */
+::highlight(find-match) {
+  background-color: color-mix(in srgb, var(--warn) 22%, transparent);
+}
+
+::highlight(find-current) {
+  background-color: color-mix(in srgb, var(--warn) 50%, transparent);
+  color: var(--text);
+}
+
+/* A contents-search result row: the line around the match, the match in the current-match tint. */
+.find-snippet {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  color: var(--text2);
+}
+
+.find-snippet-match {
+  color: var(--text);
+  background: color-mix(in srgb, var(--warn) 34%, transparent);
+  border-radius: 2px;
+}
+
+/* Behind a transparent textarea: same metrics, invisible text; only the highlights show. */
+.find-mirror {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  margin: 0;
+  color: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  user-select: none;
+}

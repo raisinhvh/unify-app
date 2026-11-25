@@ -109,7 +109,26 @@ export type FilesRequest =
   /** Copies absolute paths from outside the project (dropped from the OS) into a folder. */
   | { type: 'importEntries'; requestId: string; sources: string[]; toFolder: string }
   /** Permanent delete; the screen moves entries to the OS trash instead whenever the bridge can. */
-  | { type: 'deleteEntry'; requestId: string; path: string };
+  | { type: 'deleteEntry'; requestId: string; path: string }
+  /**
+   * Ctrl+Shift+F: literal text search through file contents (case-insensitive unless `caseSensitive`), skipping
+   * what .gitignore excludes, binary files and the usual heavy folders. Replies `contentMatches`.
+   */
+  | { type: 'searchFileContents'; requestId: string; query: string; caseSensitive?: boolean; limit?: number };
+
+/** One line of a file that contains the query. */
+export interface ContentMatch {
+  /** Workspace-relative, forward slashes. */
+  path: string;
+  /** 1-based line. */
+  line: number;
+  /** 1-based column of the match in `text`. */
+  column: number;
+  /** Match length in characters. */
+  length: number;
+  /** The line's text (cut to 300 characters; `column` stays within it). */
+  text: string;
+}
 
 export type FilesReply =
   /** createEntry / renameEntry / deleteEntry succeeded; `path` is the new (or deleted) project-relative path. */
@@ -120,6 +139,8 @@ export type FilesReply =
   | { type: 'fileSaved'; requestId: string; path: string; version: string }
   | { type: 'fileConflict'; requestId: string; current: FileDocument }
   | { type: 'fileMatches'; requestId: string; query: string; paths: string[] }
+  /** `truncated`: the limit (default 500 matches) was reached. */
+  | { type: 'contentMatches'; requestId: string; query: string; matches: ContentMatch[]; truncated: boolean }
   | { type: 'filesError'; requestId: string; message: string }
   | { type: 'fileChanged'; /** The watched project folder the path is relative to. */ root?: string; path: string; kind: 'changed' | 'created' | 'deleted'; edited?: FileEdit };
 
@@ -173,7 +194,23 @@ export type KnowledgeRequest =
   | { type: 'setKnowledgeAudience'; id: string; audiences: Audience[] }
   | { type: 'importSkillFolder'; requestId: string; scope: KnowledgeScope; name: string; files: ImportedFile[] }
   | { type: 'undoKnowledgeChange'; id: string }
-  | { type: 'openKnowledge'; id: string; file?: string };
+  | { type: 'openKnowledge'; id: string; file?: string }
+  /** Ctrl+Shift+F: literal text search through every item's content in one scope. Replies `knowledgeMatches`. */
+  | { type: 'searchKnowledge'; requestId: string; query: string; scope: KnowledgeScope; caseSensitive?: boolean; limit?: number };
+
+/** One line of an item that contains the query. `file` names the file inside a skill (rules and notes have none). */
+export interface KnowledgeMatch {
+  id: string;
+  file?: string;
+  /** 1-based line. */
+  line: number;
+  /** 1-based column of the match in `text`. */
+  column: number;
+  /** Match length in characters. */
+  length: number;
+  /** The line's text (cut to 300 characters; `column` stays within it). */
+  text: string;
+}
 
 export type KnowledgeReply =
   /** `project`: the folder the project-scope items were read from (none when no project is open). */
@@ -181,7 +218,9 @@ export type KnowledgeReply =
   | { type: 'knowledgeContent'; requestId: string; id: string; file?: string; content: string }
   | { type: 'knowledgeSaved'; requestId: string; item: KnowledgeItem }
   | { type: 'knowledgeRemoved'; requestId: string; id: string }
-  | { type: 'knowledgeError'; requestId: string; message: string };
+  | { type: 'knowledgeError'; requestId: string; message: string }
+  /** `truncated`: the limit (default 500 matches) was reached. */
+  | { type: 'knowledgeMatches'; requestId: string; query: string; matches: KnowledgeMatch[]; truncated: boolean };
 
 /* ---------------------------------------------------------------------------------------------------------------
  * Toolpacks (screens/toolpacks/adapter.ts)

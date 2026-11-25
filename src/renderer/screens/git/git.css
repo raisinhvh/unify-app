@@ -233,8 +233,12 @@
   list-style: none;
 }
 
+/* Off-screen rows skip layout and paint, so a list of thousands of changes still scrolls smoothly. The
+   placeholder size is a closed row; `auto` remembers the real size once a row has rendered (an open diff). */
 .git-change {
   min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 24px;
 }
 
 .git-row {
@@ -328,6 +332,26 @@
   padding: 4px 12px 4px 20px;
   color: var(--text3);
   font-size: calc(11.5px * var(--text-scale, 1));
+}
+
+/* "Show more" at the end of a capped file list */
+.git-more {
+  padding: 2px 12px 4px 20px;
+}
+
+.git-more-button {
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--text3);
+  font: inherit;
+  font-size: calc(11.5px * var(--text-scale, 1));
+  cursor: pointer;
+}
+
+.git-more-button:hover {
+  color: var(--text);
+  text-decoration: underline;
 }
 
 /* Inline diff */

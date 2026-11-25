@@ -1,6 +1,7 @@
 /**
  * Knowledge screen state shared by the panel and the document: scope tab, open folders, the selected item
- * (and file inside a skill), and Read/Edit mode. UI choices persist through persist.ts.
+ * (and file inside a skill), Read/Edit mode, and a picked contents-search match for the document's FindBar.
+ * UI choices persist through persist.ts.
  */
 import { createMemo, createSignal } from 'solid-js';
 import { readPersisted, writePersisted } from '../../persist';
@@ -46,6 +47,22 @@ export { mode, setMode };
 /** Set when a new item was just created, so the document focuses its title. */
 const [focusTitle, setFocusTitle] = createSignal(false);
 export { focusTitle, setFocusTitle };
+
+/**
+ * A contents-search result the user picked: the document for `id` (+ `file`) opens its FindBar on `query` with
+ * the occurrence at line:column current, then clears this. Line and column count in readKnowledge's content.
+ */
+export interface FindRequest {
+  id: string;
+  file?: string;
+  query: string;
+  caseSensitive: boolean;
+  line: number;
+  column: number;
+}
+
+const [findRequest, setFindRequest] = createSignal<FindRequest | undefined>();
+export { findRequest, setFindRequest };
 
 export const selectedItem = createMemo<KnowledgeItem | undefined>(() => {
   const current = selection();

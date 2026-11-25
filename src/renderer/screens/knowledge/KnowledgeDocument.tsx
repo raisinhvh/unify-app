@@ -8,9 +8,27 @@
  *              Used in
  *
  * Edit mode edits the same three parts in place and saves on its own shortly after typing stops.
+ *
+ * Ctrl/⌘ F (anywhere in the Knowledge screen or its pane): the FindBar docks top-right under the top bar,
+ * prefilled with the selected text. Read mode tints the matches in the rendered title, description and body;
+ * Edit mode searches the body and selects the current match in the textarea. A contents-search result picked in
+ * the panel (state.findRequest) opens the bar on that occurrence.
  */
-import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, Show, Switch, type JSX } from 'solid-js';
-import { Button, Icon, IconButton, Menu, type MenuEntry } from '../../components';
+import { createComputed, createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, Show, Switch, untrack, type JSX } from 'solid-js';
+import {
+  Button,
+  createFindController,
+  domFindSurface,
+  findAll,
+  FindBar,
+  Icon,
+  IconButton,
+  Menu,
+  onFindShortcuts,
+  selectedFindText,
+  textareaFindSurface,
+  type MenuEntry,
+} from '../../components';
 import { feature } from '../../store/features';
 import { setEngineError, viewState } from '../../store';
 import { ConfirmBar } from '../toolpacks/ConfirmBar';
@@ -26,7 +44,20 @@ import {
   type KnowledgeItem,
 } from './adapter';
 import { Segmented } from './Segmented';
-import { audienceLabel, focusTitle, kindLabels, mode, scopeLabels, select, selectedItem, selection, setFocusTitle, setMode } from './state';
+import {
+  audienceLabel,
+  findRequest,
+  focusTitle,
+  kindLabels,
+  mode,
+  scopeLabels,
+  select,
+  selectedItem,
+  selection,
+  setFindRequest,
+  setFocusTitle,
+  setMode,
+} from './state';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Formatting
@@ -282,6 +313,17 @@ function Details(props: { item: KnowledgeItem }): JSX.Element {
 
 type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
 
+/** Offset of 1-based line:column in `text`. */
+function offsetOf(text: string, line: number, column: number): number {
+  let offset = 0;
+  for (let current = 1; current < line; current += 1) {
+    const next = text.indexOf('\n', offset);
+    if (next < 0) return text.length;
+    offset = next + 1;
+  }
+  return Math.min(text.length, offset + column - 1);
+}
+
 function Document(props: { item: KnowledgeItem; file?: string }): JSX.Element {
   const [raw, { mutate, refetch }] = createResource(() => readKnowledge(props.item, props.file));
   const [saveState, setSaveState] = createSignal<SaveState>('saved');
@@ -290,6 +332,7 @@ function Document(props: { item: KnowledgeItem; file?: string }): JSX.Element {
   const [menuAnchor, setMenuAnchor] = createSignal<HTMLButtonElement>();
   const [confirmRemove, setConfirmRemove] = createSignal(false);
   let titleInput: HTMLInputElement | undefined;
+  let documentRoot: HTMLDivElement | undefined;
 
   const isSkillFile = () => props.item.kind === 'skill' && !!props.file;
   const parsed = createMemo(() => frontmatter(raw() ?? ''));
@@ -376,6 +419,83 @@ function Document(props: { item: KnowledgeItem; file?: string }): JSX.Element {
 
   const saveLabel = () => ({ saved: 'Saved', dirty: 'Edited', saving: 'Saving…', error: 'Not saved' })[saveState()];
 
+  // Find (Ctrl/⌘ F): the rendered article in Read mode, the body textarea (and its tint mirror) in Edit mode.
+  const [article, setArticle] = createSignal<HTMLElement>();
+  const [bodyEditor, setBodyEditor] = createSignal<HTMLTextAreaElement>();
+  const [bodyMirror, setBodyMirror] = createSignal<HTMLDivElement>();
+  const findSurface = createMemo(() => {
+    if (mode() === 'edit') {
+      const textarea = bodyEditor();
+      const mirror = bodyMirror();
+      return textarea && mirror ? textareaFindSurface(textarea, mirror) : undefined;
+    }
+    const root = article();
+    return root && !raw.loading ? domFindSurface(root) : undefined;
+  });
+  const find = createFindController({
+    surface: findSurface,
+    content: () => (mode() === 'edit' ? draftBody() : `${title()}\n${description() ?? ''}\n${body()}`),
+  });
+
+  /** The selection to prefill with: the textarea's own, or the page's. */
+  const selectedText = (): string | undefined => {
+    const textarea = bodyEditor();
+    if (textarea && document.activeElement === textarea) {
+      const text = textarea.value.slice(textarea.selectionStart, textarea.selectionEnd);
+      return text && !text.includes('\n') && text.length <= 200 ? text : undefined;
+    }
+    return selectedFindText();
+  };
+
+  /** Matches Read mode shows before the body: in the title and description. */
+  const headerMatches = (): number =>
+    find.query()
+      ? findAll(title(), find.query(), find.caseSensitive()).length +
+        findAll(description() ?? '', find.query(), find.caseSensitive()).length
+      : 0;
+
+  // Read ↔ Edit with the bar open: keep the same occurrence current. Runs before the surface swaps (a computed, not
+  // an effect), so find.current() is still the old mode's index. Edit mode has no title/description matches.
+  createComputed(
+    on(
+      mode,
+      (next, previous) => {
+        if (previous === undefined || next === previous || !untrack(find.open)) return;
+        const current = untrack(find.current);
+        if (current < 0) return;
+        const header = untrack(headerMatches);
+        find.pick(next === 'edit' ? Math.max(0, current - header) : current + header);
+      },
+    ),
+  );
+
+  onFindShortcuts({
+    element: () => documentRoot,
+    screen: '.knowledge-screen',
+    onFind: () => find.show({ query: selectedText() }),
+  });
+
+  // A contents-search result for this document: open the bar with that occurrence current, once it has loaded.
+  createEffect(() => {
+    const request = findRequest();
+    if (!request || request.id !== props.item.id || (request.file ?? undefined) !== props.file) return;
+    if (raw.loading || raw.error) return;
+    const content = raw() ?? '';
+    // Rules, notes and SKILL.md show their body without the frontmatter; skill files show everything.
+    const bodyText = body();
+    const bodyStart = content.length - bodyText.length;
+    const offset = offsetOf(content, request.line, request.column) - bodyStart;
+    const count = (text: string) => findAll(text, request.query, request.caseSensitive).length;
+    let index = 0;
+    if (offset > 0) {
+      index = count(bodyText.slice(0, offset));
+      // Read mode shows the title and description first.
+      if (untrack(mode) === 'read') index += count(title()) + count(description() ?? '');
+    }
+    setFindRequest(undefined);
+    untrack(() => find.show({ query: request.query, caseSensitive: request.caseSensitive, index }));
+  });
+
   const crumbs = (): string[] => {
     const parts = [scopeLabels[props.item.scope], kindLabels[props.item.kind].many];
     if (props.item.folder) parts.push(props.item.folder);
@@ -401,7 +521,7 @@ function Document(props: { item: KnowledgeItem; file?: string }): JSX.Element {
   ];
 
   return (
-    <div class="kd-document">
+    <div ref={documentRoot} class="kd-document">
       <header class="kd-topbar">
         <nav class="kd-crumbs type-label" aria-label="Location">
           <For each={crumbs()}>
@@ -448,7 +568,7 @@ function Document(props: { item: KnowledgeItem; file?: string }): JSX.Element {
       </header>
 
       <div class="kd-scroll">
-        <article class="kd-article">
+        <article ref={setArticle} class="kd-article">
           <ConfirmBar
             open={confirmRemove()}
             message={<>Remove <strong>{props.item.name}</strong>? Agents stop seeing it in new chats.</>}
@@ -503,26 +623,40 @@ function Document(props: { item: KnowledgeItem; file?: string }): JSX.Element {
               />
             </Show>
             <hr class="kd-rule" />
-            <textarea
-              class="kd-editor type-mono"
-              value={draftBody()}
-              spellcheck={false}
-              aria-label="Content"
-              onInput={event => {
-                setDraftBody(event.currentTarget.value);
-                schedule();
-              }}
-              onKeyDown={event => {
-                if ((event.ctrlKey || event.metaKey) && event.key === 's') {
-                  event.preventDefault();
-                  void save();
-                }
-              }}
-            />
+            {/* The mirror behind the textarea takes the find tints (same metrics, invisible text). */}
+            <div class="kd-editor-wrap">
+              <div
+                ref={setBodyMirror}
+                class="find-mirror kd-editor-mirror type-mono"
+                aria-hidden="true"
+              />
+              <textarea
+                ref={setBodyEditor}
+                class="kd-editor type-mono"
+                value={draftBody()}
+                spellcheck={false}
+                aria-label="Content"
+                onInput={event => {
+                  setDraftBody(event.currentTarget.value);
+                  schedule();
+                }}
+                onKeyDown={event => {
+                  if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+                    event.preventDefault();
+                    void save();
+                  }
+                }}
+              />
+            </div>
           </Show>
         </article>
         <Details item={props.item} />
       </div>
+      <FindBar
+        controller={find}
+        class="kd-find"
+        placeholder="Find in document"
+      />
     </div>
   );
 }

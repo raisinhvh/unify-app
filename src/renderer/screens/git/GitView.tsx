@@ -10,7 +10,7 @@
  * Clicking a file row toggles its unified diff inline. Talks to git through bridge().git (src/main/git.ts).
  * Refreshes on window focus, every 5 s while the window is visible, and after every action. Styles: git.css.
  */
-import { createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from 'solid-js';
 import {
   bridge,
   type GitActionResult,
@@ -26,6 +26,8 @@ import { Collapse } from '../../motion';
 import './git.css';
 
 const REFRESH_MS = 5000;
+/** Rows a file list renders at first; "Show more" adds this many again. Thousands of rows make the pane crawl. */
+const ROW_PAGE = 200;
 /** Width of one graph lane, in px. */
 const LANE_WIDTH = 10;
 
@@ -77,6 +79,16 @@ function statusName(letter: GitChange['status']): string {
     case 'U':
       return 'Untracked';
   }
+}
+
+/**
+ * `next` with every change that also appears in `previous` swapped for the previous object, so `<For>` (which
+ * keys rows by identity) keeps those rows instead of rebuilding them.
+ */
+function reuseChanges(previous: GitChange[], next: GitChange[]): GitChange[] {
+  const keyOf = (change: GitChange) => `${change.status}\0${change.path}\0${change.origPath ?? ''}`;
+  const known = new Map(previous.map(change => [keyOf(change), change]));
+  return next.map(change => known.get(keyOf(change)) ?? change);
 }
 
 function omit<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -171,6 +183,8 @@ function GitPanel(props: { git: UnifyGitApi; cwd?: string }): JSX.Element {
   const [stagedOpen, setStagedOpen] = createSignal(true);
   const [changesOpen, setChangesOpen] = createSignal(true);
   const [graphOpen, setGraphOpen] = createSignal(true);
+  const [stagedLimit, setStagedLimit] = createSignal(ROW_PAGE);
+  const [changesLimit, setChangesLimit] = createSignal(ROW_PAGE);
   const [moreOpen, setMoreOpen] = createSignal(false);
   const [moreAnchor, setMoreAnchor] = createSignal<HTMLButtonElement>();
   const [branchOpen, setBranchOpen] = createSignal(false);
@@ -183,6 +197,9 @@ function GitPanel(props: { git: UnifyGitApi; cwd?: string }): JSX.Element {
   /** The branch-name input replaces the branch chip while it is open. */
   const [creating, setCreating] = createSignal(false);
   let refreshing = false;
+  /** The last status and history as JSON: a refresh that reads the same thing changes nothing on screen. */
+  let lastStatusText = '';
+  let lastLogText = '';
 
   const repo = (): Repo | undefined => {
     const current = status();
@@ -191,6 +208,8 @@ function GitPanel(props: { git: UnifyGitApi; cwd?: string }): JSX.Element {
   const branch = () => repo()?.branch ?? '';
   const staged = () => repo()?.staged ?? [];
   const unstaged = () => repo()?.unstaged ?? [];
+  const shownStaged = createMemo(() => staged().slice(0, stagedLimit()));
+  const shownUnstaged = createMemo(() => unstaged().slice(0, changesLimit()));
   const canCommit = () => !busy() && message().trim() !== '' && staged().length + unstaged().length > 0;
 
   const keyOf = (target: DiffTarget) => `${target.staged ? 'staged' : 'changes'}:${target.path}`;
@@ -213,11 +232,30 @@ function GitPanel(props: { git: UnifyGitApi; cwd?: string }): JSX.Element {
     refreshing = true;
     try {
       const next = await git.status(cwd);
-      setStatus(next);
+      const statusText = JSON.stringify(next);
+      if (statusText !== lastStatusText) {
+        lastStatusText = statusText;
+        const previous = repo();
+        if (previous && !isError(next) && next.repo) {
+          setStatus({
+            ...next,
+            staged: reuseChanges(previous.staged, next.staged),
+            unstaged: reuseChanges(previous.unstaged, next.unstaged),
+          });
+        } else {
+          setStatus(next);
+        }
+      }
       if (isError(next) || !next.repo) return;
       const log = await git.log(cwd);
       if (isError(log)) setNotice(log.error);
-      else setCommits(log.commits);
+      else {
+        const logText = JSON.stringify(log.commits);
+        if (logText !== lastLogText) {
+          lastLogText = logText;
+          setCommits(log.commits);
+        }
+      }
       for (const [key, target] of Object.entries(open())) void loadDiff(key, target);
     } finally {
       refreshing = false;
@@ -509,7 +547,7 @@ function GitPanel(props: { git: UnifyGitApi; cwd?: string }): JSX.Element {
           <div class="git-scroll">
             <Section title="Staged" count={staged().length} open={stagedOpen()} onToggle={() => setStagedOpen(!stagedOpen())}>
               <ul class="git-list">
-                <For each={staged()} fallback={<li class="git-empty">No staged changes</li>}>
+                <For each={shownStaged()} fallback={<li class="git-empty">No staged changes</li>}>
                   {change => {
                     const target = () => stagedTarget(change.path);
                     return (
@@ -525,12 +563,13 @@ function GitPanel(props: { git: UnifyGitApi; cwd?: string }): JSX.Element {
                     );
                   }}
                 </For>
+                <MoreRows hidden={staged().length - shownStaged().length} onMore={() => setStagedLimit(stagedLimit() + ROW_PAGE)} />
               </ul>
             </Section>
 
             <Section title="Changes" count={unstaged().length} open={changesOpen()} onToggle={() => setChangesOpen(!changesOpen())}>
               <ul class="git-list">
-                <For each={unstaged()} fallback={<li class="git-empty">No changes</li>}>
+                <For each={shownUnstaged()} fallback={<li class="git-empty">No changes</li>}>
                   {change => {
                     const target = () => changeTarget(change);
                     return (
@@ -547,6 +586,7 @@ function GitPanel(props: { git: UnifyGitApi; cwd?: string }): JSX.Element {
                     );
                   }}
                 </For>
+                <MoreRows hidden={unstaged().length - shownUnstaged().length} onMore={() => setChangesLimit(changesLimit() + ROW_PAGE)} />
               </ul>
             </Section>
 
@@ -629,6 +669,39 @@ function Section(props: {
   );
 }
 
+/**
+ * The last row of a capped file list: how many rows are hidden, and a button that shows more. Scrolling it
+ * near view loads the next page by itself, so the list reads as one long list without mounting it all at once.
+ */
+function MoreRows(props: { hidden: number; onMore: () => void }): JSX.Element {
+  return (
+    <Show when={props.hidden > 0}>
+      <MoreRowsItem hidden={props.hidden} onMore={props.onMore} />
+    </Show>
+  );
+}
+
+function MoreRowsItem(props: { hidden: number; onMore: () => void }): JSX.Element {
+  let element!: HTMLLIElement;
+  onMount(() => {
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries.some(entry => entry.isIntersecting)) props.onMore();
+      },
+      { root: element.closest('.git-scroll'), rootMargin: '0px 0px 400px 0px' },
+    );
+    observer.observe(element);
+    onCleanup(() => observer.disconnect());
+  });
+  return (
+    <li class="git-more" ref={element}>
+      <button type="button" class="git-more-button" onClick={() => props.onMore()}>
+        Show {Math.min(props.hidden, ROW_PAGE)} more · {props.hidden} hidden
+      </button>
+    </li>
+  );
+}
+
 function ChangeRow(props: {
   change: GitChange;
   open: boolean;
@@ -641,6 +714,10 @@ function ChangeRow(props: {
   onDiscard?: () => void;
 }): JSX.Element {
   const parts = () => splitPath(props.change.path);
+  const [opened, setOpened] = createSignal(props.open);
+  createEffect(() => {
+    if (props.open) setOpened(true);
+  });
   return (
     <li class="git-change" classList={{ open: props.open }}>
       <div class="git-row">
@@ -667,11 +744,15 @@ function ChangeRow(props: {
           {props.change.status}
         </span>
       </div>
-      <Collapse open={props.open} class="git-diff-wrap">
-        <Show when={props.diff} fallback={<p class="git-note">Loading diff…</p>}>
-          {result => <DiffView result={result()} />}
-        </Show>
-      </Collapse>
+      {/* The Collapse (springs + a ResizeObserver) only exists once the row has been opened: thousands of
+          closed rows must stay cheap. `appear` gives the first open its reveal. */}
+      <Show when={opened()}>
+        <Collapse open={props.open} appear class="git-diff-wrap">
+          <Show when={props.diff} fallback={<p class="git-note">Loading diff…</p>}>
+            {result => <DiffView result={result()} />}
+          </Show>
+        </Collapse>
+      </Show>
     </li>
   );
 }

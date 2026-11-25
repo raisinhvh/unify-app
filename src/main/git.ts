@@ -8,8 +8,9 @@
  */
 import { ipcMain, type IpcMainInvokeEvent } from 'electron';
 import { execFile } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { devNull } from 'node:os';
+import { join } from 'node:path';
 
 export type GitLetter = 'M' | 'A' | 'D' | 'R' | 'C' | 'U';
 
@@ -126,11 +127,35 @@ function baseFolder(requested: unknown, getProjectPath: () => string | undefined
 }
 
 /** Top-level folder of the repository containing `folder`, or undefined when it is not inside one. */
-async function repoRoot(folder: string): Promise<string | undefined> {
+async function enclosingRepo(folder: string): Promise<string | undefined> {
   const result = await run(folder, ['rev-parse', '--show-toplevel']);
   if (result.code !== 0) return undefined;
   const root = result.stdout.trim();
   return root && existsSync(root) ? root : undefined;
+}
+
+/**
+ * The repository for `folder`: the one it sits in, else the first direct subfolder (by name) that is a
+ * repository. The second case is a workspace that keeps its repo one level down (Unify/unify-app) so the
+ * workspace's own files (.unify) stay out of it.
+ */
+async function repoRoot(folder: string): Promise<string | undefined> {
+  const enclosing = await enclosingRepo(folder);
+  if (enclosing) return enclosing;
+  let children: string[];
+  try {
+    children = readdirSync(folder, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && !entry.name.startsWith('.') && existsSync(join(folder, entry.name, '.git')))
+      .map(entry => entry.name)
+      .sort();
+  } catch {
+    return undefined;
+  }
+  for (const name of children) {
+    const root = await enclosingRepo(join(folder, name));
+    if (root) return root;
+  }
+  return undefined;
 }
 
 /** Splits off the first `count` space-separated fields; the rest (a path, which may hold spaces) is returned whole. */
@@ -319,6 +344,32 @@ async function hasUpstream(root: string): Promise<boolean> {
   return (await run(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])).code === 0;
 }
 
+/**
+ * Makes sure the current branch tracks something before a pull. A branch with no upstream that has a namesake on
+ * origin (fetched first if needed) is set to track it. Otherwise it explains what to do, naming origin's default
+ * branch when it has a different name (a local `master` next to a remote `main`, say).
+ */
+async function ensureUpstream(root: string): Promise<{ ok: true } | { error: string }> {
+  if (await hasUpstream(root)) return { ok: true };
+  const branch = (await run(root, ['branch', '--show-current'])).stdout.trim();
+  if (!branch) return { error: 'HEAD is detached: switch to a branch to pull.' };
+  const remotes = (await run(root, ['remote'])).stdout.split('\n').map(name => name.trim()).filter(Boolean);
+  if (remotes.length === 0) return { error: 'This repository has no remote to pull from.' };
+  const remote = remotes.includes('origin') ? 'origin' : remotes[0];
+  const remoteRef = `refs/remotes/${remote}/${branch}`;
+  if (!(await refExists(root, remoteRef))) await run(root, ['fetch', remote], { timeout: NETWORK_TIMEOUT_MS });
+  if (await refExists(root, remoteRef)) {
+    const tracked = await run(root, ['branch', `--set-upstream-to=${remote}/${branch}`]);
+    return tracked.code === 0 ? { ok: true } : { error: failure(tracked, 'Could not set the upstream branch.') };
+  }
+  const head = await run(root, ['symbolic-ref', '--short', `refs/remotes/${remote}/HEAD`]);
+  const fallback = head.code === 0 ? head.stdout.trim() : '';
+  if (fallback && fallback !== `${remote}/${branch}`) {
+    return { error: `${branch} is not on ${remote}. Switch to ${fallback} in the branch menu, or Push to publish ${branch}.` };
+  }
+  return { error: `${branch} is not on ${remote} yet. Push to publish it.` };
+}
+
 /** Pushes the current branch. The first push of a branch sets its upstream on origin. */
 async function pushBranch(root: string): Promise<RunResult> {
   const args = (await hasUpstream(root)) ? ['push'] : ['push', '--set-upstream', 'origin', 'HEAD'];
@@ -423,10 +474,14 @@ export function registerGitIpc(getProjectPath: () => string | undefined): void {
   );
 
   ipcMain.handle('unify:git-pull', (_event: IpcMainInvokeEvent, cwd: unknown, options: unknown) =>
-    safely<GitActionResult>(error => ({ error }), () => {
+    safely<GitActionResult>(error => ({ error }), async () => {
       const rebase = !!(options as { rebase?: unknown } | undefined)?.rebase;
-      const args = ['pull', rebase ? '--rebase' : '--no-edit'];
-      return act(folderArg(cwd), getProjectPath, args, { timeout: NETWORK_TIMEOUT_MS, fallback: 'Pull failed.' });
+      const root = await rootFor(folderArg(cwd), getProjectPath);
+      if (!root) return { error: 'Not a git repository.' };
+      const upstream = await ensureUpstream(root);
+      if ('error' in upstream) return upstream;
+      const result = await run(root, ['pull', rebase ? '--rebase' : '--no-edit'], { timeout: NETWORK_TIMEOUT_MS });
+      return result.code === 0 ? { ok: true } : { error: failure(result, 'Pull failed.') };
     }),
   );
 
@@ -439,12 +494,13 @@ export function registerGitIpc(getProjectPath: () => string | undefined): void {
     }),
   );
 
-  // Pull (merge), then push. Stops at the first failure. Without an upstream there is nothing to pull from,
-  // so it just pushes, which sets the upstream.
+  // Pull (merge), then push. Stops at the first failure. A branch without an upstream first tracks its namesake on
+  // origin when there is one; a branch origin does not have yet is just pushed, which sets the upstream.
   ipcMain.handle('unify:git-sync', (_event: IpcMainInvokeEvent, cwd: unknown) =>
     safely<GitActionResult>(error => ({ error }), async () => {
       const root = await rootFor(folderArg(cwd), getProjectPath);
       if (!root) return { error: 'Not a git repository.' };
+      if (!(await hasUpstream(root))) await ensureUpstream(root);
       if (await hasUpstream(root)) {
         const pulled = await run(root, ['pull', '--no-edit'], { timeout: NETWORK_TIMEOUT_MS });
         if (pulled.code !== 0) return { error: failure(pulled, 'Pull failed.') };

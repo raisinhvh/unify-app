@@ -6,8 +6,10 @@
  *   job       JobBar.tsx: the chat's /job run (round, phase, criteria), only while it has one
  *   timeline  Timeline.tsx
  *   status    what the agent is doing right now (loader + label) while it runs
- *   changes   files this chat edited, with review / keep / undo (DSH renderChanges); every pane shows its own chat's
- *   composer  Composer.tsx, bound to this chat
+ *   changes   files this chat edited, with review / keep / undo (DSH renderChanges); every pane shows its own chat's.
+ *             No card: a hairline above it, and it opens upward into a list like a tool batch
+ *   composer  Composer.tsx, bound to this chat; `autoHide`: the box shows while the pointer is over the pane and
+ *             otherwise tucks into a faint bottom line with the running subagent / background counts
  *   quote     QuoteSelection.tsx: selecting text in an agent reply offers "Quote", which adds it to the composer
  *
  * Everything under the header follows the pane text-size rule (shell/paneScale.tsx): narrower than full size it
@@ -16,7 +18,7 @@
  * Pop out (only where the bridge has `popOut`) moves the chat into its own window and closes this pane.
  * A standalone context (the pop-out window, Popout.tsx) hides the grip and the pop-out button.
  */
-import { createSignal, For, Show, type JSX } from 'solid-js';
+import { createSignal, For, onCleanup, onMount, Show, type JSX } from 'solid-js';
 import { Button, Icon, IconButton, Loader, Menu, actionLabel, actionLoader, chatAction, type MenuEntry } from '../../components';
 import { Collapse } from '../../motion';
 import { bridge, post } from '../../bridge';
@@ -69,15 +71,15 @@ function ChangesBar(props: { chatId: string }): JSX.Element {
   const deletions = () => pending().reduce((sum, diff) => sum + (diff.deletions || 0), 0);
   return (
     <Collapse open={pending().length > 0}>
+      {/* No card: a hairline separates it from the feed, and it opens upward like a tool batch. */}
       <div class="changes">
         <div class="changes-head">
           <button type="button" class="changes-toggle" aria-expanded={expanded()} onClick={() => setExpanded(!expanded())}>
-            <Icon name="chevronRight" size={12} style={{ rotate: expanded() ? '90deg' : '0deg' }} class="changes-chevron" />
             <Show
               when={pending().length <= 2}
               fallback={
                 <span class="changes-file">
-                  <span class="changes-name">Multiple files</span>
+                  <span class="changes-name">{pending().length} files changed</span>
                   <span class="diff-add">+{additions()}</span>
                   <span class="diff-del">−{deletions()}</span>
                 </span>
@@ -93,10 +95,11 @@ function ChangesBar(props: { chatId: string }): JSX.Element {
                 )}
               </For>
             </Show>
+            <Icon name="chevronRight" size={12} style={{ rotate: expanded() ? '90deg' : '0deg' }} class="changes-chevron" />
           </button>
           <Button variant="text" onClick={() => send({ type: 'reviewAll' })}>Review</Button>
           <Button variant="text" onClick={() => send({ type: 'rejectAll' })}>{allApplied() ? 'Undo all' : 'Reject all'}</Button>
-          <Button variant="secondary" onClick={() => send({ type: 'applyAll' })}>{allApplied() ? 'Keep all' : 'Apply all'}</Button>
+          <Button variant="text" onClick={() => send({ type: 'applyAll' })}>{allApplied() ? 'Keep all' : 'Apply all'}</Button>
         </div>
         <Collapse open={expanded()}>
           <div class="changes-list">
@@ -180,6 +183,26 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
   const [paneElement, setPaneElement] = createSignal<HTMLDivElement>();
   let composer: ComposerApi | undefined;
 
+  // The composer shows while the pointer is over this pane. Popovers and menus are portaled out of the pane, so
+  // moving onto one (the composer's model menu) keeps the current state; leaving the window hides it.
+  const [hovered, setHovered] = createSignal(false);
+  onMount(() => {
+    const onPointerOver = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (!target || target.closest?.('.popover')) return;
+      setHovered(!!paneElement()?.contains(target));
+    };
+    const onPointerOut = (event: PointerEvent) => {
+      if (!event.relatedTarget) setHovered(false);
+    };
+    document.addEventListener('pointerover', onPointerOver);
+    document.addEventListener('pointerout', onPointerOut);
+    onCleanup(() => {
+      document.removeEventListener('pointerover', onPointerOver);
+      document.removeEventListener('pointerout', onPointerOut);
+    });
+  });
+
   const moreItems = (): MenuEntry[] => [
     { id: 'rename', label: 'Rename' },
     { kind: 'separator' },
@@ -205,7 +228,12 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
   };
 
   return (
-    <div ref={setPaneElement} class="chat-pane" onPointerDown={() => markRead(chatId())}>
+    <div
+      ref={setPaneElement}
+      class="chat-pane"
+      onPointerDown={() => markRead(chatId())}
+      onDragEnter={() => setHovered(true)}
+    >
       <header
         class="chat-pane-header"
         classList={{ standalone: !!props.context.standalone }}
@@ -280,6 +308,8 @@ export function ChatPane(props: { context: PaneContext }): JSX.Element {
           <Composer
             chatId={chatId()}
             placeholder="Reply, @ to mention a file"
+            autoHide
+            hovered={hovered()}
             ref={api => {
               composer = api;
             }}

@@ -1,6 +1,8 @@
 /**
  * Files screen state shared by the panel (tree) and the editor (tabs): open folders, open tabs, the active
  * file, loaded folder listings and loaded documents. UI choices persist through persist.ts.
+ *
+ * `openFileAt` + `reveal` select a line range (or, with columns, an exact match from contents search) in the editor.
  */
 import { createSignal } from 'solid-js';
 import { createStore, produce, reconcile } from 'solid-js/store';
@@ -147,20 +149,36 @@ export function openDiff(diff: DiffTab, activate = true): void {
   persistTabs();
 }
 
-/** A line range FilesEditor's Monaco scrolls to and selects once the file is shown, then clears. */
+/**
+ * A range FilesEditor's Monaco scrolls to and selects once the file is shown, then clears. Without columns it
+ * selects whole lines; with them (contents search) exactly startLine:startColumn to endLine:endColumn (1-based,
+ * endColumn exclusive, as Monaco counts).
+ */
 export interface RevealRequest {
   path: string;
   startLine: number;
   endLine: number;
+  startColumn?: number;
+  endColumn?: number;
 }
 
 const [reveal, setReveal] = createSignal<RevealRequest | undefined>();
 export { reveal, setReveal };
 
-/** Opens a file and asks the editor to reveal a line range in it (1-based, inclusive). */
-export function openFileAt(path: string, startLine?: number, endLine?: number): void {
+/** Opens a file and asks the editor to reveal a line range in it (1-based, inclusive), or an exact column span. */
+export function openFileAt(path: string, startLine?: number, endLine?: number, startColumn?: number, endColumn?: number): void {
   openFile(path);
-  setReveal(startLine ? { path, startLine, endLine: Math.max(startLine, endLine ?? startLine) } : undefined);
+  if (!startLine) {
+    setReveal(undefined);
+    return;
+  }
+  setReveal({
+    path,
+    startLine,
+    endLine: Math.max(startLine, endLine ?? startLine),
+    startColumn,
+    endColumn,
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -9,12 +9,9 @@ Thumbs.db
 
 hub-staging/
 
-# Local agent data and scratch folders; never published.
-# .unify/memory and .unify/skills are project content and travel with the repo (so they reach every PC);
-# the rest of .unify (chat storage in .unify/chats, caches) stays local.
-.unify/*
-!.unify/memory/
-!.unify/skills/
+# Local agent data and scratch folders; never published. The workspace's .unify folder (memory, skills, chats)
+# lives one level up, outside the repo, so none of it is committed.
+.unify/
 .dsh/
 build/node-compile-cache/
 agent_team/

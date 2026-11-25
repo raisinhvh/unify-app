@@ -358,6 +358,8 @@ class ExtensionHost implements vscode.Disposable {
   private selectedModel: string;
   private modelChoices: Record<string, ModelChoice>;
   private approvalMode: ApprovalMode;
+  /** Chats the main window shows in panes or pop-outs (renderer `openChats` message); exempt from pruning. */
+  private openChatIds = new Set<string>();
   private readonly transcripts = new Map<string, TranscriptItem[]>();
   /** ACP sessions created in this window that have not had a prompt yet, so their first context report measures the baseline. */
   private readonly freshSessions = new Set<string>();
@@ -1745,7 +1747,8 @@ class ExtensionHost implements vscode.Disposable {
 
   /**
    * Keeps at most MAX_CHATS_PER_PROJECT chats per project folder: a new chat deletes that folder's oldest
-   * chats beyond the limit. Chats still working (turn, job, background agents) are never pruned.
+   * chats beyond the limit. Chats still working (turn, job, background agents) or open in the workspace
+   * (a pane or pop-out window) are never pruned.
    */
   private async pruneProjectChats(created: SessionRecord): Promise<void> {
     const projectPath = (record: SessionRecord): string | undefined => record.noFolder ? undefined : (record.project || this.currentProject())?.path;
@@ -1757,7 +1760,8 @@ class ExtensionHost implements vscode.Disposable {
     const inProject = this.sessions()
       .filter(item => projectPath(item) === path)
       .sort((first, second) => (second.updatedAt || 0) - (first.updatedAt || 0));
-    const excess = inProject.slice(MAX_CHATS_PER_PROJECT).filter(item => item.id !== created.id && !busy(item.id));
+    const excess = inProject.slice(MAX_CHATS_PER_PROJECT)
+      .filter(item => item.id !== created.id && !busy(item.id) && !this.openChatIds.has(item.id));
     for (const item of excess) {
       try { await this.deleteSession(item.id); }
       catch (error) { this.output.appendLine(`Pruning old chat ${item.id} failed: ${String(error)}`); }
@@ -5050,6 +5054,7 @@ class ExtensionHost implements vscode.Disposable {
         case 'newSession': await this.newChat(message.project, !!message.noFolder); break;
         case 'selectSession': await this.continueChat(message.sessionId); break;
         case 'deleteSession': await this.deleteSession(message.sessionId); break;
+        case 'openChats': this.openChatIds = new Set(message.chatIds); break;
         case 'stopBackgroundProcess': this.backgroundProcesses.stop(message.sessionId, message.id); break;
         case 'renameSession': {
           // Prefer the loaded chat's record so a later turn save does not restore the old name.

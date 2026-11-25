@@ -87,6 +87,115 @@
   display: none;
 }
 
+/* Search area: Files | Contents above the input (the Knowledge screen's Segmented, a little more compact). */
+.files-search-area {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.files-search-area .files-search {
+  margin-bottom: 0;
+  padding-right: 4px;
+}
+
+.files-panel .segmented {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.files-panel .segmented-indicator {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  background: var(--raised);
+  border-radius: calc(var(--radius-control) - 2px);
+  pointer-events: none;
+}
+
+.files-panel .segmented-option {
+  position: relative;
+  flex: 1;
+  height: 22px;
+  padding: 0 10px;
+  color: var(--text3);
+  font-size: calc(12px * var(--text-scale, 1));
+  white-space: nowrap;
+  transition: color 140ms ease;
+}
+
+.files-panel .segmented-option:hover {
+  color: var(--text2);
+}
+
+.files-panel .segmented-option.selected {
+  color: var(--text);
+}
+
+/* Contents results: file rows (name, dim folder, count) and one row per occurrence. */
+.files-content-results {
+  transition: opacity 160ms ease-out;
+}
+
+/* A newer query is on its way: the old results stay, quieter. */
+.files-content-results.stale {
+  opacity: 0.55;
+}
+
+.files-results-summary {
+  margin: 0;
+  padding: 2px 8px 6px;
+  color: var(--text3);
+}
+
+.files-match-file .tree-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.files-match-name {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.files-match-folder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text3);
+  font-size: calc(11px * var(--text-scale, 1));
+}
+
+.files-match-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.files-match {
+  height: 24px;
+}
+
+.files-match .tree-leading {
+  display: none;
+}
+
+.files-match .find-snippet {
+  font-size: calc(11px * var(--text-scale, 1));
+  line-height: 16px;
+}
+
+.files-match.selected .find-snippet {
+  color: var(--text);
+}
+
 .files-tree {
   flex: 1;
   min-height: 0;

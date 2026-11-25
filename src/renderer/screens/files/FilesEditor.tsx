@@ -8,13 +8,27 @@
  *
  * Feature `editor.enabled` off: a plain read-only code view replaces Monaco (same metrics, same tints).
  * Feature `editor.minimap` toggles the minimap live. Ctrl/⌘ S saves through the adapter.
+ * Ctrl/⌘ F (anywhere in the Files screen or its pane, components/FindBar onFindShortcuts): Monaco's own find widget
+ * on the active file or diff (prefilled from the selection); in the plain view, the app's FindBar over the code.
+ * A contents-search match (reveal with columns) selects exactly the matched text.
  *
  * Organic motion: a tab opened for a file the agent just created types its name in, a deleted file's tab sweeps
  * its name out before it closes, and the plain view's lines are EditedLines (removed lines sweep and collapse,
  * added lines wipe in). Monaco gets one minimal edit, so an agent edit only touches the text it changed.
  */
 import { createEffect, createMemo, createSignal, For, getOwner, Index, on, onCleanup, onMount, runWithOwner, Show, untrack, type JSX } from 'solid-js';
-import { Icon, IconButton, Menu, type MenuEntry } from '../../components';
+import {
+  createFindController,
+  domFindSurface,
+  findAll,
+  FindBar,
+  Icon,
+  IconButton,
+  Menu,
+  onFindShortcuts,
+  selectedFindText,
+  type MenuEntry,
+} from '../../components';
 import { pressable, Presence, flipList } from '../../motion';
 import { EditedLines, RetypeText } from '../../motion/organic';
 import { feature, setFeature } from '../../store/features';
@@ -203,9 +217,17 @@ function plainLines(content: string, changes: FileLineChanges | undefined): Plai
   return result;
 }
 
-function PlainCode(props: { document: OpenDocument }): JSX.Element {
+/** `onRoot` receives the scrolling view (and undefined on unmount), for the plain view's FindBar. */
+function PlainCode(props: { document: OpenDocument; onRoot?: (root: HTMLElement | undefined) => void }): JSX.Element {
+  onCleanup(() => props.onRoot?.(undefined));
   return (
-    <div class="files-plain type-mono" role="textbox" aria-readonly="true" aria-label={props.document.path}>
+    <div
+      ref={element => props.onRoot?.(element)}
+      class="files-plain type-mono"
+      role="textbox"
+      aria-readonly="true"
+      aria-label={props.document.path}
+    >
       {/* Keyed by path: another file mounts fresh lines instead of animating one file into the other. */}
       <Show when={props.document.path} keyed>
         {path => <PlainLines document={props.document} path={path} />}
@@ -272,7 +294,16 @@ function replaceChangedText(model: MonacoApi.editor.ITextModel, next: string): v
   ]);
 }
 
-function MonacoCode(props: { path: string; onSave: () => void }): JSX.Element {
+/** Registers the mounted editor's find for Ctrl+F; returns the unregister. */
+type RegisterFind = (find: () => void) => () => void;
+
+/** Focuses the editor and opens Monaco's find widget (it prefills from the selection itself). */
+function openMonacoFind(editor: MonacoApi.editor.ICodeEditor): void {
+  editor.focus();
+  void editor.getAction('actions.find')?.run();
+}
+
+function MonacoCode(props: { path: string; onSave: () => void; registerFind: RegisterFind }): JSX.Element {
   const [ready, setReady] = createSignal(false);
   const owner = getOwner();
   let host!: HTMLDivElement;
@@ -369,6 +400,8 @@ function MonacoCode(props: { path: string; onSave: () => void }): JSX.Element {
     });
     decorations = editor.createDecorationsCollection();
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => props.onSave());
+    const codeEditor = editor;
+    const unregisterFind = props.registerFind(() => openMonacoFind(codeEditor));
 
     runWithOwner(owner, () => {
       createEffect(() => {
@@ -398,7 +431,11 @@ function MonacoCode(props: { path: string; onSave: () => void }): JSX.Element {
         const last = model.getLineCount();
         const start = Math.min(request.startLine, last);
         const end = Math.min(request.endLine, last);
-        const range = new monaco.Range(start, 1, end, model.getLineMaxColumn(end));
+        // With columns (a contents-search match) exactly the matched text, otherwise the whole lines.
+        const exact = request.startColumn !== undefined && request.endColumn !== undefined;
+        const range = exact
+          ? new monaco.Range(start, request.startColumn!, end, request.endColumn!)
+          : new monaco.Range(start, 1, end, model.getLineMaxColumn(end));
         editor.setSelection(range);
         editor.revealRangeInCenter(range, monaco.editor.ScrollType.Smooth);
         editor.focus();
@@ -406,6 +443,7 @@ function MonacoCode(props: { path: string; onSave: () => void }): JSX.Element {
       });
       createEffect(() => editor?.updateOptions({ minimap: { enabled: feature<boolean>('editor.minimap') } }));
       createEffect(on(currentTheme, () => module.defineUnifyTheme(), { defer: true }));
+      onCleanup(unregisterFind);
       // Drop models of closed tabs.
       createEffect(() => {
         const open = new Set(tabs());
@@ -447,7 +485,7 @@ const sideBySideBreakpoint = 720;
  * A read-only Monaco diff editor for diff tabs: base (left) against the agent's edit (right). One editor serves
  * every diff tab; each tab keeps its own pair of models (and scroll), disposed when the tab closes.
  */
-function DiffCode(props: { tabKey: string }): JSX.Element {
+function DiffCode(props: { tabKey: string; registerFind: RegisterFind }): JSX.Element {
   const [ready, setReady] = createSignal(false);
   const owner = getOwner();
   let host!: HTMLDivElement;
@@ -487,6 +525,7 @@ function DiffCode(props: { tabKey: string }): JSX.Element {
       fixedOverflowWidgets: true,
     });
     editor = diffEditor;
+    const unregisterFind = props.registerFind(() => openMonacoFind(diffEditor.getModifiedEditor()));
 
     const createModel = (text: string, language: string) => {
       const model = monaco.editor.createModel(text, language);
@@ -520,6 +559,7 @@ function DiffCode(props: { tabKey: string }): JSX.Element {
         }
       });
       createEffect(on(currentTheme, () => module.defineUnifyTheme(), { defer: true }));
+      onCleanup(unregisterFind);
       // Drop models of closed diff tabs (detach first when it is the one on screen).
       createEffect(() => {
         const open = new Set(tabs());
@@ -563,6 +603,7 @@ export function FilesEditor(): JSX.Element {
   const [menuOpen, setMenuOpen] = createSignal(false);
   const [status, setStatus] = createSignal<string>('');
   let moreButton: HTMLButtonElement | undefined;
+  let editorSection: HTMLElement | undefined;
 
   const current = () => (activePath() ? documents[activePath()!] : undefined);
   /** The active diff tab, when the active tab is one. */
@@ -583,6 +624,57 @@ export function FilesEditor(): JSX.Element {
   });
 
   createEffect(on(activePath, () => setStatus('')));
+
+  // Find (Ctrl/⌘ F): Monaco's widget while an editor is mounted, the FindBar over the plain view otherwise.
+  let editorFind: (() => void) | undefined;
+  const registerFind: RegisterFind = find => {
+    editorFind = find;
+    return () => {
+      if (editorFind === find) editorFind = undefined;
+    };
+  };
+  const [plainRoot, setPlainRoot] = createSignal<HTMLElement>();
+  const plainSurface = createMemo(() => {
+    const root = plainRoot();
+    return root ? domFindSurface(root, { textSelector: '.files-plain-text' }) : undefined;
+  });
+  const plainFind = createFindController({
+    surface: plainSurface,
+    content: () => current()?.draft ?? current()?.content,
+  });
+
+  onFindShortcuts({
+    element: () => editorSection,
+    screen: '.files-screen',
+    onFind: () => {
+      if (editorFind) editorFind();
+      else if (plainSurface()) plainFind.show({ query: selectedFindText() });
+    },
+  });
+
+  // The plain view has no selection of its own: a contents-search match opens its FindBar on that occurrence.
+  createEffect(() => {
+    const request = reveal();
+    if (!request || feature<boolean>('editor.enabled') || request.startColumn === undefined || request.endColumn === undefined) return;
+    if (activePath() !== request.path) return;
+    const document = documents[request.path];
+    if (!document || document.error) return;
+    const lines = plainLines(document.draft ?? document.content, document.changes);
+    const target = lines.find(line => line.kind === 'line' && line.number === request.startLine);
+    const query = target?.text.slice(request.startColumn - 1, request.endColumn - 1);
+    if (!target || !query) return;
+    const caseSensitive = untrack(plainFind.caseSensitive);
+    let index = 0;
+    for (const line of lines) {
+      if (line === target) {
+        index += findAll(line.text.slice(0, request.startColumn - 1), query, caseSensitive).length;
+        break;
+      }
+      index += findAll(line.text, query, caseSensitive).length;
+    }
+    setReveal(undefined);
+    untrack(() => plainFind.show({ query, index }));
+  });
 
   const requestClose = (path: string) => {
     if (!closing().includes(path)) setClosing([...closing(), path]);
@@ -638,7 +730,7 @@ export function FilesEditor(): JSX.Element {
   };
 
   return (
-    <section class="files-editor" aria-label="Editor">
+    <section ref={editorSection} class="files-editor" aria-label="Editor">
       <header class="files-tabs-row">
         <div class="files-tabs" role="tablist" ref={element => flipList(element)}>
           <For each={tabs()}>
@@ -699,7 +791,10 @@ export function FilesEditor(): JSX.Element {
               when={!isDiffKey(path())}
               fallback={
                 <Show when={currentDiff()}>
-                  <DiffCode tabKey={path()} />
+                  <DiffCode
+                    tabKey={path()}
+                    registerFind={registerFind}
+                  />
                 </Show>
               }
             >
@@ -711,8 +806,23 @@ export function FilesEditor(): JSX.Element {
                   </Show>
                 }
               >
-                <Show when={feature<boolean>('editor.enabled')} fallback={<div class="files-code"><PlainCode document={current()!} /></div>}>
-                  <MonacoCode path={path()} onSave={() => void save()} />
+                <Show
+                  when={feature<boolean>('editor.enabled')}
+                  fallback={
+                    <div class="files-code">
+                      <PlainCode
+                        document={current()!}
+                        onRoot={setPlainRoot}
+                      />
+                      <FindBar controller={plainFind} />
+                    </div>
+                  }
+                >
+                  <MonacoCode
+                    path={path()}
+                    onSave={() => void save()}
+                    registerFind={registerFind}
+                  />
                 </Show>
               </Show>
             </Show>

@@ -11,6 +11,9 @@
  *   2. otherwise DSH's instructions mapped onto KnowledgeItem (no memory notes, audiences = Everyone);
  *   3. only with no host bridge (vite dev, previews): the Figma "21 · Knowledge" mock.
  * With a real host the mock is never read or written.
+ *
+ * Contents search (Ctrl+Shift+F) is `searchKnowledge` → `knowledgeMatches` with the engine; the other two sources
+ * scan readKnowledge's content here (files/adapter.ts scanText).
  */
 import { createSignal } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
@@ -18,6 +21,7 @@ import { hasHostBridge, post } from '../../bridge';
 import { readPersisted, writePersisted } from '../../persist';
 import { onHostMessage, viewState } from '../../store';
 import type { SidebarProject, SidebarWebviewMessage } from '../../protocol';
+import { scanText } from '../files/adapter';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Contract (mirrors protocol-requests.md)
@@ -75,7 +79,30 @@ export type KnowledgeRequest =
   | { type: 'removeKnowledge'; requestId: string; id: string }
   | { type: 'setKnowledgeAudience'; id: string; audiences: Audience[] }
   | { type: 'importSkillFolder'; requestId: string; scope: KnowledgeScope; name: string; files: ImportedFile[] }
-  | { type: 'openKnowledge'; id: string; file?: string };
+  | { type: 'openKnowledge'; id: string; file?: string }
+  /** Ctrl+Shift+F: literal text search through every item's content in one scope. Replies `knowledgeMatches`. */
+  | { type: 'searchKnowledge'; requestId: string; query: string; scope: KnowledgeScope; caseSensitive?: boolean; limit?: number };
+
+/**
+ * One occurrence of a contents-search query. `file` names the file inside a skill ("SKILL.md" included); rules
+ * and notes have none. Line and column (1-based) count in the content readKnowledge returns for that id/file.
+ */
+export interface KnowledgeMatch {
+  id: string;
+  file?: string;
+  line: number;
+  column: number;
+  length: number;
+  /** The line's text, cut to 300 characters. */
+  text: string;
+}
+
+export interface KnowledgeSearchResult {
+  query: string;
+  matches: KnowledgeMatch[];
+  /** True when the engine stopped at `limit` occurrences. */
+  truncated: boolean;
+}
 
 export type KnowledgeReply =
   /** `project`: the folder the project-scope items were read from (none when no project is open). */
@@ -83,7 +110,8 @@ export type KnowledgeReply =
   | { type: 'knowledgeContent'; requestId: string; id: string; file?: string; content: string }
   | { type: 'knowledgeSaved'; requestId: string; item: KnowledgeItem }
   | { type: 'knowledgeRemoved'; requestId: string; id: string }
-  | { type: 'knowledgeError'; requestId: string; message: string };
+  | { type: 'knowledgeError'; requestId: string; message: string }
+  | { type: 'knowledgeMatches'; requestId: string; query: string; matches: KnowledgeMatch[]; truncated: boolean };
 
 // ---------------------------------------------------------------------------------------------------------------
 // Source selection and transport
@@ -229,6 +257,46 @@ export async function readKnowledge(item: KnowledgeItem, file?: string): Promise
   }
   if (current === 'instructions') return readInstruction(item.id);
   return mockContent.get(contentKey(item.id, file)) ?? `# ${file ?? item.name}\n\n(dev mock)\n`;
+}
+
+/** Default and engine cap for contents search occurrences. */
+export const knowledgeSearchLimit = 500;
+
+/**
+ * Every literal occurrence of `query` in the content of the items in `scope` (Ctrl+Shift+F). The engine searches
+ * with the new contract; DSH's instructions and the dev mock are scanned here, item by item.
+ */
+export async function searchKnowledgeContents(
+  query: string,
+  scope: KnowledgeScope,
+  options: { caseSensitive?: boolean; limit?: number } = {},
+): Promise<KnowledgeSearchResult> {
+  const limit = options.limit ?? knowledgeSearchLimit;
+  const caseSensitive = !!options.caseSensitive;
+  if (!query) return { query, matches: [], truncated: false };
+  if (source() === 'engine') {
+    const reply = await request({ type: 'searchKnowledge', query, scope, caseSensitive, limit }, 10000);
+    if (reply?.type === 'knowledgeMatches') return { query: reply.query, matches: reply.matches, truncated: reply.truncated };
+    if (reply?.type === 'knowledgeError') console.warn(`[knowledge] searchKnowledge failed: ${reply.message}`);
+    return { query, matches: [], truncated: false };
+  }
+  const matches: KnowledgeMatch[] = [];
+  for (const item of knowledgeItems().filter(entry => entry.scope === scope)) {
+    const files: (string | undefined)[] = item.kind === 'skill' ? item.files ?? ['SKILL.md'] : [undefined];
+    for (const file of files) {
+      if (matches.length >= limit) break;
+      const readFile = file === 'SKILL.md' ? undefined : file;
+      const content = await readKnowledge(item, readFile).catch(() => '');
+      for (const hit of scanText(content, query, caseSensitive, limit - matches.length)) {
+        matches.push(file ? { id: item.id, file, ...hit } : { id: item.id, ...hit });
+      }
+    }
+  }
+  return {
+    query,
+    matches,
+    truncated: matches.length >= limit,
+  };
 }
 
 export async function saveKnowledge(draft: KnowledgeDraft, content: string, file?: string): Promise<KnowledgeItem> {

@@ -192,6 +192,12 @@
   font-size: calc(11px * var(--text-scale, 1));
 }
 
+/* The status line lives under the scroller, so the feed's bottom padding sits between it and the last row. While
+   it shows, trim that padding so the status lands on the feed's row rhythm (same pitch as stacked subagents). */
+.chat-pane-scale:has(.chat-status) .feed {
+  padding-bottom: 6px;
+}
+
 .chat-status-label {
   color: var(--text);
 }
@@ -203,12 +209,13 @@
   white-space: nowrap;
 }
 
+/* No card: a hairline above separates the edits from the feed; opening grows the list under the head, so the
+   hairline rides up (the tool batch's look: muted head, chevron after the label, rows on a guide line). */
 .changes {
-  margin-bottom: 4px;
-  padding: 2px 3px 2px 8px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  /* Air above the hairline matches the air under it, so the status line doesn't sit on it. */
+  margin: 6px 6px 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
 }
 
 .changes-head {
@@ -217,24 +224,33 @@
   gap: 2px;
 }
 
-/* Compact actions: the bar sits on the composer, so its buttons are smaller than the app's defaults. */
+/* Quiet actions: muted text until hovered. */
 .changes-head > .button {
-  height: 22px;
+  height: 20px;
   padding: 0 6px;
+  color: var(--text3);
   font-size: calc(11px * var(--text-scale, 1));
+}
+
+.changes-head > .button:hover:not(:disabled) {
+  color: var(--text);
 }
 
 .changes-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 1;
   min-width: 0;
-  height: 22px;
+  height: 20px;
   padding-right: 10px;
-  color: var(--text);
-  font-size: calc(11.5px * var(--text-scale, 1));
+  color: var(--text2);
+  font-size: calc(11px * var(--text-scale, 1));
   text-align: left;
+}
+
+.changes-toggle:hover .changes-chevron {
+  color: var(--text);
 }
 
 .changes-file {
@@ -280,7 +296,18 @@
 }
 
 .changes-list {
-  padding: 0 0 2px 18px;
+  position: relative;
+  padding: 2px 0 2px 20px;
+}
+
+.changes-list::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--border);
 }
 
 .changes-row {
@@ -288,6 +315,14 @@
   align-items: center;
   gap: 6px;
   height: 22px;
+}
+
+.changes-row .icon-button {
+  color: var(--text3);
+}
+
+.changes-row .icon-button:hover {
+  color: var(--text);
 }
 
 .changes-path {

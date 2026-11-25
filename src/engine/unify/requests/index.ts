@@ -30,9 +30,11 @@ import {
   readKnowledge,
   removeKnowledge,
   saveKnowledge,
+  searchKnowledge,
   setKnowledgeAudiences,
   undoKnowledgeChange,
 } from './knowledge';
+import { searchWorkspaceContents } from './contentSearch';
 import {
   accountsState,
   openProviderUsage,
@@ -97,7 +99,7 @@ async function packDisplayName(paths: RequestPaths, packId: string): Promise<str
 }
 
 const knowledgeTypes = new Set([
-  'knowledgeList', 'readKnowledge', 'saveKnowledge', 'removeKnowledge', 'setKnowledgeAudience', 'importSkillFolder', 'undoKnowledgeChange', 'openKnowledge',
+  'knowledgeList', 'readKnowledge', 'saveKnowledge', 'removeKnowledge', 'setKnowledgeAudience', 'importSkillFolder', 'undoKnowledgeChange', 'openKnowledge', 'searchKnowledge',
 ]);
 
 /**
@@ -117,7 +119,8 @@ function projectContext(message: UnifyRequestMessage, context: UnifyRequestConte
 
 function isFilesType(type: string): boolean {
   return type === 'listDir' || type === 'readFile' || type === 'writeFile' || type === 'findFiles'
-    || type === 'createEntry' || type === 'renameEntry' || type === 'deleteEntry' || type === 'copyEntry' || type === 'importEntries';
+    || type === 'createEntry' || type === 'renameEntry' || type === 'deleteEntry' || type === 'copyEntry' || type === 'importEntries'
+    || type === 'searchFileContents';
 }
 
 /** Files requests, read from `context.workspaceRoot` (the project the screen picked, else the open folder). */
@@ -174,6 +177,15 @@ async function handleFilesRequest(
       const relative = stringField(message, 'path');
       deleteWorkspaceEntry(context.workspaceRoot, relative);
       send({ type: 'entryDone', path: relative });
+      return true;
+    }
+    if (type === 'searchFileContents') {
+      const query = stringField(message, 'query');
+      const result = await searchWorkspaceContents(context.workspaceRoot, query, {
+        caseSensitive: message.caseSensitive === true,
+        limit: typeof message.limit === 'number' ? message.limit : undefined,
+      });
+      send({ type: 'contentMatches', query, matches: result.matches, truncated: result.truncated });
       return true;
     }
     const query = stringField(message, 'query');
@@ -302,6 +314,20 @@ export async function handleUnifyRequest(
         await openKnowledge(paths, stringField(message, 'id'), typeof message.file === 'string' ? message.file : undefined);
       } catch {
         // Opening a file has no reply; a stale item simply does nothing.
+      }
+      return true;
+    }
+    if (type === 'searchKnowledge') {
+      try {
+        const query = stringField(message, 'query');
+        const scope: KnowledgeScope = message.scope === 'project' ? 'project' : 'global';
+        const result = await searchKnowledge(context, paths, scope, query, {
+          caseSensitive: message.caseSensitive === true,
+          limit: typeof message.limit === 'number' ? message.limit : undefined,
+        });
+        send({ type: 'knowledgeMatches', query, matches: result.matches, truncated: result.truncated });
+      } catch (error) {
+        send({ type: 'knowledgeError', message: errorText(error) });
       }
       return true;
     }

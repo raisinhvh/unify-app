@@ -788,6 +788,11 @@
   width: calc(100% + 8px);
 }
 
+/* Subagents started together read as one list: consecutive rows pull in past the feed gap (11px → 2px). */
+.subagent-entry + .subagent-entry {
+  margin-top: -9px;
+}
+
 /* Tool rows that open (internal calls) */
 .tool-entry {
   min-width: 0;

@@ -536,6 +536,18 @@ interface SearchRequest {
   ignoreCase: boolean;
   glob?: string;
   max: number;
+  /** rg searches `source` literally (-F); the scanner still uses `regex` (already escaped by the caller). */
+  fixed?: boolean;
+  /** Stops an rg run after this long; defaults to RIPGREP_TIMEOUT_MS. */
+  timeoutMs?: number;
+  /** Receives raw matching lines instead of display hits; false stops the search. */
+  raw?: RawSearchHits;
+}
+
+/** Collects raw matching lines for a caller that needs positions, not the search tool's formatted text. */
+interface RawSearchHits {
+  /** Adds one matching line (workspace-relative path, 1-based line, raw text); false stops the search. */
+  add(path: string, line: number, text: string): boolean;
 }
 
 /** Search hits grouped under their file, in the order they are added, up to the request's cap. */
@@ -615,6 +627,7 @@ function ripgrepSearch(command: string, request: SearchRequest): Promise<SearchH
   const hits = new SearchHits(request);
   const args = ['--json', '--no-config', '--no-messages', '--hidden', '--crlf', '--max-filesize', String(MAX_SEARCH_FILE_BYTES)];
   if (request.ignoreCase) args.push('--ignore-case');
+  if (request.fixed) args.push('--fixed-strings');
   // A glob with a slash is relative to the working copy, which rg globs are not; SearchHits filters those instead.
   if (request.glob && !request.glob.includes('/')) args.push('--glob', request.glob);
   for (const name of SKIP_DIRS) args.push('--glob', `!${name}`);
@@ -628,6 +641,7 @@ function ripgrepSearch(command: string, request: SearchRequest): Promise<SearchH
       resolvePromise(undefined);
       return;
     }
+    const timeout = request.timeoutMs ?? RIPGREP_TIMEOUT_MS;
     const files = new Map<string, { lineNumber: number; text: string }[]>();
     let collected = 0;
     let pending = '';
@@ -639,9 +653,9 @@ function ripgrepSearch(command: string, request: SearchRequest): Promise<SearchH
       child.kill();
     };
     const timer = setTimeout(() => {
-      hits.note = `ran past ${RIPGREP_TIMEOUT_MS / 1000} s; narrow path or glob`;
+      hits.note = `ran past ${timeout / 1000} s; narrow path or glob`;
       stop();
-    }, RIPGREP_TIMEOUT_MS);
+    }, timeout);
     const handle = (line: string): void => {
       if (stopped || !line) return;
       let event: { type?: string; data?: { path?: { text?: unknown; bytes?: unknown }; lines?: { text?: unknown; bytes?: unknown }; line_number?: unknown } };
@@ -653,6 +667,11 @@ function ripgrepSearch(command: string, request: SearchRequest): Promise<SearchH
       if (path === undefined || text === undefined) return;
       const rel = display(request.cwd, resolve(request.cwd, path));
       if (!hits.wants(rel)) return;
+      if (request.raw) {
+        collected += 1;
+        if (!request.raw.add(rel, event.data.line_number, text.replace(/\r?\n$/, '')) || collected >= RIPGREP_MAX_MATCHES) stop();
+        return;
+      }
       const lines = files.get(rel) ?? [];
       lines.push({ lineNumber: event.data.line_number, text });
       files.set(rel, lines);
@@ -676,6 +695,10 @@ function ripgrepSearch(command: string, request: SearchRequest): Promise<SearchH
       // Without a summary rg never searched: the pattern was rejected before any file was read.
       if (!finished && !stopped) {
         resolvePromise(undefined);
+        return;
+      }
+      if (request.raw) {
+        resolvePromise(hits);
         return;
       }
       outer: for (const rel of [...files.keys()].sort(compareWalkOrder)) {
@@ -716,11 +739,82 @@ async function scanSearch(request: SearchRequest): Promise<SearchHits> {
     if (!buffer || looksBinary(buffer)) return;
     const lines = buffer.toString('utf8').split(/\r?\n/);
     for (let index = 0; index < lines.length; index += 1) {
-      if (request.regex.test(lines[index]) && !hits.add(rel, index + 1, lines[index])) return;
+      if (!request.regex.test(lines[index])) continue;
+      if (request.raw) {
+        if (!request.raw.add(rel, index + 1, lines[index])) {
+          hits.truncated = true;
+          return;
+        }
+      } else if (!hits.add(rel, index + 1, lines[index])) {
+        return;
+      }
     }
   };
   await visit(request.start);
   return hits;
+}
+
+/** One matching line from searchContentLines: workspace-relative path, 1-based line, and its raw text. */
+export interface ContentLineHit {
+  /** Workspace-relative, forward slashes. */
+  path: string;
+  /** 1-based line. */
+  line: number;
+  /** The line as stored, without its line ending. */
+  text: string;
+}
+
+/** A literal content search before occurrences are located inside each line. */
+export interface ContentLineResult {
+  hits: ContentLineHit[];
+  truncated: boolean;
+}
+
+/** Escapes a literal string for use as a JS regular expression. */
+function literalPattern(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Literal text search over a folder for the screens' Ctrl+Shift+F. Reuses the batch search rules (ripgrep and the
+ * repository's .gitignore, the heavy folders, binary and size limits, the built-in scanner when rg is missing) and
+ * returns raw matching lines, one per matching line; the caller locates every occurrence inside it. Runs for at
+ * most `timeoutMs` (5 s by default here) and keeps what it found.
+ */
+export async function searchContentLines(
+  root: string,
+  query: string,
+  options: { caseSensitive?: boolean; limit?: number; timeoutMs?: number } = {},
+): Promise<ContentLineResult> {
+  const limit = Math.max(1, Math.min(Math.floor(options.limit ?? 500), RIPGREP_MAX_MATCHES));
+  const start = resolve(root);
+  const hits: ContentLineHit[] = [];
+  let truncated = false;
+  const request: SearchRequest = {
+    cwd: start,
+    start,
+    source: query,
+    regex: new RegExp(literalPattern(query), options.caseSensitive ? '' : 'i'),
+    ignoreCase: options.caseSensitive !== true,
+    fixed: true,
+    max: limit,
+    timeoutMs: options.timeoutMs ?? 5_000,
+    raw: {
+      add(path, line, text) {
+        if (hits.length >= limit) {
+          truncated = true;
+          return false;
+        }
+        hits.push({ path, line, text });
+        return true;
+      },
+    },
+  };
+  const command = activeRustTool('rg') ?? 'rg';
+  const result = await ripgrepSearch(command, request) ?? await scanSearch(request);
+  if (result.truncated) truncated = true;
+  hits.sort((left, right) => compareWalkOrder(left.path, right.path) || left.line - right.line);
+  return { hits, truncated };
 }
 
 async function listDirTool(cwd: string, args: Record<string, unknown>, options: BatchFileOptions): Promise<BatchOutcome> {

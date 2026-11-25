@@ -178,6 +178,86 @@
   color: var(--text3);
 }
 
+/* Search area: Names | Contents above the input (a little more compact than the scope switch). */
+.knowledge-search-area {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.knowledge-search-area .knowledge-search {
+  margin-bottom: 0;
+  padding-right: 4px;
+}
+
+.knowledge-search-modes .segmented-option {
+  height: 22px;
+  padding: 0 10px;
+}
+
+.knowledge-tree[hidden] {
+  display: none;
+}
+
+/* Contents results: document rows (name, dim skill file, count) and one row per occurrence. */
+.knowledge-results {
+  transition: opacity 160ms ease-out;
+}
+
+/* A newer query is on its way: the old results stay, quieter. */
+.knowledge-results.stale {
+  opacity: 0.55;
+}
+
+.knowledge-results-summary {
+  margin: 0;
+  padding: 2px 8px 6px;
+  color: var(--text3);
+}
+
+.knowledge-match-document .tree-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.knowledge-match-name {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.knowledge-match-file {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text3);
+  font-size: calc(11px * var(--text-scale, 1));
+}
+
+.knowledge-match-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.knowledge-match {
+  height: 24px;
+}
+
+.knowledge-match .tree-leading {
+  display: none;
+}
+
+.knowledge-match .find-snippet {
+  font-size: calc(11px * var(--text-scale, 1));
+  line-height: 16px;
+}
+
+.knowledge-match.selected .find-snippet {
+  color: var(--text);
+}
+
 /* ---------------------------------------------------------------- document */
 
 .kd-document {
@@ -375,6 +455,31 @@
 
 .kd-error {
   color: var(--del);
+}
+
+/* Find (FindBar): docked under the top bar; in Edit mode the mirror sits behind the transparent textarea. */
+.kd-document {
+  position: relative;
+}
+
+/* Over the text column, clear of the 280px Details column (.kd-details). */
+.kd-find {
+  top: 56px;
+  right: calc(280px + 16px);
+}
+
+.kd-editor-wrap {
+  position: relative;
+}
+
+.kd-editor-mirror {
+  font-size: calc(13px * var(--text-scale, 1));
+  line-height: 20px;
+}
+
+.kd-editor-wrap .kd-editor {
+  position: relative;
+  z-index: 1;
 }
 
 .kd-editor {

@@ -18,7 +18,7 @@
  * Dev screenshots: a fixture may persist `devComposer: { target: '<chatId>' | 'home', text }`; that composer
  * starts with the text typed (and its menus open), since tools/shot.mjs cannot type.
  */
-import { batch, createSignal, For, onMount, Show, type JSX } from 'solid-js';
+import { batch, createEffect, createSignal, For, onCleanup, onMount, Show, type JSX } from 'solid-js';
 import { Button, Icon, IconButton, Menu, type MenuEntry } from '../../components';
 import { ModelPicker } from '../../components/ModelPicker';
 import { EffortPicker } from '../../components/EffortPicker';
@@ -31,7 +31,7 @@ import type { VoiceAction, VoicePart } from '../../../engine/voice/dictation';
 import { MentionMenu, type MentionMenuApi } from './MentionMenu';
 import { SlashMenu, type SlashMenuApi } from './SlashMenu';
 import { createVoiceSession, VoiceButton, VoiceHint } from './VoiceButton';
-import { BackgroundIndicator, SubagentIndicator } from './ActivityIndicators';
+import { ActivityPeek, BackgroundIndicator, SubagentIndicator } from './ActivityIndicators';
 import './composer.css';
 
 const maxAttachments = 8;
@@ -57,7 +57,16 @@ export interface ComposerProps {
   class?: string;
   /** Receives the composer's API (QuoteSelection quotes into it). */
   ref?: (api: ComposerApi) => void;
+  /**
+   * Chat panes: the input box shows only while `hovered` (the pointer is over the pane), focused, holding a draft
+   * or taking a drop; otherwise it collapses into ActivityPeek's faint bottom line. Queued chips stay visible.
+   */
+  autoHide?: boolean;
+  hovered?: boolean;
 }
+
+/** How long the box waits after the pointer leaves before it tucks away, so crossing an edge doesn't flicker it. */
+const hideDelayMs = 350;
 
 export interface ComposerApi {
   /** Adds `text` as a markdown quote ("> " lines) after what is typed, then focuses with the caret below it. */
@@ -108,6 +117,27 @@ export function Composer(props: ComposerProps): JSX.Element {
   const running = () => (run()?.state || 'idle') !== 'idle';
   const queue = () => (props.chatId ? viewState.queues[props.chatId] || [] : []);
   const canSend = () => reading() === 0 && (text().trim().length > 0 || attachments().length > 0);
+
+  // autoHide: shows at once, hides a beat after the last reason to show goes away.
+  const [focused, setFocused] = createSignal(false);
+  const wantsShown = () =>
+    !props.autoHide ||
+    !!props.hovered ||
+    focused() ||
+    dragOver() ||
+    sendMenuOpen() ||
+    reading() > 0 ||
+    text().length > 0 ||
+    attachments().length > 0;
+  const [shown, setShown] = createSignal(wantsShown());
+  createEffect(() => {
+    if (wantsShown()) {
+      setShown(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setShown(false), hideDelayMs);
+    onCleanup(() => window.clearTimeout(timer));
+  });
 
   const resize = () => {
     if (!input) return;
@@ -313,7 +343,13 @@ export function Composer(props: ComposerProps): JSX.Element {
   ];
 
   return (
-    <div class={props.class ? `composer-stack ${props.class}` : 'composer-stack'}>
+    <div
+      class={props.class ? `composer-stack ${props.class}` : 'composer-stack'}
+      onFocusIn={() => setFocused(true)}
+      onFocusOut={event => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
+      }}
+    >
       <Collapse open={queue().length > 0}>
         <div class="composer-queue">
           <For each={queue()}>
@@ -332,163 +368,175 @@ export function Composer(props: ComposerProps): JSX.Element {
           </For>
         </div>
       </Collapse>
-      <form
-        ref={setForm}
-        class="composer"
-        classList={{ 'drag-over': dragOver() }}
-        onSubmit={event => {
-          event.preventDefault();
-          submit();
-        }}
-        onDragOver={event => {
-          event.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={event => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOver(false);
-        }}
-        onDrop={event => {
-          event.preventDefault();
-          setDragOver(false);
-          addFiles([...(event.dataTransfer?.files || [])]);
-        }}
-      >
-        <Show when={attachments().length > 0}>
-          <div class="composer-attachments">
-            <For each={attachments()}>
-              {(file, index) => (
-                <div class="composer-attachment" title={file.name}>
-                  <Show
-                    when={isImageMime(file.mimeType)}
-                    fallback={
-                      <span class="composer-attachment-file">
-                        <span class="type-caption">{isTextMime(file.mimeType) ? 'Text' : 'Binary'}</span>
-                        <span class="composer-attachment-name">{file.name}</span>
-                      </span>
-                    }
-                  >
-                    <img src={`data:${file.mimeType};base64,${file.data}`} alt={file.name} />
-                  </Show>
-                  <IconButton
-                    icon="close"
-                    label={`Remove ${file.name}`}
-                    size="small"
-                    class="composer-attachment-remove"
-                    onClick={() => setAttachments(attachments().filter((_, at) => at !== index()))}
-                  />
-                </div>
-              )}
-            </For>
-          </div>
-        </Show>
-        <textarea
-          ref={element => {
-            input = element;
-            if (props.autofocus) queueMicrotask(() => element.focus());
-          }}
-          class="composer-input"
-          rows={1}
-          aria-label="Message"
-          role={openMenu() ? 'combobox' : undefined}
-          aria-autocomplete={openMenu() ? 'list' : undefined}
-          aria-expanded={openMenu() ? true : undefined}
-          aria-activedescendant={openMenu()?.activeId()}
-          placeholder={props.placeholder}
-          value={text()}
-          onInput={event => {
-            setText(event.currentTarget.value);
-            readCaret();
-            resize();
-          }}
-          onKeyUp={readCaret}
-          onPointerUp={readCaret}
-          onKeyDown={event => {
-            if (event.ctrlKey && event.shiftKey && (event.key === ' ' || event.code === 'Space')) {
+      {/* One box: the input and the peek line swap heights, so the timeline above follows a single size change. */}
+      <div class="composer-swap">
+        <Collapse open={shown()} keepMounted>
+          <form
+            ref={setForm}
+            class="composer"
+            classList={{ 'drag-over': dragOver() }}
+            onSubmit={event => {
               event.preventDefault();
-              if (voice.enabled()) voice.toggle();
-              return;
-            }
-            if (slashMenu()?.handleKey(event)) return;
-            if (mentionMenu()?.handleKey(event)) return;
-            if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+              submit();
+            }}
+            onDragOver={event => {
               event.preventDefault();
-              if (running() && event.altKey) send('queue');
-              else submit();
-            }
-          }}
-          onPaste={event => {
-            const files = [...(event.clipboardData?.files || [])];
-            if (files.length) {
+              setDragOver(true);
+            }}
+            onDragLeave={event => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOver(false);
+            }}
+            onDrop={event => {
               event.preventDefault();
-              addFiles(files);
-            }
-          }}
-        />
-        <VoiceHint voice={voice} />
-        <div class="composer-bar">
-          <IconButton
-            icon="paperclip"
-            label="Attach files"
-            class="composer-attach"
-            onClick={() => fileInput?.click()}
-          />
-          <ModelPicker
-            class="composer-choice"
-            chatId={props.chatId}
-            variant="compact"
-            placement="top-start"
-            title="Model"
-          />
-          <EffortPicker
-            class="composer-choice"
-            chatId={props.chatId}
-            placement="top-start"
-          />
-          {/* What else the chat has running: subagents and background tasks (Home has no chat yet). */}
-          <Show when={props.chatId} keyed>
-            {chatId => (
-              <>
-                <SubagentIndicator chatId={chatId} />
-                <BackgroundIndicator chatId={chatId} />
-              </>
-            )}
-          </Show>
-          <span class="composer-spacer" />
-          <Presence when={running()}>
-            <IconButton
-              icon="stop"
-              label="Stop"
-              disabled={run()?.state === 'cancelling'}
-              onClick={() => post({ type: 'cancel', chatId: props.chatId })}
+              setDragOver(false);
+              addFiles([...(event.dataTransfer?.files || [])]);
+            }}
+          >
+            <Show when={attachments().length > 0}>
+              <div class="composer-attachments">
+                <For each={attachments()}>
+                  {(file, index) => (
+                    <div class="composer-attachment" title={file.name}>
+                      <Show
+                        when={isImageMime(file.mimeType)}
+                        fallback={
+                          <span class="composer-attachment-file">
+                            <span class="type-caption">{isTextMime(file.mimeType) ? 'Text' : 'Binary'}</span>
+                            <span class="composer-attachment-name">{file.name}</span>
+                          </span>
+                        }
+                      >
+                        <img src={`data:${file.mimeType};base64,${file.data}`} alt={file.name} />
+                      </Show>
+                      <IconButton
+                        icon="close"
+                        label={`Remove ${file.name}`}
+                        size="small"
+                        class="composer-attachment-remove"
+                        onClick={() => setAttachments(attachments().filter((_, at) => at !== index()))}
+                      />
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+            <textarea
+              ref={element => {
+                input = element;
+                if (props.autofocus) queueMicrotask(() => element.focus());
+              }}
+              class="composer-input"
+              rows={1}
+              aria-label="Message"
+              role={openMenu() ? 'combobox' : undefined}
+              aria-autocomplete={openMenu() ? 'list' : undefined}
+              aria-expanded={openMenu() ? true : undefined}
+              aria-activedescendant={openMenu()?.activeId()}
+              placeholder={props.placeholder}
+              value={text()}
+              onInput={event => {
+                setText(event.currentTarget.value);
+                readCaret();
+                resize();
+              }}
+              onKeyUp={readCaret}
+              onPointerUp={readCaret}
+              onKeyDown={event => {
+                if (event.ctrlKey && event.shiftKey && (event.key === ' ' || event.code === 'Space')) {
+                  event.preventDefault();
+                  if (voice.enabled()) voice.toggle();
+                  return;
+                }
+                if (slashMenu()?.handleKey(event)) return;
+                if (mentionMenu()?.handleKey(event)) return;
+                if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+                  event.preventDefault();
+                  if (running() && event.altKey) send('queue');
+                  else submit();
+                }
+              }}
+              onPaste={event => {
+                const files = [...(event.clipboardData?.files || [])];
+                if (files.length) {
+                  event.preventDefault();
+                  addFiles(files);
+                }
+              }}
             />
-          </Presence>
-          <Show when={voice.enabled()}>
-            <VoiceButton voice={voice} />
-          </Show>
-          <Button
-            ref={setSendButton}
-            type="submit"
-            variant="primary"
-            class="composer-send"
-            aria-label={running() ? 'Send options' : 'Send'}
-            aria-haspopup={running() ? 'menu' : undefined}
-            aria-expanded={running() ? sendMenuOpen() : undefined}
-            disabled={reading() > 0}
-            icon="arrowUp"
-          />
-        </div>
-        <input
-          ref={fileInput}
-          type="file"
-          multiple
-          hidden
-          onChange={event => {
-            const files = [...(event.currentTarget.files || [])];
-            event.currentTarget.value = '';
-            addFiles(files);
-          }}
-        />
-      </form>
+            <VoiceHint voice={voice} />
+            <div class="composer-bar">
+              <IconButton
+                icon="paperclip"
+                label="Attach files"
+                class="composer-attach"
+                onClick={() => fileInput?.click()}
+              />
+              <ModelPicker
+                class="composer-choice"
+                chatId={props.chatId}
+                variant="compact"
+                placement="top-start"
+                title="Model"
+              />
+              <EffortPicker
+                class="composer-choice"
+                chatId={props.chatId}
+                placement="top-start"
+              />
+              {/* What else the chat has running: subagents and background tasks (Home has no chat yet). */}
+              <Show when={props.chatId} keyed>
+                {chatId => (
+                  <>
+                    <SubagentIndicator chatId={chatId} />
+                    <BackgroundIndicator chatId={chatId} />
+                  </>
+                )}
+              </Show>
+              <span class="composer-spacer" />
+              <Presence when={running()}>
+                <IconButton
+                  icon="stop"
+                  label="Stop"
+                  disabled={run()?.state === 'cancelling'}
+                  onClick={() => post({ type: 'cancel', chatId: props.chatId })}
+                />
+              </Presence>
+              <Show when={voice.enabled()}>
+                <VoiceButton voice={voice} />
+              </Show>
+              <Button
+                ref={setSendButton}
+                type="submit"
+                variant="primary"
+                class="composer-send"
+                aria-label={running() ? 'Send options' : 'Send'}
+                aria-haspopup={running() ? 'menu' : undefined}
+                aria-expanded={running() ? sendMenuOpen() : undefined}
+                disabled={reading() > 0}
+                icon="arrowUp"
+              />
+            </div>
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              hidden
+              onChange={event => {
+                const files = [...(event.currentTarget.files || [])];
+                event.currentTarget.value = '';
+                addFiles(files);
+              }}
+            />
+          </form>
+        </Collapse>
+        <Show when={props.autoHide && props.chatId} keyed>
+          {chatId => (
+            <Collapse open={!shown()}>
+              <ActivityPeek chatId={chatId} />
+            </Collapse>
+          )}
+        </Show>
+      </div>
       <SlashMenu
         anchor={form()}
         text={text()}

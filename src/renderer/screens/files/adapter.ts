@@ -6,6 +6,9 @@
  * reply means an empty listing or an error, never sample files. The mock workspace (the Figma
  * "20 · Files + Editor" tree) is served only when there is no host bridge at all (vite dev, previews).
  *
+ * Contents search (Ctrl+Shift+F) is `searchFileContents` → `contentMatches`, one ContentMatch per occurrence; the
+ * mock scans the mock files with `scanText`, which the Knowledge mock reuses.
+ *
  * Agent edits also come from the existing `viewState.diffs` (SidebarDiff: path, additions, deletions), so tree
  * rows and tabs show +N −M as soon as an agent touches a file, whatever the source of the listing.
  */
@@ -49,6 +52,32 @@ export interface FileDocument {
   changes?: FileLineChanges;
 }
 
+/** One occurrence of a contents-search query (Ctrl+Shift+F). */
+export interface ContentMatch {
+  /** Workspace-relative, forward slashes. */
+  path: string;
+  /** 1-based line of the occurrence. */
+  line: number;
+  /** 1-based column in `text`. */
+  column: number;
+  /** Length of the occurrence in characters. */
+  length: number;
+  /** The whole line, cut to 300 characters. */
+  text: string;
+}
+
+export interface ContentSearchResult {
+  query: string;
+  matches: ContentMatch[];
+  /** True when the engine stopped at `limit` occurrences. */
+  truncated: boolean;
+}
+
+export interface ContentSearchOptions {
+  caseSensitive?: boolean;
+  limit?: number;
+}
+
 export type WriteResult =
   | { ok: true; version: string }
   | { ok: false; reason: 'conflict'; current: FileDocument }
@@ -59,6 +88,7 @@ export type FilesRequest =
   | { type: 'readFile'; requestId: string; path: string }
   | { type: 'writeFile'; requestId: string; path: string; content: string; version: string }
   | { type: 'findFiles'; requestId: string; query: string; limit?: number }
+  | { type: 'searchFileContents'; requestId: string; query: string; caseSensitive?: boolean; limit?: number }
   | { type: 'createEntry'; requestId: string; path: string; kind: 'file' | 'dir' }
   | { type: 'renameEntry'; requestId: string; from: string; to: string }
   | { type: 'deleteEntry'; requestId: string; path: string }
@@ -73,6 +103,7 @@ export type FilesReply =
   | { type: 'fileSaved'; requestId: string; path: string; version: string }
   | { type: 'fileConflict'; requestId: string; current: FileDocument }
   | { type: 'fileMatches'; requestId: string; query: string; paths: string[] }
+  | { type: 'contentMatches'; requestId: string; query: string; matches: ContentMatch[]; truncated: boolean }
   | { type: 'filesError'; requestId: string; message: string }
   /** Pushed when a file changes on disk (agent edit, external editor). The screen re-reads open files. */
   | { type: 'fileChanged'; /** The watched project folder the path is relative to. */ root?: string; path: string; kind: 'changed' | 'created' | 'deleted'; edited?: FileEdit };
@@ -198,6 +229,49 @@ export async function findFiles(query: string, limit = 50): Promise<string[]> {
   const reply = await request({ type: 'findFiles', query, limit });
   if (reply?.type === 'fileMatches') return reply.paths;
   return [];
+}
+
+/** Default and engine cap for contents search occurrences. */
+export const contentSearchLimit = 500;
+
+/** Every literal occurrence of `query` in the project's text files (Ctrl+Shift+F). Empty when the engine fails. */
+export async function searchFileContents(query: string, options: ContentSearchOptions = {}): Promise<ContentSearchResult> {
+  const limit = options.limit ?? contentSearchLimit;
+  if (useMock) return mock.searchContents(query, !!options.caseSensitive, limit);
+  const reply = await request({ type: 'searchFileContents', query, caseSensitive: options.caseSensitive, limit });
+  if (reply?.type === 'contentMatches') return { query: reply.query, matches: reply.matches, truncated: reply.truncated };
+  if (reply?.type === 'filesError') console.warn(`[files] searchFileContents failed: ${reply.message}`);
+  return { query, matches: [], truncated: false };
+}
+
+/**
+ * Every literal occurrence of `query` in `text` as { line, column, length, text } rows (1-based), the same shape the
+ * engine sends. Shared by the mocks of both screens.
+ */
+export function scanText(
+  text: string,
+  query: string,
+  caseSensitive: boolean,
+  limit: number,
+): { line: number; column: number; length: number; text: string }[] {
+  const results: { line: number; column: number; length: number; text: string }[] = [];
+  if (!query) return results;
+  const needle = caseSensitive ? query : query.toLowerCase();
+  const lines = text.split(/\r?\n/);
+  for (let index = 0; index < lines.length && results.length < limit; index += 1) {
+    const haystack = caseSensitive ? lines[index] : lines[index].toLowerCase();
+    let from = haystack.indexOf(needle);
+    while (from >= 0 && results.length < limit) {
+      results.push({
+        line: index + 1,
+        column: from + 1,
+        length: query.length,
+        text: lines[index].slice(0, 300),
+      });
+      from = haystack.indexOf(needle, from + needle.length);
+    }
+  }
+  return results;
 }
 
 function entryResult(reply: FilesReply | undefined): string {
@@ -505,6 +579,22 @@ const mock = {
       }
     }
     return all.filter(path => path.toLowerCase().includes(needle));
+  },
+  searchContents(query: string, caseSensitive: boolean, limit: number): ContentSearchResult {
+    const matches: ContentMatch[] = [];
+    for (const [folder, entries] of Object.entries(mockTree)) {
+      for (const entry of entries) {
+        if (entry.kind !== 'file' || matches.length >= limit) continue;
+        const path = folder ? `${folder}/${entry.name}` : entry.name;
+        const content = mock.readFile(path).content;
+        for (const hit of scanText(content, query, caseSensitive, limit - matches.length)) matches.push({ path, ...hit });
+      }
+    }
+    return {
+      query,
+      matches,
+      truncated: matches.length >= limit,
+    };
   },
   create(path: string, kind: 'file' | 'dir'): string {
     const folder = parentPath(path);

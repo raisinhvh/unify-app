@@ -1067,6 +1067,17 @@ export function Timeline(props: { chatId: string }): JSX.Element {
     });
   });
 
+  // The pane's bottom (hover-revealed composer, changes list) springs its height: a reader at the bottom stays
+  // pinned there each frame, so the last message rides up with it instead of sliding under.
+  onMount(() => {
+    if (!scroller) return;
+    const observer = new ResizeObserver(() => {
+      if (scroller && stickToBottom) scroller.scrollTop = scroller.scrollHeight;
+    });
+    observer.observe(scroller);
+    onCleanup(() => observer.disconnect());
+  });
+
   return (
     <div class="timeline-pane">
       {/* Keyed, so the subagent view gets the agent itself rather than <Show>'s narrowed accessor. Something that

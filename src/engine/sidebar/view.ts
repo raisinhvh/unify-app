@@ -135,6 +135,8 @@ type SidebarWebviewPayload =
   | { type: 'selectSession'; sessionId: string }
   | { type: 'renameSession'; sessionId: string; name: string }
   | { type: 'deleteSession'; sessionId: string }
+  /** Chats open in workspace panes or pop-out windows; they are never auto-pruned. */
+  | { type: 'openChats'; chatIds: string[] }
   | { type: 'selectModel'; modelId: string }
   | { type: 'selectSpeed'; value: string }
   | { type: 'selectEffort'; value: string }

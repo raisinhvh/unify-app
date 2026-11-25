@@ -20,10 +20,12 @@ import {
   ImportedFile,
   KnowledgeDraft,
   KnowledgeItem,
+  KnowledgeMatch,
   KnowledgeScope,
   UnifyRequestContext,
 } from './types';
 import { RequestPaths, isRecord, readJsonFile, slugify, writeJsonFile, resolveInside } from './state';
+import { contentMatchLimit, textMatches } from './contentSearch';
 
 interface KnowledgeMetadata {
   audiences?: Audience[];
@@ -51,6 +53,8 @@ interface KnowledgeVersion {
 const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_IMPORT_TOTAL_BYTES = 20 * 1024 * 1024;
 const MAX_MEMORY_FILES = 2_000;
+/** Knowledge files larger than this are not searched for Ctrl+Shift+F. */
+const MAX_KNOWLEDGE_SEARCH_BYTES = 2_000_000;
 const DEFAULT_AUDIENCES: Audience[] = ['everyone'];
 
 function metadataStore(paths: RequestPaths): KnowledgeStore {
@@ -465,6 +469,77 @@ export async function readKnowledge(
     return { content: await fsp.readFile(resolveInside(root, relative), 'utf8') };
   }
   throw new Error('Unknown knowledge item.');
+}
+
+/**
+ * Ctrl+Shift+F through one scope's knowledge. Rules are searched as readKnowledge returns them — the section
+ * body, without its `## ` heading and trimmed padding — so line numbers count from the first line the editor
+ * shows, not from the start of AGENTS.md. Memory notes and skill files are searched exactly as stored, which is
+ * what readKnowledge returns for them.
+ */
+export async function searchKnowledge(
+  context: UnifyRequestContext,
+  paths: RequestPaths,
+  scope: KnowledgeScope,
+  query: string,
+  options: { caseSensitive?: boolean; limit?: number } = {},
+): Promise<{ matches: KnowledgeMatch[]; truncated: boolean }> {
+  const matches: KnowledgeMatch[] = [];
+  if (!query.trim()) return { matches, truncated: false };
+  const limit = contentMatchLimit(options.limit);
+  const caseSensitive = options.caseSensitive === true;
+  let truncated = false;
+
+  /** Adds one file's occurrences; false once the overall limit has left no room for more. */
+  const collect = (content: string, id: string, file?: string): boolean => {
+    const remaining = limit - matches.length;
+    const found = textMatches(content, query, { caseSensitive, limit: Math.max(1, remaining) });
+    if (remaining <= 0) {
+      if (found.matches.length) truncated = true;
+      return !truncated;
+    }
+    for (const match of found.matches) {
+      if (matches.length >= limit) {
+        truncated = true;
+        return false;
+      }
+      matches.push(file === undefined ? { id, ...match } : { id, file, ...match });
+    }
+    if (found.truncated) {
+      truncated = true;
+      return false;
+    }
+    return true;
+  };
+
+  const items = (await listKnowledge(context, paths)).filter(item => item.scope === scope);
+  for (const item of items) {
+    if (item.kind === 'rule') {
+      try {
+        if (!collect((await readKnowledge(context, paths, item.id)).content, item.id)) break;
+      } catch {
+        // A rule that was removed between the listing and the read simply has no matches.
+      }
+      continue;
+    }
+    if (item.kind === 'memory') {
+      if (!collect(await readTextFile(item.path), item.id)) break;
+      continue;
+    }
+    const folder = item.path;
+    for (const file of item.files ?? []) {
+      let buffer: Buffer;
+      try {
+        buffer = await fsp.readFile(resolveInside(folder, file));
+      } catch {
+        continue;
+      }
+      if (buffer.length > MAX_KNOWLEDGE_SEARCH_BYTES || buffer.subarray(0, 8000).includes(0)) continue;
+      if (!collect(buffer.toString('utf8'), item.id, file)) break;
+    }
+    if (truncated) break;
+  }
+  return { matches, truncated };
 }
 
 /** Saves a rule section, a skill file, or a memory note. Returns the saved item. */
