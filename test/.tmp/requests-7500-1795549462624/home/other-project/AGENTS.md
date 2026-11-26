@@ -1,3 +1,0 @@
-## Other rule
-
-Only here.

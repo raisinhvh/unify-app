@@ -11,7 +11,7 @@ unify/
   electron-builder.yml     Windows NSIS installer + portable; mac dmg; linux AppImage
   LICENSE (MIT), README.md
   src/
-    engine/               DSH's src/ copied verbatim (extension.ts, runtime/, accounts/, ...). Change only what the shim can't cover.
+    engine/               DSH's src/ copied verbatim (extension.ts, runtime/, accounts/, ...). Change only what the shim can't cover. `host/` holds ExtensionHost's methods split by area (attached to the prototype in extension.ts).
     shim/vscode/          Minimal `vscode` module implemented for Electron (window, workspace, commands, Uri, EventEmitter, Disposable, ExtensionContext, globalState/secrets, webview views, output channels, ...)
     main/                 Electron main: boots the shim, calls engine activate(), hosts webview views as windows/IPC, native menus, file dialogs, single instance
     preload/              contextBridge API (below)

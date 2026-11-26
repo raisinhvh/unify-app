@@ -21,3 +21,6 @@ tictactoe/
 
 # Dev screenshots written by the capture scripts (src/renderer/**/capture.mjs); not source.
 **/__screens__/
+
+# Scratch folders the tests create under test/.tmp; never committed.
+test/.tmp/

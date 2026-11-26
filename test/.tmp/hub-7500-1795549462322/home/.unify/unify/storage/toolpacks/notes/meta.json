@@ -1,6 +1,0 @@
-{
-  "description": "Read and append local notes.",
-  "enabled": true,
-  "hubId": "notes",
-  "version": "1.0.0"
-}

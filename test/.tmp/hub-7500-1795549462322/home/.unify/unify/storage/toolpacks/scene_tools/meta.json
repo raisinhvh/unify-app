@@ -1,6 +1,0 @@
-{
-  "description": "Inspect and query 3D scene hierarchies.",
-  "enabled": false,
-  "hubId": "scene-tools",
-  "version": "2.1.0"
-}

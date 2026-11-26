@@ -130,9 +130,7 @@ export function SubagentIndicator(props: { chatId: string }): JSX.Element {
               <Loader id={actionLoader[agent().delegated ? 'delegating' : 'spawning']} size={12} />
             </span>
             <span class="model-picker-row-label">{agent().title}</span>
-            <Show when={agent().model}>
-              <span class="model-picker-row-hint">{agent().model}</span>
-            </Show>
+            <span class="model-picker-row-hint">View subagent chat</span>
             <Icon name="chevronRight" size={12} class="activity-row-chevron" />
           </button>
         )}
