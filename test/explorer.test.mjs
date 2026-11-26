@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { withExplorer, parseExplorerRanges, formatExplorerRanges } from '../dist/runtime/explorer.mjs';
-import { delegationInstructions } from '../dist/runtime/delegation.mjs';
+import { delegationInstructions, messageAgentsByNameNote, messageByNameHint, takeMessageByNameHint } from '../dist/runtime/delegation.mjs';
 
 test('explorer is opt-in and user profiles take precedence', () => {
   const profiles = [{ name: 'other' }];
@@ -29,4 +29,12 @@ test('explorer instructions are opt-in', () => {
   assert.equal(delegationInstructions(true), delegationInstructions(true, { explorer: false }));
   assert.equal(delegationInstructions(false), delegationInstructions(false, { explorer: true }));
   assert.match(delegationInstructions(true, { explorer: true }), /delegate to explorer/);
+});
+
+test('a batch strips each start reply\'s message hint so it can add one note', () => {
+  const outcome = { text: `Started subagent Arp (Sonnet (High)) in the background as task bg-1.${messageByNameHint('Arp')}\n\nMessages from other agents: hi` };
+  assert.equal(takeMessageByNameHint(outcome), 'Arp');
+  assert.equal(outcome.text, 'Started subagent Arp (Sonnet (High)) in the background as task bg-1.\n\nMessages from other agents: hi');
+  assert.equal(takeMessageByNameHint({ text: 'Started subagent "x" in the background as task bg-2.' }), undefined);
+  assert.equal(messageAgentsByNameNote('Arp'), 'Message any of these agents by their name. Ex: { "to": "Arp" }');
 });

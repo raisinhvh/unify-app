@@ -41,18 +41,34 @@ export function PaneFrame(props: PaneFrameProps): JSX.Element {
   const dim = new Spring(1, 'indicator', 1);
   const springs = [left, top, width, height, scale, opacity, dim];
 
+  // Last written values: a style is only touched when it changes, so a pane gliding sideways does not rewrite its
+  // width (which would re-lay out everything inside it, a long chat included).
+  const written = { left: '', top: '', width: '', height: '', transform: '', opacity: '' };
+  const write = (property: keyof typeof written, value: string) => {
+    if (written[property] === value) return;
+    written[property] = value;
+    element.style[property] = value;
+  };
+  const paintNow = () => {
+    paintQueued = false;
+    write('left', `${left.value}px`);
+    write('top', `${top.value}px`);
+    write('width', `${Math.max(0, width.value)}px`);
+    write('height', `${Math.max(0, height.value)}px`);
+    write('transform', scale.value === 1 ? '' : `scale(${scale.value})`);
+    write('opacity', String(Math.max(0, Math.min(1, opacity.value)) * dim.value));
+  };
+  // Every spring reports each frame; paint once after all of them have stepped.
+  let paintQueued = false;
   const paint = () => {
-    element.style.left = `${left.value}px`;
-    element.style.top = `${top.value}px`;
-    element.style.width = `${Math.max(0, width.value)}px`;
-    element.style.height = `${Math.max(0, height.value)}px`;
-    element.style.transform = scale.value === 1 ? '' : `scale(${scale.value})`;
-    element.style.opacity = String(Math.max(0, Math.min(1, opacity.value)) * dim.value);
+    if (paintQueued) return;
+    paintQueued = true;
+    queueMicrotask(paintNow);
   };
 
   onMount(() => {
     for (const spring of springs) spring.onChange(paint);
-    paint();
+    paintNow();
     const reduced = prefersReducedMotion();
     if (reduced) scale.jump(1);
     else scale.set(1, 'pop');

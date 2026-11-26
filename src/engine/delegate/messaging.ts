@@ -31,6 +31,30 @@ export interface SubagentAgentRegistration {
 /** MCP owner id (chat owner or subagent owner) to the agent id registered in the bus. */
 const agentIdByOwner = new Map<string, string>();
 
+/**
+ * Messages the user typed to a subagent whose runtime cannot take mid-turn input. They ride on its next
+ * Unify tool result like bus mail, but work with agents.messaging off and are not bounced to a sender.
+ */
+const userInboxes = new Map<string, string[]>();
+
+export function queueUserMessage(agentId: string, text: string): void {
+    const inbox = userInboxes.get(agentId) ?? [];
+    inbox.push(text);
+    userInboxes.set(agentId, inbox);
+}
+
+/** Drains the user's messages for an agent (also used to find the ones it never read). */
+export function takeUserMessages(agentId: string): string[] {
+    const inbox = userInboxes.get(agentId) ?? [];
+    userInboxes.delete(agentId);
+    return inbox;
+}
+
+function userMessagesBlock(agentId: string): string {
+    const messages = takeUserMessages(agentId);
+    return messages.length ? `Messages from the user:\n${messages.map(text => `- ${text}`).join('\n')}` : '';
+}
+
 export function messagingEnabled(): boolean {
     return getUnifyFeature('agents.messaging');
 }
@@ -110,7 +134,7 @@ export function sendAgentMessage(fromAgentId: string, args: Record<string, unkno
     const to = typeof args.to === 'string' ? args.to.trim() : '';
     const text = typeof args.text === 'string' ? args.text : '';
     const replyTo = typeof args.reply_to === 'string' && args.reply_to.trim() ? args.reply_to.trim() : undefined;
-    if (!to) throw new Error('"to" is required: use an agent id from list_agents.');
+    if (!to) throw new Error('"to" is required: use the agent\'s name, e.g. from delegate_task or list_agents.');
     if (!text.trim()) throw new Error('"text" is required.');
     const message = agentBus.send(fromAgentId, to, text, replyTo);
     const target = agentBus.listVisible(fromAgentId).find(agent => agent.id === message.toId);
@@ -119,9 +143,11 @@ export function sendAgentMessage(fromAgentId: string, args: Record<string, unkno
 
 /** read_messages: drains the caller's inbox and formats it. */
 export function readAgentInbox(agentId: string): string {
+    const user = userMessagesBlock(agentId);
     const messages = agentBus.takeInbox(agentId);
-    if (!messages.length) return 'No new messages.';
-    return `Messages from other agents:\n${formatAgentMessages(messages)}`;
+    if (!messages.length) return user || 'No new messages.';
+    const agents = `Messages from other agents:\n${formatAgentMessages(messages)}`;
+    return user ? `${user}\n\n${agents}` : agents;
 }
 
 /**
@@ -129,10 +155,12 @@ export function readAgentInbox(agentId: string): string {
  * Used for the automatic delivery path, so messages never sit unread between tool calls.
  */
 export function takeInboxBlock(agentId: string): string {
-    if (!messagingEnabled()) return '';
+    const user = userMessagesBlock(agentId);
+    if (!messagingEnabled()) return user;
     const messages = agentBus.takeInbox(agentId);
-    if (!messages.length) return '';
-    return `Messages from other agents:\n${formatAgentMessages(messages)}\n\nReply with send_message { "to": "...", "text": "...", "reply_to": "<message id>" }, or call read_messages later.`;
+    if (!messages.length) return user;
+    const agents = `Messages from other agents:\n${formatAgentMessages(messages)}\n\nReply with send_message { "to": "...", "text": "...", "reply_to": "<message id>" }, or call read_messages later.`;
+    return user ? `${user}\n\n${agents}` : agents;
 }
 
 export function takeOwnerInboxBlock(ownerId: string): string {

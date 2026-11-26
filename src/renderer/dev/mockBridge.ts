@@ -235,6 +235,11 @@ export async function installMockBridge(): Promise<void> {
         break;
       case 'sendPrompt':
         if (!sessionId) break;
+        if (message.subagentId) {
+          // "Send to subagent": the engine puts it in the subagent's turn and its feed shows the bubble.
+          emit({ type: 'subagentEvent', sessionId, agentId: message.subagentId, messageId: `user:${Date.now()}`, role: 'user', text: message.prompt });
+          break;
+        }
         emit({ type: 'userMessage', sessionId, text: message.prompt, entryId: `user:${Date.now()}` });
         streamReply(sessionId, 'This is the dev mock. The engine is not connected, so nothing ran.');
         break;

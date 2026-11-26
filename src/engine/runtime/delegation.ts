@@ -14,6 +14,26 @@ export const WAIT_SUBAGENTS = 'wait_for_subagents';
 export const CANCEL_SUBAGENT = 'cancel_subagent';
 export type AfterTurn = 'resume' | 'hold' | 'cancel';
 
+/** The note a batch adds once, after starting one or more subagents. */
+export function messageAgentsByNameNote(exampleName: string): string {
+  return `Message any of these agents by their name. Ex: { "to": "${exampleName}" }`;
+}
+
+const MESSAGE_BY_NAME_HINT = / Message it by its name\. Ex: \{ "to": "([^"]*)" \}/;
+
+/** Ends a background delegate_task reply: how to message the subagent just started. */
+export function messageByNameHint(name: string): string {
+  return ` Message it by its name. Ex: { "to": "${name}" }`;
+}
+
+/** Strips the hint from a batched delegate_task reply and returns the subagent's name, if it had one. */
+export function takeMessageByNameHint(outcome: { text: string }): string | undefined {
+  const match = MESSAGE_BY_NAME_HINT.exec(outcome.text);
+  if (!match) return undefined;
+  outcome.text = outcome.text.slice(0, match.index) + outcome.text.slice(match.index + match[0].length);
+  return match[1];
+}
+
 /** Unify profiles are the only supported source of subagents. */
 export function delegationInstructions(available: boolean, options?: { explorer?: boolean }): string {
   const native = 'Never use native Agent/Task/spawn_agent tools or start agents from a shell.';

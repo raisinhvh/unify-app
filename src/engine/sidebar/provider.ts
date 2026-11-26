@@ -149,7 +149,14 @@ export class UnifySidebarProvider implements vscode.WebviewViewProvider {
         else items.push({ role: 'assistant', text: message.text });
         const timeline = this.state.timeline[message.sessionId] ||= [];
         const id = message.entryId || `assistant:${timeline.length}`;
-        const entry = timeline.find(item => item.id === id);
+        // Streaming appends to the last entry: search from the end rather than through the whole chat per chunk.
+        let entry: (typeof timeline)[number] | undefined;
+        for (let index = timeline.length - 1; index >= 0; index -= 1) {
+          if (timeline[index].id === id) {
+            entry = timeline[index];
+            break;
+          }
+        }
         if (entry?.kind === 'message') entry.text += message.text;
         else timeline.push({ id, kind: 'message', role: 'assistant', text: message.text });
         break;
@@ -205,6 +212,7 @@ export class UnifySidebarProvider implements vscode.WebviewViewProvider {
         const agents = this.state.subagents[message.sessionId] ||= {};
         const agent = agents[message.agentId] ||= { id: message.agentId, title: message.title || 'Subagent', state: 'running', messages: [] };
         if (message.title) agent.title = message.title;
+        if (message.name) agent.name = message.name;
         if (message.model) agent.model = message.model;
         if (message.prompt) agent.prompt = message.prompt;
         if (message.files) agent.files = message.files;

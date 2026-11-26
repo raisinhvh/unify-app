@@ -117,7 +117,8 @@ export interface SidebarJob {
 type SidebarWebviewPayload =
   | { type: 'ready' }
   | { type: 'pageChanged'; page: SidebarPage }
-  | { type: 'sendPrompt'; prompt: string; images?: SidebarImage[]; mode?: 'interrupt' | 'queue' }
+  /** `subagentId` (Unify): send to that running subagent of the chat instead of the chat's own agent. */
+  | { type: 'sendPrompt'; prompt: string; images?: SidebarImage[]; mode?: 'interrupt' | 'queue'; subagentId?: string }
   | { type: 'unqueue'; sessionId: string; index: number }
   | { type: 'editMessage'; sessionId: string; entryId: string; text: string }
   | { type: 'readInstruction'; id: string }
@@ -458,6 +459,8 @@ export interface SidebarExplorerRange { path: string; startLine: number; endLine
 export interface SidebarSubagent {
   id: string;
   title: string;
+  /** Unify: the subagent's messaging name from the agent roster ("Arp"), kept after it finishes and leaves the roster. */
+  name?: string;
   model?: string;
   prompt?: string;
   files?: string[];
@@ -562,7 +565,7 @@ type SidebarHostPayload =
   | { type: 'toolState'; tools: SidebarToolEvent[] }
   /** Unify: the full list of one chat's background processes, posted whenever it changes and on `ready`. */
   | { type: 'backgroundProcesses'; sessionId: string; processes: SidebarBackgroundProcess[] }
-  | { type: 'subagentEvent'; sessionId: string; agentId: string; title?: string; model?: string; prompt?: string; files?: string[]; state?: SidebarSubagent['state']; delegated?: boolean; text?: string; messageId?: string; role?: 'assistant' | 'tool' | 'user'; from?: string; to?: string; tool?: SidebarSubagentTool; media?: SidebarMedia[]; sentToParent?: SidebarMedia[]; profile?: string; ranges?: SidebarExplorerRange[]; tokens?: number }
+  | { type: 'subagentEvent'; sessionId: string; agentId: string; title?: string; name?: string; model?: string; prompt?: string; files?: string[]; state?: SidebarSubagent['state']; delegated?: boolean; text?: string; messageId?: string; role?: 'assistant' | 'tool' | 'user'; from?: string; to?: string; tool?: SidebarSubagentTool; media?: SidebarMedia[]; sentToParent?: SidebarMedia[]; profile?: string; ranges?: SidebarExplorerRange[]; tokens?: number }
   | { type: 'diff'; diff: SidebarDiff }
   | { type: 'diffState'; diffs: SidebarDiff[] }
   /** Unify: one chat's edits (applied ones stay until kept or undone), for that chat's changes bar. */

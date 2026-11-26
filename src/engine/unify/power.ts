@@ -104,7 +104,9 @@ const SHUTDOWN_FEATURE = 'power.shutdownWhenIdle';
 export function shutdownCommandsFor(platform: NodeJS.Platform): ShutdownCommand[] {
   if (platform === 'win32') {
     const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
-    return [{ file: `${systemRoot}\\System32\\shutdown.exe`, args: ['/s', '/t', '0'] }];
+    // /f: without it, any app with unsaved changes vetoes the shutdown. On a locked, unattended PC
+    // nobody answers its prompt, Windows gives up after ~60 s, and shutdown.exe has already exited 0.
+    return [{ file: `${systemRoot}\\System32\\shutdown.exe`, args: ['/s', '/f', '/t', '0'] }];
   }
   if (platform === 'darwin') {
     return [

@@ -77,9 +77,9 @@ export function AgentMessageRow(props: { item: AgentMessageItem }): JSX.Element 
       onClick={toggle}
     >
       <span class="agent-message-route">
-        <span>{fromName()}</span>
+        <span class="agent-name">{fromName()}</span>
         <span class="agent-message-arrow">→</span>
-        <span>{toName()}</span>
+        <span class="agent-name">{toName()}</span>
       </span>
       <div
         class="agent-message-clip"

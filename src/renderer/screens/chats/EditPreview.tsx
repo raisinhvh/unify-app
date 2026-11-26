@@ -25,7 +25,7 @@ import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, u
 import { Icon, Loader, actionLabel, actionLoader, toolAction, tooltip } from '../../components';
 import { post } from '../../bridge';
 import { Collapse, driveSpring, useSpring } from '../../motion';
-import { Caret, EditedLines, RetypeText, RollingNumber } from '../../motion/organic';
+import { Caret, EditedLines, RetypeText, RollingNumber, StreamText } from '../../motion/organic';
 import type { SidebarEditLine, SidebarEditPreview, SidebarToolEvent } from '../../protocol';
 import './edit-preview.css';
 
@@ -344,15 +344,18 @@ function EditDiff(props: { rows: DiffRow[]; streaming: boolean; failed: boolean;
 
   /** Top of the settled window: one line above the first change. */
   const settledOffset = (): number => {
-    const first = content.querySelector<HTMLElement>('[data-first-change]');
-    if (!first) return 0;
-    const top = first.getBoundingClientRect().top - content.getBoundingClientRect().top;
-    return Math.max(0, top - lineHeight);
+    const first = props.rows.findIndex(row => row.firstChange);
+    return first > 0 ? (first - 1) * lineHeight : 0;
   };
 
+  /**
+   * Every row is one fixed-height line, so the window's targets come from the row count: the size the content is
+   * settling to, not the size it has this frame. Measuring (a ResizeObserver retargeting both springs on every
+   * frame while new rows open) made the window chase a moving target and the tail visibly lag and jitter.
+   */
   const layout = () => {
     if (!viewport || !content) return;
-    contentHeight = content.offsetHeight;
+    contentHeight = props.rows.length * lineHeight;
     let targetHeight: number;
     let targetOffset: number;
     if (expanded() && !props.streaming) {
@@ -373,18 +376,14 @@ function EditDiff(props: { rows: DiffRow[]; streaming: boolean; failed: boolean;
       return;
     }
     driveSpring(height, targetHeight, 'reveal');
-    driveSpring(offset, targetOffset, 'panel');
+    // While streaming, the window scrolls on the same spring the new rows open on (Collapse, Reveal), so the
+    // newest line stays pinned to the bottom edge instead of trailing behind it.
+    driveSpring(offset, targetOffset, props.streaming ? 'reveal' : 'panel');
   };
 
   createEffect(on(() => [props.rows, props.streaming, expanded()], () => queueMicrotask(layout)));
 
-  onMount(() => {
-    layout();
-    // Lines reveal (and sweep out) on their own springs; follow the content's height as it moves.
-    const observer = new ResizeObserver(() => layout());
-    observer.observe(content);
-    onCleanup(() => observer.disconnect());
-  });
+  onMount(layout);
 
   return (
     <div class="edit-body" classList={{ 'edit-body-failed': props.failed }}>
@@ -409,7 +408,7 @@ function EditDiff(props: { rows: DiffRow[]; streaming: boolean; failed: boolean;
                   <span class="edit-number">{row().number ?? ''}</span>
                   <span class="edit-marker">{marker(row().kind)}</span>
                   <span class="edit-code">
-                    {row().text}
+                    <StreamText value={row().text} />
                     <Show when={row().tail}>
                       <Caret phase="typing" />
                     </Show>
@@ -470,7 +469,7 @@ function LiveEditChip(props: { chip: LiveChip; streaming: boolean; opacity: numb
     >
       <span class="edit-live-marker">{marker(props.chip.line.kind)}</span>
       <span class="edit-live-code">
-        {props.chip.line.text.trim()}
+        <StreamText value={props.chip.line.text.trim()} />
         <Show when={props.streaming}>
           <Caret phase="typing" />
         </Show>

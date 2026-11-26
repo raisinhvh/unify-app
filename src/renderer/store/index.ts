@@ -334,7 +334,14 @@ export function applyHostMessage(message: SidebarHostMessage): void {
           else items.push({ role: 'assistant', text: message.text });
           const timeline = timelineOf(state, message.sessionId);
           const id = message.entryId || `assistant:${timeline.length}`;
-          const entry = timeline.find(item => item.id === id);
+          // The streaming entry is almost always the last one: search from the end, not through the whole chat.
+          let entry: SidebarTimelineItem | undefined;
+          for (let index = timeline.length - 1; index >= 0; index -= 1) {
+            if (timeline[index].id === id) {
+              entry = timeline[index];
+              break;
+            }
+          }
           if (entry && entry.kind === 'message') entry.text += message.text;
           else timeline.push({ id, kind: 'message', role: 'assistant', text: message.text });
         }));
@@ -371,6 +378,7 @@ export function applyHostMessage(message: SidebarHostMessage): void {
           const agents = (state.subagents[message.sessionId] ||= {});
           const agent = (agents[message.agentId] ||= { id: message.agentId, title: message.title || 'Subagent', state: 'running', messages: [] });
           if (message.title) agent.title = message.title;
+          if (message.name) agent.name = message.name;
           if (message.model) agent.model = message.model;
           if (message.prompt) agent.prompt = message.prompt;
           if (message.files) agent.files = message.files;

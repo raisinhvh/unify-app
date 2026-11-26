@@ -43,12 +43,19 @@ export function Collapse(props: CollapseProps): JSX.Element {
     }
   };
 
+  // The feather and overflow are written only when they change, not on every frame: a style write per frame per
+  // row (a streaming code edit opens many rows at once) re-invalidates style even when the value is the same.
+  let masked = false;
   height.onChange(value => {
     outer.style.height = `${Math.max(0, value)}px`;
-    outer.style.overflow = 'hidden';
-    outer.style.maskImage = height.moving ? movingMask : '';
+    if (outer.style.overflow !== 'hidden') outer.style.overflow = 'hidden';
+    if (height.moving !== masked) {
+      masked = height.moving;
+      outer.style.maskImage = masked ? movingMask : '';
+    }
   });
   height.onRest(value => {
+    masked = false;
     outer.style.maskImage = '';
     if (props.open) release();
     else if (value === 0) {

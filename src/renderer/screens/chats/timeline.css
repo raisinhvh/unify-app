@@ -44,6 +44,18 @@
   min-width: 0;
 }
 
+/* Long chats: rows scrolled out of view skip layout and paint, so resizing or gliding a pane re-lays out only what
+   is on screen. `auto` remembers each row's real height once it has rendered, so the scrollbar stays steady.
+   Only rows whose content stays inside their box (this also clips paint), not user bubbles (edit button sits
+   outside) or subagent rows (they reach 8px past the feed). */
+.feed > .feed-entry.assistant.markdown,
+.feed > .feed-entry.tool-batch,
+.feed > .feed-entry.edit-entry,
+.feed > .feed-entry.feed-note {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 120px;
+}
+
 /* Messages */
 .bubble.user {
   position: relative;
@@ -58,10 +70,29 @@
   word-break: break-word;
 }
 
-/* A subagent's incoming message from an agent other than its parent. */
+/* An agent message the shown agent sent ("To X"): the user bubble mirrored to the agent's side. */
+.bubble.outgoing {
+  align-self: flex-start;
+  max-width: 80%;
+  margin: 6px 0 4px;
+  padding: 8px 12px;
+  background: var(--raised);
+  border-radius: 10px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* The caption on agent message bubbles: "From X" on incoming ones, "To X" on outgoing ones. */
 .bubble-from {
   margin-bottom: 2px;
   color: var(--text3);
+}
+
+/* Agent names in "To X" / "From X" labels and A → B routes: full contrast so the name reads, the words around it stay dim. */
+.agent-name {
+  color: var(--text);
+  font-weight: var(--weight-label);
 }
 
 .bubble.user.editing {
@@ -780,6 +811,20 @@
 }
 
 .subagent-back:hover {
+  color: var(--text);
+}
+
+/* Under an open subagent's feed while it runs: what it is doing now, like the chat's own status line. */
+.subagent-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 20px;
+  color: var(--text2);
+  transform-origin: left center;
+}
+
+.subagent-status-label {
   color: var(--text);
 }
 

@@ -11,6 +11,7 @@
  *   <OrganicList each key>          AnimatedList + created / leaving / moved wiring for rows with names
  *   createSweptList(source, key)    hold removed items until their sweep has played
  *   <EditedLines each key>          live code: removed lines sweep then collapse, added lines wipe in with a caret
+ *   <StreamText value>              chunked streamed text typed on per frame (a growing code line)
  *   claimOrganicSlot()              scheduler: ≤ 3 at once, staggered starts, overflow lands instantly
  *   organicMode(effect)             'organic' | 'crossfade' | 'instant' for an effect right now
  */
@@ -34,5 +35,6 @@ export { liftMoves, movedKeys, liftScale } from './lift';
 export { OrganicList, type OrganicListProps, type OrganicRow } from './OrganicList';
 export { createSweptList, type SweptList, type SweptListOptions } from './sweptList';
 export { EditedLines, codeEditTiming, type EditedLinesProps } from './EditedLines';
+export { StreamText, streamTextCatchUp } from './StreamText';
 export { claimOrganicSlot, organicScheduling, organicSlotsInUse, type OrganicTicket } from './scheduler';
 export { organicEnabled, organicMode, isOnScreen, type OrganicEffect, type OrganicMode } from './enabled';

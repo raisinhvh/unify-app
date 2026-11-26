@@ -77,6 +77,17 @@ function requireAgent(agentId: string): AgentInfo {
   return agent;
 }
 
+/** A recipient by name (case-insensitive; names are exclusive among running agents) or by id. */
+function requireRecipient(nameOrId: string): AgentInfo {
+  const byId = roster.get(nameOrId);
+  if (byId) return byId;
+  const wanted = nameOrId.toLowerCase();
+  for (const agent of roster.values()) {
+    if (agent.name.toLowerCase() === wanted) return agent;
+  }
+  throw new Error(`No running agent is named "${nameOrId}". Call list_agents to see who is available.`);
+}
+
 /** Adds a message to an inbox, dropping the oldest when the inbox is full. */
 function deliver(toId: string, message: AgentMessage): void {
   const inbox = inboxes.get(toId) ?? [];
@@ -152,12 +163,12 @@ export const agentBus: AgentBus = {
     return [...roster.values()].filter(agent => agent.id !== from.id && inScope(from, agent)).map(agent => ({ ...agent }));
   },
 
-  send(fromAgentId: string, toAgentId: string, text: string, replyToId?: string): AgentMessage {
+  send(fromAgentId: string, toNameOrId: string, text: string, replyToId?: string): AgentMessage {
     assertMessagingEnabled();
     if (!text || !text.trim()) throw new Error('A message needs some text.');
-    if (fromAgentId === toAgentId) throw new Error('An agent cannot message itself.');
     const from = requireAgent(fromAgentId);
-    const to = requireAgent(toAgentId);
+    const to = requireRecipient(toNameOrId.trim());
+    if (to.id === from.id) throw new Error('An agent cannot message itself.');
     if (!inScope(from, to)) throw new Error(outOfScopeError(from, to));
     const message: AgentMessage = {
       id: randomUUID(),

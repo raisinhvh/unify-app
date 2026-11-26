@@ -14,12 +14,12 @@
  *     sent the main agent, minus any already shown in this chat (MediaLines)
  *   - internal tool rows say what the call really did (`internal`), and expand to the raw call
  *   - explorer runs are an inline "Explored" row, not a subagent (ExplorerRow)
- *   - agent → agent messages are quiet rows (AgentMessageRow)
+ *   - agent → agent messages are quiet rows (AgentMessageRow); ones this chat's own agent sends or receives are "To X" / "From X" bubbles
  *
  * Rows are keyed by timeline id, so streaming text and state changes update in place instead of remounting.
  */
-import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, type Accessor, type JSX } from 'solid-js';
-import { Button, Icon, Loader, actionLoader, toolAction, tooltip, type IconName } from '../../components';
+import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, untrack, type Accessor, type JSX } from 'solid-js';
+import { Button, Icon, Loader, actionLabel, actionLoader, toolAction, tooltip, type AgentAction, type IconName } from '../../components';
 import { isImage, mediaKey, openMediaViewer, thumbSource, uniqueMedia, type MediaItem } from '../../components/media';
 import { imageDragProps } from '../../shell/imageDrag';
 import { Collapse, Presence, createSpring, driveSpring, useSpring } from '../../motion';
@@ -33,7 +33,7 @@ import type {
   SidebarToolEvent,
   SidebarToolProgress,
 } from '../../protocol';
-import { isChatLoading, isRunning, requestChatHistory, userImages, viewState } from '../../store';
+import { agentName, isChatLoading, isRunning, requestChatHistory, userImages, viewState } from '../../store';
 import { feature } from '../../store/features';
 import { AgentMessageRow } from './AgentMessageRow';
 import { explorerProfile, openedSubagent as openedSubagentOf, openSubagent } from './subagentView';
@@ -539,11 +539,52 @@ function UserMessage(props: {
   );
 }
 
+/**
+ * Puts rendered markdown into `container`, keeping every leading top-level block that is unchanged. A streamed reply
+ * only ever changes its last block or two, so replacing the whole innerHTML each frame rebuilt (and re-laid out) the
+ * entire message per frame, and dropped any selection the reader had made in it.
+ */
+function patchBlocks(container: HTMLElement, html: string): void {
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  const next = [...template.content.childNodes];
+  const current = [...container.childNodes];
+  let same = 0;
+  while (same < next.length && same < current.length && current[same].isEqualNode(next[same])) same += 1;
+  for (let index = current.length - 1; index >= same; index -= 1) current[index].remove();
+  for (let index = same; index < next.length; index += 1) container.appendChild(next[index]);
+}
+
 function AssistantMessage(props: { text: string }): JSX.Element {
+  // Streaming text grows by a small chunk per engine message; re-parsing the whole message for each chunk adds up.
+  // Render at most once per frame, always from the latest text.
+  // A slow timer backs the frame up: hidden windows and headless screenshots get no animation frames.
+  let root!: HTMLDivElement;
+  let frame = 0;
+  let fallback = 0;
+  const render = () => {
+    cancelAnimationFrame(frame);
+    window.clearTimeout(fallback);
+    frame = 0;
+    fallback = 0;
+    patchBlocks(root, renderMarkdown(untrack(() => props.text)));
+  };
+  createEffect(on(() => props.text, () => {
+    if (frame) return;
+    frame = requestAnimationFrame(render);
+    fallback = window.setTimeout(render, 100);
+  }, { defer: true }));
+  onCleanup(() => {
+    cancelAnimationFrame(frame);
+    window.clearTimeout(fallback);
+  });
   return (
     <div
+      ref={element => {
+        root = element;
+        patchBlocks(element, renderMarkdown(untrack(() => props.text)));
+      }}
       class="feed-entry assistant markdown"
-      innerHTML={renderMarkdown(props.text)}
       onClick={handleMarkdownClick}
       onKeyDown={handleMarkdownKeyDown}
     />
@@ -724,7 +765,10 @@ function SubagentRow(props: {
             </Match>
           </Switch>
         </span>
-        <span class="subagent-title">{props.agent.title}</span>
+        <span class="subagent-title">{subagentName(props.agent) || props.agent.title}</span>
+        <Show when={subagentName(props.agent) && subagentName(props.agent) !== props.agent.title}>
+          <span class="subagent-model">{props.agent.title}</span>
+        </Show>
         <Show when={props.agent.model}>
           <span class="subagent-model">{props.agent.model}</span>
         </Show>
@@ -745,6 +789,17 @@ function SubagentRow(props: {
 }
 
 type SubagentMessage = SidebarSubagent['messages'][number];
+
+/**
+ * What a running subagent is doing, for the status row under its feed. Only edit calls report a running state
+ * (other subagent tools have no completion event), so anything else reads as thinking.
+ */
+function subagentAction(agent: SidebarSubagent): AgentAction | undefined {
+  if (agent.state !== 'running') return undefined;
+  const last = agent.messages[agent.messages.length - 1];
+  if (last?.role === 'tool' && last.tool && subagentToolState(agent, last.tool) === 'running') return toolAction(last.tool);
+  return 'thinking';
+}
 
 /** The edit a running subagent is making right now: its latest tool call, while that call is an edit still running. */
 function subagentLiveEdit(agent: SidebarSubagent): SidebarEditPreview | undefined {
@@ -793,17 +848,50 @@ function SubagentToolEntry(props: { tool: ToolLike }): JSX.Element {
   );
 }
 
+/**
+ * A subagent's messaging name ("Arp"), shown ahead of its profile title (dimmed) in its row and feed bar.
+ * Subagents from before names were recorded have only the profile; while one runs, the roster still knows it.
+ */
+function subagentName(agent: SidebarSubagent): string | undefined {
+  return agent.name || agentName(agent.id);
+}
+
 /** The static bar above the timeline scroller while a subagent's feed is open. Lives outside the scroller so it never scrolls. */
 function SubagentBar(props: { agent: SidebarSubagent; onBack: () => void }): JSX.Element {
+  const name = () => subagentName(props.agent);
   return (
     <div class="subagent-bar">
       <button type="button" class="subagent-back" onClick={() => props.onBack()}>
         <Icon name="chevronRight" size={12} style={{ rotate: '180deg' }} />
-        <span class="type-label">{props.agent.title}</span>
+        <span class="type-label">{name() || props.agent.title}</span>
+        <Show when={name() && name() !== props.agent.title}>
+          <span class="subagent-model">{props.agent.title}</span>
+        </Show>
         <Show when={props.agent.model}>
           <span class="subagent-model">{props.agent.model}</span>
         </Show>
       </button>
+    </div>
+  );
+}
+
+/**
+ * An agent → agent message the shown agent sent ("To X", on the left like its replies) or received ("From X",
+ * on the right like a user message).
+ */
+function AgentBubble(props: { direction: 'to' | 'from'; name: string; text: string }): JSX.Element {
+  return (
+    <div
+      class="feed-entry bubble"
+      classList={{
+        user: props.direction === 'from',
+        outgoing: props.direction === 'to',
+      }}
+    >
+      <div class="bubble-from type-caption">
+        {props.direction === 'to' ? 'To' : 'From'} <span class="agent-name">{props.name}</span>
+      </div>
+      <div class="message-content">{props.text}</div>
     </div>
   );
 }
@@ -822,20 +910,10 @@ function SubagentFeed(props: { agent: SidebarSubagent }): JSX.Element {
           <Switch fallback={<AssistantMessage text={message.text} />}>
             <Match when={message.to}>
               {to => (
-                <AgentMessageRow
-                  item={{
-                    id: `${props.agent.id}:${message.id}`,
-                    kind: 'agentMessage',
-                    message: {
-                      id: message.id,
-                      fromId: props.agent.id,
-                      fromName: props.agent.title,
-                      toId: to(),
-                      toName: to(),
-                      text: message.text,
-                      sentAt: 0,
-                    },
-                  }}
+                <AgentBubble
+                  direction="to"
+                  name={to()}
+                  text={message.text}
                 />
               )}
             </Match>
@@ -877,6 +955,12 @@ function SubagentFeed(props: { agent: SidebarSubagent }): JSX.Element {
           </Switch>
         )}
       </For>
+      <Presence when={subagentAction(props.agent) !== undefined} from={0.96}>
+        <div class="feed-entry subagent-status type-caption" role="status">
+          <Loader id={actionLoader[subagentAction(props.agent) ?? 'thinking']} size={12} />
+          <span class="subagent-status-label">{actionLabel[subagentAction(props.agent) ?? 'thinking']}</span>
+        </div>
+      </Presence>
     </div>
   );
 }
@@ -951,7 +1035,23 @@ function FeedRow(props: {
           <Match when={item().kind === 'agentMessage' && (item() as AgentMessageEntry)}>
             {entry => (
               <Show when={showAgentMessage(props.chatId, entry())}>
-                <AgentMessageRow item={entry()} />
+                {/* A top-level agent's id is its chat id: its own messages are bubbles, like the subagent feed's. */}
+                <Switch fallback={<AgentMessageRow item={entry()} />}>
+                  <Match when={entry().message.fromId === props.chatId}>
+                    <AgentBubble
+                      direction="to"
+                      name={entry().message.toName || agentName(entry().message.toId) || entry().message.toId}
+                      text={entry().message.text}
+                    />
+                  </Match>
+                  <Match when={entry().message.toId === props.chatId}>
+                    <AgentBubble
+                      direction="from"
+                      name={entry().message.fromName || agentName(entry().message.fromId) || entry().message.fromId}
+                      text={entry().message.text}
+                    />
+                  </Match>
+                </Switch>
               </Show>
             )}
           </Match>
@@ -1059,23 +1159,46 @@ export function Timeline(props: { chatId: string }): JSX.Element {
   });
 
   // Follow new output while the reader is at the bottom (DSH: within 60px).
+  // Once per frame at most: the feed updates per streamed chunk, and reading scrollHeight right after each update
+  // forced a synchronous layout per chunk. The ResizeObserver below covers growth within the frame.
+  let stickFrame = 0;
   createMemo(() => {
     feed();
-    JSON.stringify(viewState.timeline[props.chatId]?.at(-1));
-    queueMicrotask(() => {
+    if (stickFrame) return;
+    stickFrame = requestAnimationFrame(() => {
+      stickFrame = 0;
       if (scroller && stickToBottom) scroller.scrollTop = scroller.scrollHeight;
     });
   });
+  onCleanup(() => cancelAnimationFrame(stickFrame));
 
-  // The pane's bottom (hover-revealed composer, changes list) springs its height: a reader at the bottom stays
-  // pinned there each frame, so the last message rides up with it instead of sliding under.
+  // Pin the bottom whenever the scroller or its content changes size: the pane's bottom (hover-revealed composer,
+  // changes list) springing its height, and content growing (streamed text, a tool row filling in, an image
+  // loading). Observing the content's size replaces serialising the last entry on every update.
   onMount(() => {
     if (!scroller) return;
+    const element = scroller;
     const observer = new ResizeObserver(() => {
-      if (scroller && stickToBottom) scroller.scrollTop = scroller.scrollHeight;
+      if (stickToBottom) element.scrollTop = element.scrollHeight;
     });
-    observer.observe(scroller);
-    onCleanup(() => observer.disconnect());
+    observer.observe(element);
+    for (const child of element.children) observer.observe(child);
+    // The content root is swapped when a subagent's feed opens or closes; observe whichever is current.
+    const children = new MutationObserver(records => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node instanceof Element) observer.observe(node);
+        }
+        for (const node of record.removedNodes) {
+          if (node instanceof Element) observer.unobserve(node);
+        }
+      }
+    });
+    children.observe(element, { childList: true });
+    onCleanup(() => {
+      observer.disconnect();
+      children.disconnect();
+    });
   });
 
   return (

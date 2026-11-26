@@ -22,7 +22,7 @@ export function agentMessagingTools(): Record<string, unknown>[] {
     return [
         {
             name: LIST_AGENTS_TOOL,
-            description: 'List the other agents running in Unify right now (id, name, task, chat, parent, state). Use an id from here with send_message. Which agents you can see depends on the agents.messaging.scope setting.',
+            description: 'List the other agents running in Unify right now (id, name, task, chat, parent, state). Send to an agent by its name with send_message. Which agents you can see depends on the agents.messaging.scope setting.',
             annotations: readOnly,
             inputSchema: { type: 'object', properties: {} },
         },
@@ -33,7 +33,7 @@ export function agentMessagingTools(): Record<string, unknown>[] {
             inputSchema: {
                 type: 'object',
                 properties: {
-                    to: { type: 'string', description: 'Agent id from list_agents.' },
+                    to: { type: 'string', description: 'The agent\'s name (e.g. "Arp"), as given by delegate_task or list_agents.' },
                     text: { type: 'string', description: 'The message.' },
                     reply_to: { type: 'string', description: 'Id of the message this answers.' },
                 },

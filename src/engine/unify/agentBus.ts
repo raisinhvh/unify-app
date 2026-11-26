@@ -57,8 +57,11 @@ export interface AgentBus {
   nameOf(agentId: string): string | undefined;
   /** Agents the given agent may see/message under the current scope. */
   listVisible(fromAgentId: string): AgentInfo[];
-  /** Throws an Error with a user-readable message when messaging is off or out of scope. */
-  send(fromAgentId: string, toAgentId: string, text: string, replyToId?: string): AgentMessage;
+  /**
+   * `to` is the recipient's name (case-insensitive) or id.
+   * Throws an Error with a user-readable message when messaging is off or out of scope.
+   */
+  send(fromAgentId: string, to: string, text: string, replyToId?: string): AgentMessage;
   /** Undelivered messages for an agent; marks them delivered. */
   takeInbox(agentId: string): AgentMessage[];
   /** Whether the agent has undelivered messages, without taking them. */

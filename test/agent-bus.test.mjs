@@ -128,9 +128,19 @@ test('messaging turned off refuses list and send with a clear message', () => {
 
 test('unknown, self and empty messages fail with readable errors', () => {
   addAgent('main-a', { name: 'Main' });
-  assert.throws(() => agentBus.send('main-a', 'missing', 'hello'), /No running agent has id "missing"/);
+  assert.throws(() => agentBus.send('main-a', 'missing', 'hello'), /No running agent is named "missing"/);
   assert.throws(() => agentBus.send('missing', 'main-a', 'hello'), /No running agent has id "missing"/);
   assert.throws(() => agentBus.send('main-a', 'main-a', 'hello'), /cannot message itself/);
+  assert.throws(() => agentBus.send('main-a', 'main', 'hello'), /cannot message itself/);
+});
+
+test('send accepts the recipient name, case-insensitive', () => {
+  addAgent('parent', { name: 'Main' });
+  addAgent('child-1', { name: 'Arp', parentId: 'parent' });
+  addAgent('child-2', { name: 'Luna', parentId: 'parent' });
+  assert.equal(agentBus.send('parent', 'Arp', 'only you').toId, 'child-1');
+  assert.equal(agentBus.send('parent', ' luna ', 'and you').toId, 'child-2');
+  assert.equal(agentBus.send('child-1', 'Main', 'done').toId, 'parent');
   addAgent('main-b', { chatId: 'chat-b' });
   assert.throws(() => agentBus.send('main-a', 'main-b', '   '), /needs some text/);
 });

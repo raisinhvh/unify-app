@@ -32,6 +32,7 @@ import { MentionMenu, type MentionMenuApi } from './MentionMenu';
 import { SlashMenu, type SlashMenuApi } from './SlashMenu';
 import { createVoiceSession, VoiceButton, VoiceHint } from './VoiceButton';
 import { ActivityPeek, BackgroundIndicator, SubagentIndicator } from './ActivityIndicators';
+import { openedSubagent } from './subagentView';
 import './composer.css';
 
 const maxAttachments = 8;
@@ -117,6 +118,16 @@ export function Composer(props: ComposerProps): JSX.Element {
   const running = () => (run()?.state || 'idle') !== 'idle';
   const queue = () => (props.chatId ? viewState.queues[props.chatId] || [] : []);
   const canSend = () => reading() === 0 && (text().trim().length > 0 || attachments().length > 0);
+  /** The subagent whose feed the chat shows (subagentView.ts), when a message can still reach it. */
+  const openAgent = () => {
+    if (!props.chatId) return undefined;
+    const agentId = openedSubagent(props.chatId);
+    return agentId ? viewState.subagents[props.chatId]?.[agentId] : undefined;
+  };
+  const subagentTarget = () => (openAgent()?.state === 'running' ? openAgent() : undefined);
+  /** A finished subagent's feed has no input: it cannot take messages, and the main chat is one Back away. */
+  const finishedSubagentOpen = () => !!openAgent() && !subagentTarget();
+  const placeholder = () => (subagentTarget() ? 'Send to subagent' : props.placeholder);
 
   // autoHide: shows at once, hides a beat after the last reason to show goes away.
   const [focused, setFocused] = createSignal(false);
@@ -131,6 +142,12 @@ export function Composer(props: ComposerProps): JSX.Element {
     attachments().length > 0;
   const [shown, setShown] = createSignal(wantsShown());
   createEffect(() => {
+    // Leaves no focused (hidden) input behind that Enter could still send from.
+    if (finishedSubagentOpen()) {
+      input?.blur();
+      setShown(false);
+      return;
+    }
     if (wantsShown()) {
       setShown(true);
       return;
@@ -251,8 +268,12 @@ export function Composer(props: ComposerProps): JSX.Element {
     const prompt = text().trim();
     if (reading() || (!prompt && !attachments().length)) return;
     const images: SidebarImage[] = attachments().map(({ name, mimeType, data }) => ({ name, mimeType, data }));
+    const target = subagentTarget();
     if (props.onSubmit) {
       props.onSubmit(prompt, images);
+    } else if (target) {
+      // Goes straight into the subagent's turn; the parent's interrupt/queue choice does not apply.
+      post({ type: 'sendPrompt', prompt, images, chatId: props.chatId, subagentId: target.id });
     } else {
       if (props.chatId) rememberSentImages(props.chatId, images);
       post({ type: 'sendPrompt', prompt, images, ...(mode ? { mode } : {}), chatId: props.chatId });
@@ -263,7 +284,7 @@ export function Composer(props: ComposerProps): JSX.Element {
 
   function submit(): void {
     if (!canSend()) return;
-    if (running()) {
+    if (running() && !subagentTarget()) {
       setSendMenuOpen(!sendMenuOpen());
       return;
     }
@@ -432,7 +453,7 @@ export function Composer(props: ComposerProps): JSX.Element {
               aria-autocomplete={openMenu() ? 'list' : undefined}
               aria-expanded={openMenu() ? true : undefined}
               aria-activedescendant={openMenu()?.activeId()}
-              placeholder={props.placeholder}
+              placeholder={placeholder()}
               value={text()}
               onInput={event => {
                 setText(event.currentTarget.value);
@@ -451,7 +472,7 @@ export function Composer(props: ComposerProps): JSX.Element {
                 if (mentionMenu()?.handleKey(event)) return;
                 if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
                   event.preventDefault();
-                  if (running() && event.altKey) send('queue');
+                  if (running() && event.altKey && !subagentTarget()) send('queue');
                   else submit();
                 }
               }}
@@ -509,9 +530,10 @@ export function Composer(props: ComposerProps): JSX.Element {
                 type="submit"
                 variant="primary"
                 class="composer-send"
-                aria-label={running() ? 'Send options' : 'Send'}
-                aria-haspopup={running() ? 'menu' : undefined}
-                aria-expanded={running() ? sendMenuOpen() : undefined}
+                aria-label={subagentTarget() ? 'Send to subagent' : running() ? 'Send options' : 'Send'}
+                title={subagentTarget() ? `Send to ${subagentTarget()?.title ?? 'subagent'}` : undefined}
+                aria-haspopup={running() && !subagentTarget() ? 'menu' : undefined}
+                aria-expanded={running() && !subagentTarget() ? sendMenuOpen() : undefined}
                 disabled={reading() > 0}
                 icon="arrowUp"
               />

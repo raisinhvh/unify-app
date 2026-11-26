@@ -129,6 +129,8 @@ const bufferedMessages: unknown[] = [];
 const pendingUi = new Map<string, (result: unknown) => void>();
 const promptResolvers = new Map<string, (value: string | undefined) => void>();
 let rendererState: unknown;
+let rendererStateTimer: NodeJS.Timeout | undefined;
+const rendererStateWriteDelay = 500;
 
 /** Chats shown in their own windows, keyed by chat id, plus each window's load state and message buffer. */
 const popoutWindows = new Map<string, BrowserWindow>();
@@ -722,8 +724,19 @@ function closePopouts(): void {
   }
 }
 
+/** Writes the renderer state now, dropping any pending debounced write. */
 function persistRendererState(): void {
+  if (rendererStateTimer) {
+    clearTimeout(rendererStateTimer);
+    rendererStateTimer = undefined;
+  }
   writeJson(rendererStatePath, { value: rendererState ?? null });
+}
+
+/** The renderer can send state many times a second (layout drags); write it once things settle. Quit flushes it. */
+function schedulePersistRendererState(): void {
+  if (rendererStateTimer) clearTimeout(rendererStateTimer);
+  rendererStateTimer = setTimeout(persistRendererState, rendererStateWriteDelay);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1029,7 +1042,7 @@ function installIpc(): void {
     // persist a state the main window did not choose.
     if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return;
     rendererState = value;
-    persistRendererState();
+    schedulePersistRendererState();
   });
   // Footer indicators: the app version, and whether this is a dev run (run.cmd / run.sh / npm run dev) rather than an installed build.
   ipcMain.on('unify:app-info', event => {

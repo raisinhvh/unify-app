@@ -77,17 +77,29 @@ function createBatcher(gap: number, budget: number) {
     const group = pending;
     pending = [];
     group.sort((first, second) => (first.element.compareDocumentPosition(second.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
-    releaseHeld();
     const visible = group.some(handle => isOnScreen(handle.element));
-    const ticket = visible ? claimOrganicSlot() : undefined;
-    if (!ticket) {
+    if (!visible) {
+      releaseHeld();
       for (const handle of group) handle.land();
       return;
     }
-    heldTicket = ticket;
+    // A list still animating (an edit streaming in, a group every ~50ms) carries on in the slot it holds, with no
+    // new stagger. Claiming a fresh slot per group made the scheduler's stagger pile up behind the stream: lines
+    // started later and later, and once every slot was taken the overflow snapped in without animating.
+    let delay = 0;
+    if (!heldTicket) {
+      const ticket = claimOrganicSlot();
+      if (!ticket) {
+        for (const handle of group) handle.land();
+        return;
+      }
+      heldTicket = ticket;
+      delay = ticket.delay;
+    }
+    window.clearTimeout(releaseTimer);
     const step = group.length > 1 ? Math.min(gap, budget / (group.length - 1)) : 0;
-    group.forEach((handle, index) => handle.start(ticket.delay + index * step, index === group.length - 1));
-    releaseTimer = window.setTimeout(releaseHeld, ticket.delay + group.length * step + 200);
+    group.forEach((handle, index) => handle.start(delay + index * step, index === group.length - 1));
+    releaseTimer = window.setTimeout(releaseHeld, delay + group.length * step + 200);
   };
   onCleanup(releaseHeld);
   return (handle: LineHandle) => {
@@ -151,7 +163,12 @@ function EditedLine(props: EditedLineProps): JSX.Element {
   const [sweeping, setSweeping] = createSignal(false);
   const [tinted, setTinted] = createSignal(added);
   const [caretPhase, setCaretPhase] = createSignal<CaretPhase | undefined>();
-  const [caretLeft, setCaretLeft] = createSignal(0);
+  /** Holds the caret; moved with a transform so the wipe never touches layout. */
+  let caretTrack: HTMLSpanElement | undefined;
+  /** The text's box, measured once when its wipe starts (never per frame: reading layout inside the shared spring
+   *  loop forces a synchronous layout for every line still moving). */
+  let textLeft = 0;
+  let textWidth = 0;
   const timers: number[] = [];
   let carriesCaret = false;
   let swept = false;
@@ -160,10 +177,14 @@ function EditedLine(props: EditedLineProps): JSX.Element {
     timers.push(window.setTimeout(action, delay));
   };
 
+  const paintCaret = (progress: number) => {
+    if (caretTrack) caretTrack.style.transform = `translateX(${textLeft + textWidth * progress}px)`;
+  };
+
   const paintWipe = (value: number) => {
     const progress = Math.max(0, Math.min(1, value));
     text.style.clipPath = progress >= 1 ? '' : `inset(-2px ${(1 - progress) * 100}% -2px 0)`;
-    if (carriesCaret) setCaretLeft(text.offsetLeft + text.offsetWidth * progress);
+    if (carriesCaret) paintCaret(progress);
   };
 
   wipe.onChange(paintWipe);
@@ -203,7 +224,11 @@ function EditedLine(props: EditedLineProps): JSX.Element {
     start(delay, last) {
       carriesCaret = last;
       later(delay, () => {
-        if (carriesCaret) setCaretPhase('typing');
+        if (carriesCaret) {
+          textLeft = text.offsetLeft;
+          textWidth = text.offsetWidth;
+          setCaretPhase('typing');
+        }
         wipe.set(1, wipeSpring);
       });
     },
@@ -256,7 +281,16 @@ function EditedLine(props: EditedLineProps): JSX.Element {
       <span ref={text} class="organic-line-text">{props.children}</span>
       <Show when={caretPhase()}>
         {phase => (
-          <Caret phase={phase()} left={caretLeft()} color={props.caretColor} onDone={() => setCaretPhase(undefined)} />
+          <span
+            ref={element => {
+              caretTrack = element;
+              paintCaret(Math.max(0, Math.min(1, wipe.value)));
+            }}
+            class="organic-line-caret-track"
+            aria-hidden="true"
+          >
+            <Caret phase={phase()} left={0} color={props.caretColor} onDone={() => setCaretPhase(undefined)} />
+          </span>
         )}
       </Show>
     </div>

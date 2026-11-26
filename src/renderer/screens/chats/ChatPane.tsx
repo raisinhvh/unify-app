@@ -36,6 +36,7 @@ import { JobBar } from './JobBar';
 import { ScheduleBar } from './ScheduleBar';
 import { QuoteSelection } from './QuoteSelection';
 import { Timeline } from './Timeline';
+import { openedSubagent } from './subagentView';
 import './chat-pane.css';
 
 function StatusLine(props: { chatId: string }): JSX.Element {
@@ -127,11 +128,15 @@ function ChangesBar(props: { chatId: string }): JSX.Element {
 }
 
 /**
- * A small paper icon beside the title; hovering it shows the chat agent's messaging name ("Name: Kernel").
- * Hidden until the engine's roster knows the name.
+ * A small paper icon beside the title; hovering it shows the messaging name ("Name: Kernel") of the agent the pane
+ * shows: the chat's own agent, or the subagent whose feed is open. Hidden until a name is known.
  */
 function AgentNameTag(props: { chatId: string }): JSX.Element {
-  const name = () => agentName(props.chatId);
+  const name = () => {
+    const openedId = openedSubagent(props.chatId);
+    if (!openedId) return agentName(props.chatId);
+    return viewState.subagents[props.chatId]?.[openedId]?.name || agentName(openedId);
+  };
   return (
     <Show when={name()}>
       <span

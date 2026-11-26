@@ -12,7 +12,7 @@ import { freshCodexTokens } from './accounts/codexAuth';
 import { WindowsDependencies } from './runtime/dependencies';
 import { ReviewController, ReviewProposal } from './review/controller';
 import { DelegateAgentInfo, DelegateHost, DelegateResult, DelegateToolInfo } from './delegate/host';
-import { bindChatAgentOwner, registerSubagentAgent, setSubagentState, unbindChatAgentOwner, unregisterSubagentAgent } from './delegate/messaging';
+import { bindChatAgentOwner, queueUserMessage, registerSubagentAgent, setSubagentState, takeUserMessages, unbindChatAgentOwner, unregisterSubagentAgent } from './delegate/messaging';
 import { InstructionItem, InstructionRoots, listInstructions, locateInstruction, readInstruction, removeInstruction, saveInstruction } from './instructions/store';
 import { shareInstructions } from './instructions/share';
 import { writeAudienceInstructions } from './instructions/audiences';
@@ -39,7 +39,7 @@ import { terminateProcessTree } from './runtime/cancellation';
 import { answersByQuestion, formatAnswers, parseQuestions } from './sidebar/questions';
 import { withExplorer, explorerPromptNote, formatExplorerRanges, parseExplorerRanges } from './runtime/explorer';
 import { promptPrefix, skipToolListChanged } from './runtime/promptPrefix';
-import { AfterTurn, CANCEL_SUBAGENT, delegationInstructions, isDelegationTool, isNativeSubagentTool, TOOLPACK_SCOPE, WAIT_SUBAGENTS } from './runtime/delegation';
+import { AfterTurn, CANCEL_SUBAGENT, delegationInstructions, isDelegationTool, isNativeSubagentTool, messageAgentsByNameNote, messageByNameHint, takeMessageByNameHint, TOOLPACK_SCOPE, WAIT_SUBAGENTS } from './runtime/delegation';
 import { editorContextDiff } from './runtime/editorContext';
 import { AcpRuntime, RuntimeEvent } from './runtime/acp';
 import type { StuckCommand } from './runtime/stuckCommands';
@@ -62,7 +62,7 @@ import { parseCursorModelList } from './unify/cursorModels';
 import { listToolpacks } from './toolpacks/sync-state';
 import { installedHubPacks } from './unify/requests/toolpacks';
 import { applyRangeEdit } from './runtime/rangeEdit';
-import { chatCompactRequest, compactStep, CompactWatch, CONTINUE_AFTER_CHECKPOINT, MAX_SUBAGENT_SEGMENTS, sendCompactRequest, subagentCheckpoint, subagentCompactRequest, subagentResumeTask, takeFollowUp, TurnChannel } from './runtime/midTurnCompact';
+import { chatCompactRequest, compactStep, CompactWatch, CONTINUE_AFTER_CHECKPOINT, MAX_SUBAGENT_SEGMENTS, PAUSED_NOTE, sendCompactRequest, subagentCheckpoint, subagentCompactRequest, subagentResumeTask, takeFollowUp, TurnChannel } from './runtime/midTurnCompact';
 import { trimSessionImages } from './runtime/imageTrim';
 import { buildHandoff, CHAT_HISTORY_TOOL, chatHistoryReply, ChatMessage, handoffSummaryPrompt, KEEP_WITH_TOOL, MAX_TURN_TOOLS, toolLine } from './runtime/handoff';
 import { buildPartsHandoff, parsePartsReply, partsDir, partsPrompt, partWindows, TranscriptPart, unsummarizedPart, writeTranscriptParts } from './runtime/transcriptParts';
@@ -225,6 +225,8 @@ interface ChildRun {
   parent: Chat;
   owner: string;
   label: string;
+  /** The agent's exclusive messaging name (e.g. "Arp"), set once it is registered with the agent bus. */
+  name?: string;
   /** The id the UI knows this subagent by, for its own feed and sentToParent updates. */
   agentId: string;
   readOnly: boolean;
@@ -241,6 +243,12 @@ interface ChildRun {
   sessionId?: string;
   onUpdate?(update: Record<string, unknown>): void;
   cancel(): void;
+  /**
+   * Puts a message from the user into the running turn (Claude CLI: mid-turn input; ACP: interrupt, then the
+   * message is the session's next prompt). False when the runtime has no such channel or no turn is running;
+   * the message then waits in the subagent's inbox for its next Unify tool result.
+   */
+  say?(text: string): boolean;
 }
 /** A subagent started with background: true, kept until the parent agent collects its result. */
 interface BackgroundTask { id: string; label: string; afterTurn: AfterTurn; done: boolean; result?: DelegateResult; finished: Promise<void>; run?: ChildRun }
@@ -785,6 +793,30 @@ class ExtensionHost implements vscode.Disposable {
         ...(message.fromId === recipient.parent.record.id ? {} : { from: message.fromName }),
       });
     }
+  }
+
+  /**
+   * The composer's "Send to subagent": the user's message goes into that subagent's running turn and shows
+   * in its feed as an incoming bubble. A finished subagent has no session left to continue.
+   */
+  private messageSubagent(chatId: string | undefined, agentId: string, text: string, images?: SidebarImage[]): void {
+    const run = [...this.childRuns].find(item => item.agentId === agentId && (!chatId || item.parent.record.id === chatId));
+    if (!run) {
+      this.sidebar.postMessage({ type: 'error', message: 'That subagent has finished, so it cannot take messages. Go back to the main chat to send this.' });
+      return;
+    }
+    const body = text.trim();
+    if (!body) return;
+    if (images?.length) this.sidebar.postMessage({ type: 'error', message: 'Attachments are not sent to subagents; only the text was sent.' });
+    this.sidebar.postMessage({
+      type: 'subagentEvent',
+      sessionId: run.parent.record.id,
+      agentId: run.agentId,
+      messageId: `user:${randomUUID()}`,
+      role: 'user',
+      text: body,
+    });
+    if (!run.say?.(`Message from the user, sent while you work: ${body}`)) queueUserMessage(run.agentId, body);
   }
 
   /** Undelivered messages from other agents, formatted to lead the chat's next turn. */
@@ -3339,7 +3371,10 @@ class ExtensionHost implements vscode.Disposable {
       children[index].state = outcome.isError ? 'error' : 'complete';
       post();
     });
+    // Several subagents started in one batch share one "message them by name" line instead of one each.
+    const startedNames = outcomes.map(outcome => takeMessageByNameHint(outcome)).filter((name): name is string => !!name);
     const result = formatBatchResult(calls, outcomes, skipped);
+    if (startedNames.length) result.text += `\n\n${messageAgentsByNameNote(startedNames[0])}`;
     return { text: result.text, ...(result.content.length ? { content: [{ type: 'text', text: result.text }, ...result.content] } : {}) };
   }
 
@@ -3878,15 +3913,22 @@ class ExtensionHost implements vscode.Disposable {
       title: `${profile.name}: ${task.length > 80 ? `${task.slice(0, 80)}…` : task}`,
       stop: async () => { await this.cancelSubagent(chat, { id }); },
     });
-    entry.finished = this.runSubagentCore(chat, profile, task, files, run => { entry.run = run; })
+    // runSubagentCore registers the agent (and calls onBackground) before its first await, so the name is known here.
+    let agentName: string | undefined;
+    entry.finished = this.runSubagentCore(chat, profile, task, files, run => { entry.run = run; agentName = run.name; })
       .catch((error): DelegateResult => ({ text: `Subagent "${profile.name}" failed: ${error instanceof Error ? error.message : String(error)}`, isError: true }))
       .then(result => {
         entry.done = true; entry.result = result; entry.run = undefined;
         this.backgroundProcesses.end(sessionId, id, result.isError ? 'error' : 'done');
         this.backgroundSettled(chat);
       });
-    return { text: `Started subagent "${profile.name}" in the background as task ${id}. Keep working; call ${WAIT_SUBAGENTS} to yield until it finishes and get its report.`
-      + ` If your turn ends first: ${afterTurn === 'resume' ? 'its result is sent to you in a new turn' : afterTurn === 'hold' ? 'its result is attached to the user\'s next message' : 'it is cancelled'}.` };
+    if (agentName) entry.label = `${agentName}, ${profile.name}`;
+    const started = agentName
+      ? `Started subagent ${agentName} (${profile.name}) in the background as task ${id}.`
+      : `Started subagent "${profile.name}" in the background as task ${id}.`;
+    return { text: `${started} Keep working; call ${WAIT_SUBAGENTS} to yield until it finishes and get its report.`
+      + ` If your turn ends first: ${afterTurn === 'resume' ? 'its result is sent to you in a new turn' : afterTurn === 'hold' ? 'its result is attached to the user\'s next message' : 'it is cancelled'}.`
+      + (agentName ? messageByNameHint(agentName) : '') };
   }
 
   /** Background tasks finished and not yet collected, removed from the chat and formatted as one report. */
@@ -4154,16 +4196,17 @@ class ExtensionHost implements vscode.Disposable {
     const agentId = `${chat.turnEntryId}:delegate:${randomUUID()}`;
     const explorer = name === 'explorer' && readOnly;
     const places = this.internalPlaces(chat);
-    const post = (event: { title?: string; prompt?: string; model?: string; effort?: string; speed?: string; profile?: string; ranges?: SidebarExplorerRange[]; tokens?: number; state?: 'running' | 'complete' | 'error' | 'cancelled'; delegated?: boolean; files?: string[]; text?: string; messageId?: string; role?: 'assistant' | 'tool'; tool?: SidebarSubagentTool; media?: SidebarMedia[] }): void => {
+    const post = (event: { title?: string; name?: string; prompt?: string; model?: string; effort?: string; speed?: string; profile?: string; ranges?: SidebarExplorerRange[]; tokens?: number; state?: 'running' | 'complete' | 'error' | 'cancelled'; delegated?: boolean; files?: string[]; text?: string; messageId?: string; role?: 'assistant' | 'tool'; tool?: SidebarSubagentTool; media?: SidebarMedia[] }): void => {
       if (event.state) setSubagentState(agentId, event.state === 'running' ? 'running' : 'idle');
       this.sidebar.postMessage({ type: 'subagentEvent', sessionId: chat.record.id, agentId, ...event });
     };
     const run: ChildRun = { parent: chat, owner, label: profile.name, agentId, readOnly, changed: new Set(), outOfScope: new Set(), files: readOnly ? [] : files, sentToParent: [],queuedForParent: [], background: !!onBackground, cancel: () => undefined };
     this.childRuns.add(run); chat.children.add(run);
-    registerSubagentAgent({ id: agentId, owner, profile: profile.name, task, chatId: chat.record.id, parentId: chat.record.id });
+    const agentName = registerSubagentAgent({ id: agentId, owner, profile: profile.name, task, chatId: chat.record.id, parentId: chat.record.id });
+    run.name = agentName;
     onBackground?.(run);
     if (!readOnly) for (const file of files) chat.locks.set(file, { owner, label: profile.name });
-    post({ title: profile.name, prompt: task, model: entry.name, effort: profile.effort, speed, state: 'running', delegated: true, files: readOnly ? [] : files, ...(explorer ? { profile: 'explorer' } : {}) });
+    post({ title: profile.name, name: agentName, prompt: task, model: entry.name, effort: profile.effort, speed, state: 'running', delegated: true, files: readOnly ? [] : files, ...(explorer ? { profile: 'explorer' } : {}) });
     let reply = '';
     let explorerTokens = 0;
     let cancelled = false;
@@ -4303,6 +4346,7 @@ class ExtensionHost implements vscode.Disposable {
         await this.shareGlobalInstructions(account);
         if (cancelled) throw new Error('Cancelled.');
         turn = cli;
+        run.say = text => cli.say(text);
         runSession = async sessionTask => {
           await this.promptPooled(cli, { account, cwd: chat.mirror.cwd, backend, effort, speed, readOnly, fullAccess: this.approvalMode === 'full',
             cacheTtl: explorer ? '5m' : undefined,
@@ -4383,6 +4427,21 @@ class ExtensionHost implements vscode.Disposable {
           run.sessionId = sessionId;
           run.cancel = () => { cancelled = true; slot.runtime.cancel(sessionId); };
           turn = { interrupt: () => slot.runtime.interrupt(sessionId) };
+          // User messages stop the prompt and go in as the session's next one.
+          const fromUser: string[] = [];
+          run.say = text => {
+            if (!turn) return false;
+            fromUser.push(text);
+            if (slot.runtime.interrupt(sessionId)) return true;
+            fromUser.pop();
+            return false;
+          };
+          const nextPrompt = (): string | undefined => {
+            const compact = takeFollowUp(watch);
+            if (!fromUser.length) return compact;
+            const user = fromUser.splice(0).join('\n\n');
+            return compact ? `${compact}\n\n${user}` : `${PAUSED_NOTE}${user}`;
+          };
           try {
             if (cursor) {
               await this.refreshCursorModels(slot.runtime, sessionId);
@@ -4392,9 +4451,10 @@ class ExtensionHost implements vscode.Disposable {
             if (cancelled) throw new Error('Cancelled.');
             await slot.runtime.prompt(sessionId, promptFor(sessionTask, false));
             // Mid-turn compaction stopped the prompt to ask for a checkpoint; the request is the session's next prompt.
-            for (let ask = takeFollowUp(watch); ask && !cancelled; ask = takeFollowUp(watch)) await slot.runtime.prompt(sessionId, ask);
+            for (let ask = nextPrompt(); ask && !cancelled; ask = nextPrompt()) await slot.runtime.prompt(sessionId, ask);
           } finally {
             turn = undefined;
+            run.say = undefined;
             if (cancelled) await slot.runtime.stop();
             else await slot.runtime.closeSession(sessionId).catch(() => undefined);
           }
@@ -4452,6 +4512,10 @@ class ExtensionHost implements vscode.Disposable {
       if (mediaBlocks.length) return { text: result, isError: true, content: [{ type: 'text', text: result }, ...mediaBlocks] };
       return { text: result, isError: true };
     } finally {
+      // Messages that waited for a Unify tool result the subagent never made.
+      const unread = takeUserMessages(agentId);
+      if (unread.length) post({ text: `Finished before reading ${unread.length === 1 ? 'your message' : `${unread.length} of your messages`}`, messageId: 'user-unread', role: 'tool' });
+      run.say = undefined;
       unregisterSubagentAgent(agentId);
       for (const [path, lock] of [...chat.locks]) if (lock.owner === owner) chat.locks.delete(path);
       this.childRuns.delete(run); chat.children.delete(run);
@@ -4925,6 +4989,10 @@ class ExtensionHost implements vscode.Disposable {
         case 'pageChanged': this.sidebar.setPage(message.page); if (message.page === 'accounts') this.refreshUsage(); if (message.page === 'instructions') await this.refreshInstructions(); break;
         case 'ready': this.sidebar.setShutdown(this.shutdown.getStatus()); this.sidebar.postMessage({ type: 'usageState', usage: this.usage.snapshot() }); this.refreshUsage(); if (this.active) { this.restoreJob(this.active); this.postJob(this.active); } for (const id of this.chats.keys()) { this.postChatDiffs(id); this.sidebar.postMessage({ type: 'backgroundProcesses', sessionId: id, processes: this.backgroundProcesses.list(id) }); } await this.refreshInstructions(); this.postToolpacks(); this.sidebar.postMessage({ type: 'approvalState', mode: this.approvalMode }); this.sidebar.postMessage({ type: 'slashCommandsState', commands: SLASH_COMMANDS }); this.scheduled.refresh(); this.postScheduledPrompts(); this.refreshCustomize(); this.postUnifyFeatures(); if (this.agentRoster.size) this.sidebar.postMessage({ type: 'agentRoster', agents: [...this.agentRoster.values()] }); this.refreshMemory(); this.sync.post(); this.refreshSubagents(); this.refreshModels(); this.refreshSessions(); await this.refreshAccount(); await this.refreshAccounts(); break;
         case 'sendPrompt': {
+          if (message.subagentId) {
+            this.messageSubagent(message.chatId, message.subagentId, message.prompt, message.images);
+            break;
+          }
           const slash = parseSlash(message.prompt);
           if (slash?.name === 'job') await this.startJob(slash.args, message.images, message.chatId);
           else if (slash?.name === 'schedule') {

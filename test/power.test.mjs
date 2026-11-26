@@ -89,7 +89,7 @@ function createFakeSettings(initial = {}) {
 
 const IDLE = { runningChats: 0, runningSubagents: 0, pendingApprovals: 0, pendingQuestions: 0, runningProcesses: 0, pendingScheduled: 0 };
 
-const WINDOWS_SHUTDOWN = { file: `${process.env.SystemRoot ?? 'C:\\Windows'}\\System32\\shutdown.exe`, args: ['/s', '/t', '0'] };
+const WINDOWS_SHUTDOWN = { file: `${process.env.SystemRoot ?? 'C:\\Windows'}\\System32\\shutdown.exe`, args: ['/s', '/f', '/t', '0'] };
 
 function setup({ settings = createFakeSettings(), activity = { ...IDLE }, exec, saveState, platform = 'win32' } = {}) {
   const timers = createFakeTimers();
