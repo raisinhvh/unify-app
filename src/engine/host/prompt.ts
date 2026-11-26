@@ -63,6 +63,23 @@ export async function sendPrompt(this: ExtensionHost, prompt: string, images?: S
   } finally { started(); }
 }
 
+/**
+ * Hands a message to a Claude chat whose reply is done but whose process is kept alive for background tasks, so it is
+ * answered now and the tasks keep running. False (and nothing changes) when the chat is not in that state.
+ */
+export function sayWhileWaiting(this: ExtensionHost, chat: Chat, text: string, entry: { displayText?: string; internal?: boolean } = {}): boolean {
+  if (chat.record.provider !== 'claude-cli' || isCodexCliChat(chat.record) || !chat.cli.waitingOnBackground() || !chat.cli.say(text)) return false;
+  const history = this.transcripts.get(chat.record.id) || [];
+  this.transcripts.set(chat.record.id, history);
+  if (chat.turnReply.trim() || chat.turnTools.length) history.push({ role: 'assistant', text: chat.turnReply.trim(), ...(chat.turnTools.length ? { tools: chat.turnTools } : {}) });
+  chat.turnReply = '';
+  chat.turnTools = [];
+  history.push({ role: 'user', text, ...(entry.displayText !== undefined ? { displayText: entry.displayText } : {}), ...(entry.internal ? { internal: true } : {}) });
+  chat.breakMessage?.();
+  this.postRun(chat.record.id, 'thinking', 'Thinking…');
+  return true;
+}
+
 export async function startPrompt(this: ExtensionHost, recordToLoad: SessionRecord, prompt: string, images: SidebarImage[] | undefined,
   queued: { path: string; mimeType: string; data: string; name: string }[] | undefined,
   fromQueue: boolean, mode: 'interrupt' | 'queue', started: () => void, created?: Promise<void>, options: TurnOptions = {}): Promise<void> {
@@ -117,17 +134,8 @@ export async function startPrompt(this: ExtensionHost, recordToLoad: SessionReco
   if (target.running) {
     // The reply is done and Claude only waits on background tasks: hand the message to that live process, so it is
     // answered now and the background tasks keep running (queueing would wait on them, interrupting would kill them).
-    if (target.record.provider === 'claude-cli' && !isCodexCliChat(target.record) && !attachments.length && !options.internal
-      && target.cli.waitingOnBackground() && target.cli.say(prompt.trim())) {
-      const history = this.transcripts.get(target.record.id) || [];
-      this.transcripts.set(target.record.id, history);
-      if (target.turnReply.trim() || target.turnTools.length) history.push({ role: 'assistant', text: target.turnReply.trim(), ...(target.turnTools.length ? { tools: target.turnTools } : {}) });
-      target.turnReply = '';
-      target.turnTools = [];
-      history.push({ role: 'user', text: prompt.trim(), displayText: shown });
-      target.breakMessage?.();
+    if (!attachments.length && !options.internal && this.sayWhileWaiting(target, prompt.trim(), { displayText: shown })) {
       if (!displayed) echo();
-      this.postRun(target.record.id, 'thinking', 'Thinking…');
       return;
     }
     const message = { prompt: prompt.trim(), images: attachments };
@@ -417,7 +425,11 @@ export async function startPrompt(this: ExtensionHost, recordToLoad: SessionReco
         },
         onBackgroundWait: tasks => {
           if (!tasks.length) this.postRun(record.id, 'thinking', 'Thinking…');
-          else this.postRun(record.id, 'tool', tasks.length === 1 ? `Waiting for background task: ${tasks[0]}` : `Waiting for ${tasks.length} background tasks…`);
+          else {
+            this.postRun(record.id, 'tool', tasks.length === 1 ? `Waiting for background task: ${tasks[0]}` : `Waiting for ${tasks.length} background tasks…`);
+            // Messages that arrived during the reply and were not read are handed over now, not after the tasks end.
+            setImmediate(() => this.wakeForMessages(chat));
+          }
         },
         onBackgroundTasks: tasks => this.backgroundProcesses.sync(record.id, 'claude', tasks.map(task => ({
           id: `claude:${task.id}`,

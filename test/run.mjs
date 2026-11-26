@@ -64,6 +64,7 @@ await import('./tool-display.test.mjs');
 await import('./internal-rows.test.mjs');
 await import('./self-hosted.test.mjs');
 await import('./agent-bus.test.mjs');
+await import('./agent-wake.test.mjs');
 await import('./power.test.mjs');
 await import('./hub.test.mjs');
 await import('./hub-publish.test.mjs');

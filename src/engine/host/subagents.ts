@@ -29,6 +29,7 @@ import { isBatchTool } from '../runtime/batch';
 import { SidebarWebviewMessage } from '../sidebar/provider';
 import { SidebarExplorerRange, SidebarMedia, SidebarSubagentTool } from '../sidebar/view';
 import { getUnifyFeature } from '../unify/settings';
+import { agentBus } from '../unify/agentBusImpl';
 import type { SubagentProfile, ChildRun, BackgroundTask, Chat } from './types';
 import { pathCovers, isCliProvider, isCodexCliChat } from './helpers';
 
@@ -253,13 +254,25 @@ export async function waitSubagents(this: ExtensionHost, chat: Chat, args: Recor
   let timer: NodeJS.Timeout | undefined;
   let poll: NodeJS.Timeout | undefined;
   const timeout = new Promise<void>(resolve => { timer = setTimeout(resolve, seconds * 1000); });
+  // A message from another agent ends the wait too, so the agent can answer it; the MCP server appends the inbox to this result.
+  const hasMail = (): boolean => getUnifyFeature('agents.messaging') && agentBus.hasInbox(chat.record.id);
+  let interrupted = false;
   // Cancelling the parent turn ends the wait; the subagents themselves keep running unless cancelled.
-  const stopped = new Promise<void>(resolve => { poll = setInterval(() => { if (chat.cancelRequested || !chat.running) { clearInterval(poll); resolve(); } }, 200); });
+  const stopped = new Promise<void>(resolve => {
+    poll = setInterval(() => {
+      if (hasMail()) interrupted = true;
+      if (interrupted || chat.cancelRequested || !chat.running) {
+        clearInterval(poll);
+        resolve();
+      }
+    }, 200);
+  });
   const finished = args.any === true ? Promise.race(tasks.map(task => task.finished)) : Promise.all(tasks.map(task => task.finished));
   try { await Promise.race([finished, timeout, stopped]); } finally { clearTimeout(timer); if (poll) clearInterval(poll); }
   const report = this.takeBackgroundResults(chat, tasks.map(task => task.id));
   const running = tasks.filter(task => !task.done).map(task => `${task.id} (${task.label})`);
-  return { text: [report, running.length ? `Still running: ${running.join(', ')}.` : '', unknown.length ? `Unknown ids: ${unknown.join(', ')}.` : ''].filter(Boolean).join('\n\n') || 'Nothing finished yet.' };
+  const mailNote = interrupted && running.length ? `Stopped waiting because another agent messaged you (below). Answer it, then call ${WAIT_SUBAGENTS} again for the rest.` : '';
+  return { text: [mailNote, report, running.length ? `Still running: ${running.join(', ')}.` : '', unknown.length ? `Unknown ids: ${unknown.join(', ')}.` : ''].filter(Boolean).join('\n\n') || 'Nothing finished yet.' };
 }
 
 /** Stops a background subagent and reports what it did so far, waiting briefly for it to wind down. */

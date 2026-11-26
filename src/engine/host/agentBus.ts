@@ -8,6 +8,7 @@ import { agentBus } from '../unify/agentBusImpl';
 import type { AgentBusEvent, AgentMessage } from '../unify/agentBus';
 import type { Chat } from './types';
 import { MAX_MESSAGE_WAKES } from './constants';
+import { isCodexCliChat } from './helpers';
 
 /** Forwards agent messaging events to the UI and keeps the roster used to find a message's chat. */
 export function onAgentBusEvent(this: ExtensionHost, event: AgentBusEvent): void {
@@ -89,15 +90,25 @@ export function takeAgentMessages(this: ExtensionHost, chatId: string): string {
 
 /**
  * Starts a turn for an idle chat whose agent has unread messages from other agents; the turn's prompt
- * takes the inbox. Wakes without a user message in between are capped, so two agents cannot answer each other forever.
+ * takes the inbox. A Claude chat that finished its reply but waits on background tasks gets the messages
+ * in that live process instead, so they are answered now rather than when the tasks end.
+ * Wakes without a user message in between are capped, so two agents cannot answer each other forever.
  */
 export function wakeForMessages(this: ExtensionHost, chat: Chat): void {
   const id = chat.record.id;
   if (!getUnifyFeature('agents.messaging') || !agentBus.hasInbox(id)) return;
-  if (this.deletedSessions.has(id) || this.chats.get(id) !== chat || chat.running || chat.jobActive || this.promptStarts.has(id)) return;
+  if (this.deletedSessions.has(id) || this.chats.get(id) !== chat || chat.jobActive || this.promptStarts.has(id)) return;
+  // A running reply reads its mail with its next Unify tool result; only a reply parked on background tasks needs a nudge.
+  const waiting = chat.running && chat.record.provider === 'claude-cli' && !isCodexCliChat(chat.record) && chat.cli.waitingOnBackground();
+  if (chat.running && !waiting) return;
   const wakes = this.messageWakes.get(id) ?? 0;
   if (wakes >= MAX_MESSAGE_WAKES) {
     this.output.appendLine(`Not waking ${chat.record.name} for agent messages: ${MAX_MESSAGE_WAKES} wakes since the user's last message. They wait for the next one.`);
+    return;
+  }
+  if (waiting) {
+    const text = `Messages from other agents arrived while you waited on background tasks (they keep running). Act on them, and answer with send_message if a reply is needed.\n\n${this.takeAgentMessages(id)}`;
+    if (this.sayWhileWaiting(chat, text, { internal: true })) this.messageWakes.set(id, wakes + 1);
     return;
   }
   this.messageWakes.set(id, wakes + 1);
