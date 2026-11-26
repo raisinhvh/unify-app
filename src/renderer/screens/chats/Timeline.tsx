@@ -846,8 +846,9 @@ function SubagentToolEntry(props: { tool: ToolLike }): JSX.Element {
  * What a subagent's row and feed bar call it: the model only. Its messaging name and profile are shown only by the
  * pane's paper icon tooltip (AgentNameTag). Subagents without a recorded model fall back to the profile title.
  */
+/** The subagent's profile name ("Opus (Low)"), never the model behind it. */
 function subagentLabel(agent: SidebarSubagent): string {
-  return agent.model || agent.title;
+  return agent.title;
 }
 
 /** The static bar above the timeline scroller while a subagent's feed is open. Lives outside the scroller so it never scrolls. */
