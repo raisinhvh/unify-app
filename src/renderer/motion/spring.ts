@@ -35,7 +35,15 @@ function tick(now: number): void {
   window.clearTimeout(fallbackHandle);
   const seconds = Math.min(0.064, Math.max(0, (now - lastFrameTime) / 1000));
   lastFrameTime = now;
-  for (const spring of [...activeSprings]) spring.advance(seconds);
+  for (const spring of [...activeSprings]) {
+    try {
+      spring.advance(seconds);
+    } catch (error) {
+      // A bad spring (e.g. a token that resolves to nothing) settles out of the loop instead of stopping it.
+      activeSprings.delete(spring);
+      reportError(error);
+    }
+  }
   if (activeSprings.size) {
     requestFrame();
   } else {
@@ -159,8 +167,19 @@ export class Spring {
     if (settled) this.emit(this.restListeners);
   }
 
+  /**
+   * Each listener is isolated: one that throws (a disposed element, a reactive effect that errors) is reported and
+   * skipped, never thrown into the shared frame loop. An escaped throw used to stop the loop for good, freezing
+   * every spring in the app mid-flight (invisible composers, collapsed rows stuck open).
+   */
   private emit(listeners: Set<Listener>): void {
-    for (const listener of listeners) listener(this.current, this);
+    for (const listener of listeners) {
+      try {
+        listener(this.current, this);
+      } catch (error) {
+        reportError(error);
+      }
+    }
   }
 }
 

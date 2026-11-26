@@ -39,6 +39,7 @@ await build({
   target: 'node20',
   outfile: requestsFile,
   external: ['esbuild'],
+  loader: { '.sh': 'text' },
 });
 await build({
   entryPoints: [join(here, '../src/engine/hub/index.ts')],
@@ -48,6 +49,7 @@ await build({
   target: 'node20',
   outfile: hubFile,
   external: ['esbuild'],
+  loader: { '.sh': 'text' },
 });
 const { handleUnifyRequest, resetUnifySettingsCache, setUnifyFeature } = await import(pathToFileURL(requestsFile).href);
 const { GithubHubRegistry, findHubUpdates, installHubPack, toolpackIdFor } = await import(pathToFileURL(hubFile).href);

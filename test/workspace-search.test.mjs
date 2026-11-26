@@ -18,6 +18,8 @@ await mkdir(project, { recursive: true });
 await build({
   entryPoints: [join(here, '../src/engine/unify/requests/workspace.ts')],
   bundle: true,
+  // Contents search reaches runtime/rustTools, which imports agentShims.sh as text.
+  loader: { '.sh': 'text' },
   platform: 'node',
   format: 'esm',
   target: 'node20',

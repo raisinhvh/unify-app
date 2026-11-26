@@ -38,7 +38,14 @@ const clockStart = performance.now();
 
 function clockTick(now: number): void {
   const seconds = (now - clockStart) / 1000;
-  for (const instance of instances) instance.render(seconds);
+  // One loader that throws is reported and skipped; it must not stop the clock for every other loader.
+  for (const instance of instances) {
+    try {
+      instance.render(seconds);
+    } catch (error) {
+      reportError(error);
+    }
+  }
   clockHandle = instances.size ? requestAnimationFrame(clockTick) : 0;
 }
 

@@ -135,6 +135,8 @@ type SidebarWebviewPayload =
   | { type: 'selectSession'; sessionId: string }
   | { type: 'renameSession'; sessionId: string; name: string }
   | { type: 'deleteSession'; sessionId: string }
+  /** Deletes several chats at once (a whole project folder in the Chats panel); running chats are skipped. */
+  | { type: 'deleteSessions'; sessionIds: string[] }
   /** Chats open in workspace panes or pop-out windows; they are never auto-pruned. */
   | { type: 'openChats'; chatIds: string[] }
   | { type: 'selectModel'; modelId: string }

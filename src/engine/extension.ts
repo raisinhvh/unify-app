@@ -3583,10 +3583,15 @@ class ExtensionHost implements vscode.Disposable {
     this.refreshCustomize();
   }
 
-  /** Deletes every chat that is not running. The open chat goes last so earlier deletions never switch to a chat about to be removed. */
+  /** Deletes every chat that is not running. */
   private async deleteAllSessions(): Promise<void> {
+    await this.deleteSessions(this.sessions().map(item => item.id));
+  }
+
+  /** Deletes the given chats that are not running. The open chat goes last so earlier deletions never switch to a chat about to be removed. */
+  private async deleteSessions(sessionIds: string[]): Promise<void> {
     const activeId = this.active?.id || this.context.workspaceState.get<string>(ACTIVE_SESSION_KEY);
-    const ids = this.sessions().map(item => item.id).filter(id => !this.chats.get(id)?.running)
+    const ids = sessionIds.filter(id => !this.chats.get(id)?.running)
       .sort((a, b) => Number(a === activeId) - Number(b === activeId));
     for (const id of ids) await this.deleteSession(id);
   }
@@ -5054,6 +5059,7 @@ class ExtensionHost implements vscode.Disposable {
         case 'newSession': await this.newChat(message.project, !!message.noFolder); break;
         case 'selectSession': await this.continueChat(message.sessionId); break;
         case 'deleteSession': await this.deleteSession(message.sessionId); break;
+        case 'deleteSessions': await this.deleteSessions(message.sessionIds); break;
         case 'openChats': this.openChatIds = new Set(message.chatIds); break;
         case 'stopBackgroundProcess': this.backgroundProcesses.stop(message.sessionId, message.id); break;
         case 'renameSession': {

@@ -625,7 +625,10 @@ function isEditable(element: Element | null): boolean {
  * is in a pane or in a text field outside the screen.
  */
 export function ownsFindShortcut(element: HTMLElement, screen?: string): boolean {
-  if (!element.isConnected || !(element.checkVisibility?.() ?? element.offsetParent !== null)) return false;
+  // visibilityProperty: the chat workspace stays mounted under other routes with only `visibility: hidden`, so a
+  // Files pane there must not take Ctrl+F from the screen on top (plain checkVisibility() ignores visibility).
+  if (!element.isConnected || !(element.checkVisibility?.({ visibilityProperty: true }) ?? element.offsetParent !== null)) return false;
+  if (element.closest('[inert]')) return false;
   const pane = element.closest('.pane');
   const root = pane ?? (screen ? element.closest(screen) : null) ?? document.body;
   const active = document.activeElement;

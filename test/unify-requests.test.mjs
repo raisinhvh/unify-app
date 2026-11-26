@@ -25,6 +25,7 @@ await build({
   target: 'node20',
   outfile: bundleFile,
   external: ['esbuild'],
+  loader: { '.sh': 'text' },
 });
 const { handleUnifyRequest, disposeUnifyRequestWatchers } = await import(pathToFileURL(bundleFile).href);
 
@@ -37,6 +38,7 @@ await build({
   target: 'node20',
   outfile: knowledgeBundleFile,
   external: ['esbuild'],
+  loader: { '.sh': 'text' },
 });
 const { openKnowledge } = await import(pathToFileURL(knowledgeBundleFile).href);
 

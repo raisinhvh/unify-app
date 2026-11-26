@@ -19,13 +19,13 @@ import { liftMoves, RetypeText, RollingNumber } from '../../motion/organic';
 import { bridge, post } from '../../bridge';
 import { readPersisted, writePersisted } from '../../persist';
 import type { SidebarProject, SidebarSession } from '../../protocol';
-import { markRead, viewState } from '../../store';
+import { isRunning, markRead, viewState } from '../../store';
 import { activeChats, activityDetail, activityStatus, pendingInterrupt } from '../../store/activity';
 import { focusedChatId, openChat, placeChat, type PlaceTarget } from '../../shell/layout';
 import { makeChatDraggable } from '../../shell/chatDrag';
 import { chatAction, actionLabel } from '../../components/loaders/actions';
 import { openNextNewSession } from './Home';
-import { chatTime, knownProjects, newSessionTarget, noFolderProject, parentFolder, projectGroups, projectName, selectProject, shortPath } from './projects';
+import { chatTime, knownProjects, newSessionTarget, noFolderProject, parentFolder, projectGroups, projectName, selectProject, shortPath, type ProjectGroup } from './projects';
 import { feature } from '../../store/features';
 import './chats-panel.css';
 
@@ -187,6 +187,51 @@ function ChatRow(props: { session: SidebarSession; trailing: string; trailingWar
       />
     </>
   );
+}
+
+/**
+ * Right-click on a project folder offers "Delete category": after an "are you sure" it deletes every chat in that
+ * folder (running chats are kept), so the folder leaves the tree.
+ */
+function useFolderMenu(group: () => ProjectGroup): {
+  setRow: (element: HTMLButtonElement) => void;
+  onContextMenu: (event: MouseEvent) => void;
+  menu: () => JSX.Element;
+} {
+  const [row, setRow] = createSignal<HTMLButtonElement>();
+  const [open, setOpen] = createSignal(false);
+
+  const deleteCategory = () => {
+    const current = group();
+    const name = current.project ? current.project.name : 'No folder';
+    const count = current.sessions.length;
+    const running = current.sessions.filter(session => isRunning(session.id)).length;
+    const keptNote = running ? `\n\n${running} running chat${running === 1 ? '' : 's'} will be kept.` : '';
+    const message = `Delete "${name}" and its ${count} chat${count === 1 ? '' : 's'}? This cannot be undone.${keptNote}`;
+    if (!window.confirm(message)) return;
+    post({ type: 'deleteSessions', sessionIds: current.sessions.map(session => session.id) });
+  };
+
+  return {
+    setRow,
+    onContextMenu: event => {
+      event.preventDefault();
+      setOpen(true);
+    },
+    menu: () => (
+      <Menu
+        anchor={row()}
+        open={open()}
+        onClose={() => setOpen(false)}
+        placement="bottom-end"
+        items={[{ id: 'delete', label: 'Delete category', danger: true }]}
+        onSelect={() => {
+          setOpen(false);
+          deleteCategory();
+        }}
+      />
+    ),
+  };
 }
 
 function rowTrailing(session: SidebarSession): { text: string; warn: boolean } {
@@ -357,44 +402,52 @@ export function ChatsPanel(): JSX.Element {
             const showToggle = () => hidden() > 0 || (expandedFolders().includes(group().key) && group().sessions.length > visibleLimit());
             // Memoised so the label is only rebuilt when it switches between "Show N more" and "Show less".
             const hasHidden = createMemo(() => hidden() > 0);
+            // The menu deletes the whole folder, not just the chats the search shows.
+            const fullGroup = () => projectGroups().find(item => item.key === group().key) || group();
+            const folderMenu = useFolderMenu(fullGroup);
             return (
-              <TreeFolder
-                icon="folder"
-                label={group().project ? group().project!.name : 'No folder'}
-                trailing={group().project ? shortPath(group().project!.path) : ''}
-                open={!closedFolders().includes(group().key)}
-                onToggle={open => setFolderOpen(group().key, open)}
-              >
-                <AnimatedList each={visible()} key={session => session.id}>
-                  {session => {
-                    const trailing = () => rowTrailing(session());
-                    return (
-                      <ChatRow
-                        session={session()}
-                        trailing={trailing().text}
-                        trailingWarn={trailing().warn}
-                        warn={trailing().warn}
-                      />
-                    );
-                  }}
-                </AnimatedList>
-                <Collapse open={showToggle()}>
-                  <TreeItem
-                    class="chats-more"
-                    tone="muted"
-                    label={
-                      hasHidden() ? (
-                        <>
-                          Show <RollingNumber value={hidden()} /> more
-                        </>
-                      ) : (
-                        'Show less'
-                      )
-                    }
-                    onClick={() => toggleShowAll(group().key)}
-                  />
-                </Collapse>
-              </TreeFolder>
+              <>
+                <TreeFolder
+                  icon="folder"
+                  label={group().project ? group().project!.name : 'No folder'}
+                  trailing={group().project ? shortPath(group().project!.path) : ''}
+                  open={!closedFolders().includes(group().key)}
+                  onToggle={open => setFolderOpen(group().key, open)}
+                  rowRef={folderMenu.setRow}
+                  onContextMenu={folderMenu.onContextMenu}
+                >
+                  <AnimatedList each={visible()} key={session => session.id}>
+                    {session => {
+                      const trailing = () => rowTrailing(session());
+                      return (
+                        <ChatRow
+                          session={session()}
+                          trailing={trailing().text}
+                          trailingWarn={trailing().warn}
+                          warn={trailing().warn}
+                        />
+                      );
+                    }}
+                  </AnimatedList>
+                  <Collapse open={showToggle()}>
+                    <TreeItem
+                      class="chats-more"
+                      tone="muted"
+                      label={
+                        hasHidden() ? (
+                          <>
+                            Show <RollingNumber value={hidden()} /> more
+                          </>
+                        ) : (
+                          'Show less'
+                        )
+                      }
+                      onClick={() => toggleShowAll(group().key)}
+                    />
+                  </Collapse>
+                </TreeFolder>
+                {folderMenu.menu()}
+              </>
             );
           }}
         </AnimatedList>
