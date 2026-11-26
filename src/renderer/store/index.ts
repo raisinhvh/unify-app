@@ -495,7 +495,7 @@ export function applyHostMessage(message: SidebarHostMessage): void {
       {
         // The engine does not save agent messages in a chat's history, so a replay or compaction would drop them.
         const timeline = message.timeline || [];
-        const kept = (viewState.timeline[message.sessionId] || []).filter(
+        const kept = message.reset ? [] : (viewState.timeline[message.sessionId] || []).filter(
           item => item.kind === 'agentMessage' && !timeline.some(entry => entry.id === item.id),
         );
         // Reconcile by id: a resent timeline only touches entries that changed, so rows don't remount.

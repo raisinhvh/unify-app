@@ -765,13 +765,7 @@ function SubagentRow(props: {
             </Match>
           </Switch>
         </span>
-        <span class="subagent-title">{subagentName(props.agent) || props.agent.title}</span>
-        <Show when={subagentName(props.agent) && subagentName(props.agent) !== props.agent.title}>
-          <span class="subagent-model">{props.agent.title}</span>
-        </Show>
-        <Show when={props.agent.model}>
-          <span class="subagent-model">{props.agent.model}</span>
-        </Show>
+        <span class="subagent-title">{subagentLabel(props.agent)}</span>
         <LiveEditDetail
           edit={liveEdit()}
           text={subagentDetail(props.agent)}
@@ -849,27 +843,20 @@ function SubagentToolEntry(props: { tool: ToolLike }): JSX.Element {
 }
 
 /**
- * A subagent's messaging name ("Arp"), shown ahead of its profile title (dimmed) in its row and feed bar.
- * Subagents from before names were recorded have only the profile; while one runs, the roster still knows it.
+ * What a subagent's row and feed bar call it: the model only. Its messaging name and profile are shown only by the
+ * pane's paper icon tooltip (AgentNameTag). Subagents without a recorded model fall back to the profile title.
  */
-function subagentName(agent: SidebarSubagent): string | undefined {
-  return agent.name || agentName(agent.id);
+function subagentLabel(agent: SidebarSubagent): string {
+  return agent.model || agent.title;
 }
 
 /** The static bar above the timeline scroller while a subagent's feed is open. Lives outside the scroller so it never scrolls. */
 function SubagentBar(props: { agent: SidebarSubagent; onBack: () => void }): JSX.Element {
-  const name = () => subagentName(props.agent);
   return (
     <div class="subagent-bar">
       <button type="button" class="subagent-back" onClick={() => props.onBack()}>
         <Icon name="chevronRight" size={12} style={{ rotate: '180deg' }} />
-        <span class="type-label">{name() || props.agent.title}</span>
-        <Show when={name() && name() !== props.agent.title}>
-          <span class="subagent-model">{props.agent.title}</span>
-        </Show>
-        <Show when={props.agent.model}>
-          <span class="subagent-model">{props.agent.model}</span>
-        </Show>
+        <span class="type-label">{subagentLabel(props.agent)}</span>
       </button>
     </div>
   );

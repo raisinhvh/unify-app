@@ -1956,7 +1956,7 @@ class ExtensionHost implements vscode.Disposable {
 
   /**
    * `/clearcontext` (`/mib`): the chat's agent starts over in a new backend session with no handoff, summary or
-   * transcript. The feed keeps what was said, with a note where the fresh session starts. The system prompt and
+   * transcript. The feed is cleared down to a note marking the fresh session. The system prompt and
    * tools are the same as before, so the next turn reuses their cached prefix.
    */
   private async clearContext(chatId?: string): Promise<void> {
@@ -1978,7 +1978,14 @@ class ExtensionHost implements vscode.Disposable {
     chat.handoffPending = false;
     chat.sent = undefined;
     this.transcripts.set(record.id, []);
-    this.sidebar.postMessage({ type: 'noteMessage', sessionId: record.id, entryId: `clear:${Date.now()}`, icon: 'restart_alt', text: 'Neuralyzed, fresh session' });
+    // The feed is wiped too: only the note marking the fresh session remains.
+    this.sidebar.postMessage({
+      type: 'timelineState',
+      sessionId: record.id,
+      timeline: [{ id: `clear:${Date.now()}`, kind: 'note', icon: 'restart_alt', text: 'Neuralyzed, fresh session' }],
+      subagents: {},
+      reset: true,
+    });
     await this.saveSession(record);
     await this.saveTranscripts();
     this.refreshSessions();

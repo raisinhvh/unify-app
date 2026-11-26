@@ -514,7 +514,8 @@ export type SidebarTimelineItem =
   | { id: string; kind: 'agentMessage'; message: AgentMessage };
 
 type SidebarHostPayload =
-  | { type: 'timelineState'; sessionId: string; timeline: SidebarTimelineItem[]; subagents: Record<string, SidebarSubagent> }
+  /** `reset` replaces everything, including agent messages a resent timeline would otherwise keep. */
+  | { type: 'timelineState'; sessionId: string; timeline: SidebarTimelineItem[]; subagents: Record<string, SidebarSubagent>; reset?: boolean }
   /** Reply to `loadChat`: everything held for the chat has been sent (possibly nothing, for an empty chat). */
   | { type: 'chatLoaded'; sessionId: string }
   | { type: 'sessionState'; sessions: SidebarSession[]; activeSessionId?: string }

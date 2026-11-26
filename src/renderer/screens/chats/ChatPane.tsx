@@ -129,22 +129,32 @@ function ChangesBar(props: { chatId: string }): JSX.Element {
 
 /**
  * A small paper icon beside the title; hovering it shows the messaging name ("Name: Kernel") of the agent the pane
- * shows: the chat's own agent, or the subagent whose feed is open. Hidden until a name is known.
+ * shows: the chat's own agent, or the subagent whose feed is open, plus that subagent's profile ("Opus (High)").
+ * It is the only place a subagent's name and profile appear; its row and feed bar show just the model.
+ * Hidden until a name is known.
  */
 function AgentNameTag(props: { chatId: string }): JSX.Element {
+  const opened = () => {
+    const openedId = openedSubagent(props.chatId);
+    return openedId ? viewState.subagents[props.chatId]?.[openedId] : undefined;
+  };
   const name = () => {
     const openedId = openedSubagent(props.chatId);
     if (!openedId) return agentName(props.chatId);
-    return viewState.subagents[props.chatId]?.[openedId]?.name || agentName(openedId);
+    return opened()?.name || agentName(openedId);
   };
+  const profile = () => opened()?.title;
   return (
     <Show when={name()}>
       <span
         class="chat-pane-agent"
-        aria-label={`Name: ${name()}`}
+        aria-label={profile() ? `Name: ${name()}, profile: ${profile()}` : `Name: ${name()}`}
         ref={element => tooltip(element, () => (
           <span>
             Name: <strong>{name()}</strong>
+            <Show when={profile()}>
+              {' · '}Profile: <strong>{profile()}</strong>
+            </Show>
           </span>
         ), { rich: false, delay: 200 })}
       >
