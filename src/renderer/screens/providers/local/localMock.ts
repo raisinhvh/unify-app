@@ -183,7 +183,7 @@ const ollamaFields: LocalFieldSpec[] = [
 const polystrataFields: LocalFieldSpec[] = [
   { id: 'model', label: 'Model file', type: 'file', required: true, filters: ggufFilter, group: 'Model' },
   { id: 'tokenizer', label: 'Tokenizer folder', type: 'folder', required: true, group: 'Model' },
-  { id: 'servedModel', label: 'Served name', type: 'text', default: 'inkling-2-mini', group: 'Model' },
+  { id: 'servedModel', label: 'Served name', type: 'text', group: 'Model', help: 'Blank = the model file name.' },
   { id: 'displayName', label: 'Display name', type: 'text', group: 'Model', advanced: true },
   { id: 'maxContext', label: 'Context length', type: 'number', default: 65536, min: 1024, step: 1024, group: 'Performance' },
   { id: 'expertProfile', label: 'Expert profile', type: 'file', group: 'Performance', filters: [{ name: 'Profile', extensions: ['json'] }] },
@@ -287,29 +287,20 @@ const inklingValues: LocalValues = {
 
 const presets: LocalPreset[] = [
   {
-    id: 'polystrata-inkling-iq3xxs',
+    id: 'polystrata-default',
+    label: 'PolyStrata — default',
+    description: 'PolyStrata with its own defaults for the model and machine.',
+    engine: 'polystrata',
+    values: {},
+    builtin: true,
+  },
+  {
+    id: 'user-inkling-iq3xxs',
     label: 'Inkling 2 Mini IQ3_XXS',
-    description: 'Fastest. Smallest quant that keeps quality.',
+    description: 'Saved from a server.',
     engine: 'polystrata',
     values: inklingValues,
-    builtin: true,
-    note: 'About 115 tok/s on a 24 GB GPU',
-  },
-  {
-    id: 'polystrata-inkling-q3kxl',
-    label: 'Inkling 2 Mini Q3_K_XL',
-    description: 'Best quality that still streams quickly.',
-    engine: 'polystrata',
-    values: { ...inklingValues, model: 'C:\\models\\inkling-2-mini-Q3_K_XL.gguf' },
-    builtin: true,
-  },
-  {
-    id: 'polystrata-inkling-q2kxl',
-    label: 'Inkling 2 Mini Q2_K_XL',
-    description: 'Favors speed on smaller GPUs.',
-    engine: 'polystrata',
-    values: { ...inklingValues, model: 'C:\\models\\inkling-2-mini-Q2_K_XL.gguf' },
-    builtin: true,
+    builtin: false,
   },
   {
     id: 'llama-gpu',
@@ -333,14 +324,6 @@ const presets: LocalPreset[] = [
     description: 'No GPU needed. Slow for large models.',
     engine: 'llama-cpp',
     values: { gpuLayers: 0, jinja: true },
-    builtin: true,
-  },
-  {
-    id: 'llama-inkling',
-    label: 'Inkling 2 Mini',
-    description: 'Inkling 2 Mini on llama.cpp with its recommended sampling.',
-    engine: 'llama-cpp',
-    values: { model: 'C:\\models\\inkling-2-mini-Q4_K_M.gguf', alias: 'inkling-2-mini', ctx: 32768, gpuLayers: 999, jinja: true, temp: 0.6, topP: 0.95 },
     builtin: true,
   },
   {
@@ -385,7 +368,7 @@ const servers: LocalServerView[] = [
       port: 8090,
       autoStart: true,
       idleStopMinutes: 30,
-      presetId: 'polystrata-inkling-iq3xxs',
+      presetId: 'user-inkling-iq3xxs',
       createdAt: baseTime - 86400000 * 3,
       updatedAt: baseTime - 3600000,
     },

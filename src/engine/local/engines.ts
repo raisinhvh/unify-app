@@ -581,18 +581,18 @@ const OLLAMA_ENGINE: LocalEngineDefinition = {
 const POLYSTRATA_FIELDS: LocalFieldSpec[] = [
   { id: 'model', label: 'Model file', type: 'file', group: 'Model', required: true, filters: GGUF_FILTER },
   { id: 'tokenizer', label: 'Tokenizer folder', type: 'folder', group: 'Model', required: true, help: 'tokenizer folder from the PolyStrata pack' },
-  { id: 'servedModel', label: 'Model name', type: 'text', group: 'Model', default: 'inkling-2-mini', help: 'Name the server answers to.' },
+  { id: 'servedModel', label: 'Model name', type: 'text', group: 'Model', help: 'Name the server answers to. Blank = the model file name.' },
   { id: 'displayName', label: 'Display name', type: 'text', group: 'Model', advanced: true },
   { id: 'maxContext', label: 'Max context', type: 'number', group: 'Performance', default: 32768, min: 256, step: 1024 },
   { id: 'expertProfile', label: 'Expert profile', type: 'file', group: 'Performance', filters: [{ name: 'Text file', extensions: ['txt'] }], help: "blank = kept in Unify's run folder; PolyStrata writes it on exit" },
-  { id: 'window', label: 'Window', type: 'number', group: 'Performance', default: 0, min: 0, help: '0 = off.' },
-  { id: 'conversationCacheMib', label: 'Conversation cache (MiB)', type: 'text', group: 'Performance', default: 'auto' },
-  { id: 'attnRequant', label: 'Attention requant', type: 'select', group: 'Performance', default: 'q5_k', options: options('none', 'q5_k', 'q8_0') },
-  { id: 'loopBf16', label: 'Loop in bf16', type: 'toggle', group: 'Performance', default: true },
-  { id: 'tailSkip', label: 'Tail skip', type: 'number', group: 'Performance', default: 4, min: 0, help: '0 = off.' },
-  { id: 'ramExpertsMib', label: 'Experts in RAM (MiB)', type: 'number', group: 'Performance', default: -1, min: -1, help: '-1 = automatic.' },
-  { id: 'vramReserveMib', label: 'VRAM reserve (MiB)', type: 'number', group: 'Performance', default: 512, min: 0 },
-  { id: 'threads', label: 'Threads', type: 'number', group: 'Performance', default: 12, min: 1 },
+  { id: 'window', label: 'Window', type: 'number', group: 'Performance', min: 1, placeholder: 'Engine default' },
+  { id: 'conversationCacheMib', label: 'Conversation cache (MiB)', type: 'text', group: 'Performance', placeholder: 'Engine default', help: 'A size in MiB, or auto.' },
+  { id: 'attnRequant', label: 'Attention requant', type: 'select', group: 'Performance', default: 'none', options: options('none', 'q6_k', 'q5_k', 'q5_0', 'iq4_nl', 'q4_0'), help: "Inkling 2 models only. none = keep the model file's types." },
+  { id: 'loopBf16', label: 'Loop in bf16', type: 'toggle', group: 'Performance', default: false, help: 'Inkling 2 models only.' },
+  { id: 'tailSkip', label: 'Tail skip', type: 'number', group: 'Performance', min: 0, placeholder: 'Engine default' },
+  { id: 'ramExpertsMib', label: 'Experts in RAM (MiB)', type: 'number', group: 'Performance', min: -1, placeholder: 'Engine default', help: '-1 = automatic.' },
+  { id: 'vramReserveMib', label: 'VRAM reserve (MiB)', type: 'number', group: 'Performance', min: 0, placeholder: 'Engine default' },
+  { id: 'threads', label: 'Threads', type: 'number', group: 'Performance', min: 1, placeholder: 'Engine default' },
   { id: 'gpu', label: 'GPU index', type: 'number', group: 'Performance', default: 0, min: 0 },
   { id: 'python', label: 'Python', type: 'file', group: 'Advanced', advanced: true, help: 'Blank = the .venv inside the PolyStrata folder.' },
   { id: 'cudaLibDir', label: 'CUDA library folder', type: 'folder', group: 'Advanced', advanced: true, help: 'Blank = the nvidia folder inside the .venv.' },
@@ -602,7 +602,8 @@ const POLYSTRATA_FIELDS: LocalFieldSpec[] = [
 ];
 
 function polyServedModel(values: LocalValues): string {
-  return createReader(POLYSTRATA_FIELDS, values).str('servedModel') || 'inkling-2-mini';
+  const read = createReader(POLYSTRATA_FIELDS, values);
+  return read.str('servedModel') || modelBaseName(read.str('model'));
 }
 
 function polyServerScript(folder: string): string {
@@ -631,16 +632,18 @@ function polyEngineArgs(read: ValueReader, runDir: string): string[] {
     '--model', requireText(read.str('model'), 'Choose a model file'),
     '--max-context', numArg(read.num('maxContext') ?? 32768),
     '--expert-profile', profile,
-    '--conversation-cache-mib', read.str('conversationCacheMib') || 'auto',
   ];
+  // Blank settings are left out so PolyStrata picks its own default for the model and machine.
+  const conversationCache = read.str('conversationCacheMib');
+  if (conversationCache) args.push('--conversation-cache-mib', conversationCache);
   const requant = read.choice('attnRequant');
   if (requant !== 'none') args.push('--attn-requant', requant);
   if (read.bool('loopBf16')) args.push('--loop-bf16');
-  pushPositive(args, '--tail-skip', read.num('tailSkip'));
-  args.push('--ram-experts-mib', numArg(read.num('ramExpertsMib') ?? -1));
-  args.push('--vram-reserve-mib', numArg(read.num('vramReserveMib') ?? 512));
-  args.push('--threads', numArg(read.num('threads') ?? 12));
-  pushPositive(args, '--window', read.num('window'));
+  pushDefined(args, '--tail-skip', read.num('tailSkip'));
+  pushDefined(args, '--ram-experts-mib', read.num('ramExpertsMib'));
+  pushDefined(args, '--vram-reserve-mib', read.num('vramReserveMib'));
+  pushDefined(args, '--threads', read.num('threads'));
+  pushDefined(args, '--window', read.num('window'));
   args.push(...splitArgs(read.str('extraEngineArgs')));
   return args;
 }

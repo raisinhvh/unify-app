@@ -44,19 +44,34 @@ test('maskedCommand hides the key and quotes spaces', () => {
   assert.ok(!text.includes('sekret'));
 });
 
-test('llama.cpp builds the Inkling preset flags', () => {
+test('llama.cpp builds tuned flags', () => {
   const engine = localEngine('llama-cpp');
-  const preset = BUILTIN_PRESETS.find(item => item.id === 'llama-inkling-2-mini');
-  const values = { ...presetValues(preset, engine), model: 'C:\\m\\inkling-q4.gguf' };
+  const values = {
+    ...defaultValues(engine),
+    model: 'C:\\m\\model-q4.gguf',
+    jinja: true,
+    fit: 'off',
+    flashAttn: 'on',
+    cacheTypeK: 'q8_0',
+    cacheTypeV: 'q8_0',
+    ubatch: 256,
+    parallel: 1,
+    temp: 1,
+    topP: 1,
+    topK: 0,
+    minP: 0,
+    alias: 'my-model',
+    ctx: 32768,
+  };
   const spec = engine.build(values, context());
   const args = spec.args;
   assert.equal(spec.command, context().enginePath);
-  assert.equal(valueAfter(args, '-m'), 'C:\\m\\inkling-q4.gguf');
+  assert.equal(valueAfter(args, '-m'), 'C:\\m\\model-q4.gguf');
   assert.equal(valueAfter(args, '--host'), '127.0.0.1');
   assert.equal(valueAfter(args, '--port'), '8123');
   assert.equal(valueAfter(args, '--api-key'), 'sekret');
   assert.equal(valueAfter(args, '-c'), '32768');
-  assert.equal(valueAfter(args, '--alias'), 'inkling-2-mini');
+  assert.equal(valueAfter(args, '--alias'), 'my-model');
   assert.equal(valueAfter(args, '-ngl'), '99');
   assert.equal(valueAfter(args, '--flash-attn'), 'on');
   assert.equal(valueAfter(args, '--cache-type-k'), 'q8_0');
@@ -69,7 +84,7 @@ test('llama.cpp builds the Inkling preset flags', () => {
   assert.ok(args.includes('--jinja'));
   assert.ok(!args.includes('--n-cpu-moe'));
   assert.ok(!args.includes('--repeat-penalty'));
-  assert.equal(spec.servedModel, 'inkling-2-mini');
+  assert.equal(spec.servedModel, 'my-model');
   assert.equal(spec.apiPath, '/v1');
   assert.equal(spec.healthPath, '/v1/models');
 });
@@ -155,7 +170,22 @@ async function polyFixture() {
 test('polystrata writes its config and server args', async () => {
   const engine = localEngine('polystrata');
   const fx = await polyFixture();
-  const values = { ...defaultValues(engine), model: fx.model, tokenizer: fx.tokenizer, window: 2, extraEngineArgs: '--x 1', extraArgs: '--y' };
+  const values = {
+    ...defaultValues(engine),
+    model: fx.model,
+    tokenizer: fx.tokenizer,
+    servedModel: 'my-moe',
+    window: 2,
+    conversationCacheMib: 'auto',
+    attnRequant: 'q5_k',
+    loopBf16: true,
+    tailSkip: 4,
+    ramExpertsMib: -1,
+    vramReserveMib: 512,
+    threads: 12,
+    extraEngineArgs: '--x 1',
+    extraArgs: '--y',
+  };
   assert.deepEqual(engine.validate(values, fx.folder), []);
   const spec = engine.build(values, context({ enginePath: fx.folder, runDir: fx.runDir }));
   assert.equal(spec.command, fx.python);
@@ -169,15 +199,15 @@ test('polystrata writes its config and server args', async () => {
   assert.equal(spec.args.at(-1), '--y');
   assert.equal(spec.env.PYTHONUNBUFFERED, '1');
   assert.equal(spec.env.PYTHONIOENCODING, 'utf-8');
-  assert.equal(spec.servedModel, 'inkling-2-mini');
+  assert.equal(spec.servedModel, 'my-moe');
   assert.equal(spec.files.length, 1);
   assert.equal(spec.files[0].path, join(fx.runDir, 'polystrata-config.json'));
   const config = JSON.parse(spec.files[0].content);
   assert.equal(config.exe, fx.exe);
   assert.equal(config.cwd, fx.folder);
   assert.equal(config.tokenizer, fx.tokenizer);
-  assert.equal(config.model_name, 'inkling-2-mini');
-  assert.equal(config.display_name, 'inkling-2-mini');
+  assert.equal(config.model_name, 'my-moe');
+  assert.equal(config.display_name, 'my-moe');
   assert.equal(config.port, 8123);
   assert.equal(config.gpu, 0);
   assert.equal(config.gpus_asked, true);
@@ -198,11 +228,16 @@ test('polystrata writes its config and server args', async () => {
   assert.deepEqual(args.slice(-2), ['--x', '1']);
   assert.ok(args.every(arg => typeof arg === 'string'));
 
-  const plain = engine.build({ ...values, window: 0, attnRequant: 'none', tailSkip: 0, loopBf16: false }, context({ enginePath: fx.folder, runDir: fx.runDir }));
+  // Defaults pass only what Unify needs; PolyStrata picks the rest for the model and machine.
+  const plainValues = { ...defaultValues(engine), model: fx.model, tokenizer: fx.tokenizer };
+  const plain = engine.build(plainValues, context({ enginePath: fx.folder, runDir: fx.runDir }));
+  assert.equal(plain.servedModel, 'model');
   const plainArgs = JSON.parse(plain.files[0].content).args;
-  for (const flag of ['--window', '--attn-requant', '--tail-skip', '--loop-bf16']) {
-    assert.ok(!plainArgs.includes(flag), flag);
-  }
+  assert.deepEqual(plainArgs, [
+    '--model', fx.model,
+    '--max-context', '32768',
+    '--expert-profile', join(fx.runDir, 'expert-profile.txt'),
+  ]);
 });
 
 test('polystrata on Windows owns the server through stdin and passes a launch key', async () => {
@@ -302,5 +337,7 @@ test('every preset targets a real engine and real fields', () => {
       if (engine.fields.find(field => field.id === key).default !== undefined) assert.ok(key in values);
     }
   }
-  assert.ok(ids.has('polystrata-inkling-iq3xxs'));
+  assert.ok(ids.has('polystrata-default'));
+  // Built-in presets are for everyone: no model names or tuning from one machine.
+  assert.ok(!/inkling/i.test(JSON.stringify(BUILTIN_PRESETS)));
 });

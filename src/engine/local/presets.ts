@@ -16,42 +16,13 @@ function builtin(
   return preset;
 }
 
-const POLYSTRATA_DEFAULTS: LocalValues = {
-  servedModel: 'inkling-2-mini',
-  maxContext: 32768,
-  attnRequant: 'q5_k',
-  loopBf16: true,
-  tailSkip: 4,
-  ramExpertsMib: -1,
-  vramReserveMib: 512,
-  threads: 12,
-  gpu: 0,
-};
-
 export const BUILTIN_PRESETS: LocalPreset[] = [
   builtin(
-    'polystrata-inkling-iq3xxs',
-    'Inkling 2 Mini IQ3_XXS (fastest)',
-    'PolyStrata with the IQ3_XXS quant of Inkling 2 Mini.',
+    'polystrata-default',
+    'PolyStrata — default',
+    'PolyStrata with its own defaults for the model and machine.',
     'polystrata',
-    { ...POLYSTRATA_DEFAULTS },
-    '~115 tok/s, recommended',
-  ),
-  builtin(
-    'polystrata-inkling-q3kxl',
-    'Inkling 2 Mini Q3_K_XL (quality)',
-    'PolyStrata with the Q3_K_XL quant of Inkling 2 Mini.',
-    'polystrata',
-    { ...POLYSTRATA_DEFAULTS },
-    '~99 tok/s',
-  ),
-  builtin(
-    'polystrata-inkling-q2kxl',
-    'Inkling 2 Mini Q2_K_XL (speed)',
-    'PolyStrata with the Q2_K_XL quant of Inkling 2 Mini and a window of 2.',
-    'polystrata',
-    { ...POLYSTRATA_DEFAULTS, window: 2 },
-    '~124 tok/s, window 2',
+    {},
   ),
   builtin(
     'llama-gpu-all-layers',
@@ -74,27 +45,6 @@ export const BUILTIN_PRESETS: LocalPreset[] = [
     'Runs entirely on the CPU.',
     'llama-cpp',
     { gpuLayers: 0 },
-  ),
-  builtin(
-    'llama-inkling-2-mini',
-    'Inkling 2 Mini (llama.cpp)',
-    'Tuned llama-server settings for Inkling 2 Mini.',
-    'llama-cpp',
-    {
-      jinja: true,
-      fit: 'off',
-      flashAttn: 'on',
-      cacheTypeK: 'q8_0',
-      cacheTypeV: 'q8_0',
-      ubatch: 256,
-      parallel: 1,
-      temp: 1,
-      topP: 1,
-      topK: 0,
-      minP: 0,
-      alias: 'inkling-2-mini',
-      ctx: 32768,
-    },
   ),
   builtin('koboldcpp-default', 'KoboldCpp — default', 'KoboldCpp with default settings.', 'koboldcpp', {}),
   builtin('ollama-default', 'Ollama — default', 'Ollama with default settings.', 'ollama', {}),
