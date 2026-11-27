@@ -8,7 +8,8 @@ import { freshCodexTokens } from '../accounts/codexAuth';
 import { unbindChatAgentOwner } from '../delegate/messaging';
 import { writeAudienceInstructions } from '../instructions/audiences';
 import type { AudienceTarget } from '../unify/knowledgeAudience';
-import { SELF_HOSTED } from '../runtime/selfHosted';
+import { SELF_HOSTED, SELF_HOSTED_ENV } from '../runtime/selfHosted';
+import { LOCAL_PROVIDER } from '../local/types';
 import { updatedRoot } from '../update/unifyUpdate';
 import { AcpRuntime } from '../runtime/acp';
 import type { StuckCommand } from '../runtime/stuckCommands';
@@ -122,6 +123,18 @@ export async function ensureRuntime(this: ExtensionHost, route: ResolvedRoute, c
       envName: 'OPENAI_CODEX_ACCESS_TOKEN',
       keyExtra: `:${tokens.expires}`,
     };
+  } else if ('account' in route && route.model.provider === LOCAL_PROVIDER) {
+    // A local server is an OpenAI-compatible endpoint Unify launches itself: start it (or reuse it), then run it like self-hosted.
+    const baseURL = await this.ensureLocalServer(route.account);
+    start = {
+      accountId: route.account.id,
+      agentRuntimeProvider: SELF_HOSTED,
+      model: route.model.backend,
+      secret: route.secret,
+      envName: SELF_HOSTED_ENV,
+      keyExtra: '',
+      baseURL,
+    };
   } else if ('account' in route) {
     start = {
       accountId: route.account.id,
@@ -138,6 +151,7 @@ export async function ensureRuntime(this: ExtensionHost, route: ResolvedRoute, c
   // A forced cancellation must not terminate another chat or subagent.
   const key = `${route.model.provider}:${start.accountId}:${start.model}:${deepSeekAccount?.id || ''}${start.keyExtra}${start.baseURL ? `:${start.baseURL}` : ''}:${ownerId}`;
   const runtime = this.runtimeFor(key);
+  if ('account' in route && route.model.provider === LOCAL_PROVIDER && start.baseURL) this.guardLocalRuntime(runtime, route.account, start.baseURL);
   const accountHash = createHash('sha256').update(start.accountId).digest('hex').slice(0, 16);
   const providerHash = createHash('sha256').update(route.model.provider).digest('hex').slice(0, 16);
   const home = join(this.context.globalStorageUri.fsPath, 'runtime', providerHash, accountHash);

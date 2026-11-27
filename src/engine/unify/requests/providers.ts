@@ -47,6 +47,9 @@ export interface AccountStateEntry {
   isDefault: boolean;
   authType: 'oauth' | 'api-key';
   baseURL?: string;
+  /** Provider 'local': the Unify-managed server this account runs, and the model id it serves. */
+  localServerId?: string;
+  servedModel?: string;
   defaultModel?: string;
 }
 
@@ -153,6 +156,8 @@ export function accountsState(paths: RequestPaths): AccountsStatePayload {
       isDefault: (apiDefaults[account.provider] ?? records(state, ACCOUNTS_KEY).find(item => item.provider === account.provider)?.id) === account.id,
       authType: 'api-key',
       ...(account.provider === 'self-hosted' && typeof account.metadata?.baseURL === 'string' ? { baseURL: account.metadata.baseURL } : {}),
+      ...(account.provider === 'local' && typeof account.metadata?.localServerId === 'string' ? { localServerId: account.metadata.localServerId } : {}),
+      ...(account.provider === 'local' && typeof account.metadata?.servedModel === 'string' ? { servedModel: account.metadata.servedModel } : {}),
       ...(store.providerDefaults[account.provider] ? { defaultModel: store.providerDefaults[account.provider] } : {}),
     });
   }

@@ -685,6 +685,16 @@
   line-height: 16px;
 }
 
+/* Narrow panels: the trailing action drops to its own line instead of running over the value. */
+.pv-setting-row:has(> .pv-row-action) {
+  flex-wrap: wrap;
+}
+
+.pv-setting-row:has(> .pv-row-action) > .pv-setting-value {
+  flex: 1 1 120px;
+  overflow-wrap: anywhere;
+}
+
 .pv-row-action:hover {
   color: var(--text);
 }

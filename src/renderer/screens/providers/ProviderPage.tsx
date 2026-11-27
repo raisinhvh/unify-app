@@ -20,7 +20,13 @@ import {
   signedInWith,
 } from './adapter';
 import { AddModelForm } from './AddModelForm';
+import { LocalEnginesSection } from './local/LocalEnginesPanel';
+import { loadLocalInference, localProvider } from './local/localStore';
 import { select } from './selection';
+import './local/local.css';
+
+/** Local models come from their servers, one each, so the page has no manual Add model. */
+const localModelHint = 'Each local server adds its model automatically.';
 
 function Crumb(props: { provider: string }): JSX.Element {
   return (
@@ -41,6 +47,11 @@ function ProviderBody(props: { provider: string }): JSX.Element {
   const defaultModelId = () => providerDefault(props.provider) ?? models().find(model => model.enabled)?.id;
   const [addingModel, setAddingModel] = createSignal(false);
   const [editingModel, setEditingModel] = createSignal<string>();
+  const isLocal = () => props.provider === localProvider;
+
+  createEffect(() => {
+    if (isLocal()) loadLocalInference();
+  });
 
   createEffect(
     on(
@@ -93,8 +104,13 @@ function ProviderBody(props: { provider: string }): JSX.Element {
 
         <div class="pv-section-divider" />
 
+        <Show when={isLocal()}>
+          <LocalEnginesSection />
+          <div class="pv-section-divider" />
+        </Show>
+
         <section class="pv-section">
-          <h2 class="pv-section-heading">Accounts</h2>
+          <h2 class="pv-section-heading">{isLocal() ? 'Servers' : 'Accounts'}</h2>
           <div class="pv-rows">
             <For each={accounts()}>
               {account => (
@@ -113,7 +129,9 @@ function ProviderBody(props: { provider: string }): JSX.Element {
               )}
             </For>
             <Show when={!accounts().length}>
-              <p class="pv-section-note type-body">No accounts for this provider yet.</p>
+              <p class="pv-section-note type-body">
+                {isLocal() ? 'No local servers yet. Add one with Add provider, Local model.' : 'No accounts for this provider yet.'}
+              </p>
             </Show>
           </div>
         </section>
@@ -123,7 +141,7 @@ function ProviderBody(props: { provider: string }): JSX.Element {
         <section class="pv-section">
           <div class="pv-section-heading-row">
             <h2 class="pv-section-heading">Models</h2>
-            <Show when={models().length > 0 || addingModel()}>
+            <Show when={!isLocal() && (models().length > 0 || addingModel())}>
               <Button
                 variant="text"
                 icon="plus"
@@ -145,6 +163,10 @@ function ProviderBody(props: { provider: string }): JSX.Element {
             when={models().length}
             fallback={
               <Show when={!addingModel()}>
+                <Show
+                  when={!isLocal()}
+                  fallback={<p class="pv-section-note type-body">{localModelHint}</p>}
+                >
                 <div class="pv-models-empty">
                   <p class="pv-models-empty-text type-body">
                     {props.provider === 'cursor-acp' ? 'No models yet. Pick from the models your Cursor account can use.' : 'No models yet. Add one by its model ID.'}
@@ -158,6 +180,7 @@ function ProviderBody(props: { provider: string }): JSX.Element {
                     Add model
                   </Button>
                 </div>
+                </Show>
               </Show>
             }
           >
@@ -194,6 +217,9 @@ function ProviderBody(props: { provider: string }): JSX.Element {
                 )}
               </For>
             </div>
+            <Show when={isLocal()}>
+              <p class="pv-section-note type-body">{localModelHint}</p>
+            </Show>
           </Show>
         </section>
       </div>

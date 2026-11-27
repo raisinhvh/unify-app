@@ -17,9 +17,20 @@ import { searchWorkspaceFiles } from '../unify/requests/workspace';
 import { getGithubAuth, clearGithubToken, setGithubToken } from '../unify/github';
 import { CURSOR_ACCOUNT_ID, APPROVAL_KEY, PROVIDER_USAGE_URLS } from './constants';
 import { isOAuthProvider } from './helpers';
+import { LOCAL_REQUEST_TYPES } from '../local/types';
+import type { LocalRequest } from '../local/types';
+
+function isLocalRequest(message: SidebarWebviewMessage): message is LocalRequest & { chatId?: string } {
+  return (LOCAL_REQUEST_TYPES as readonly string[]).includes(message.type);
+}
 
 export async function onSidebarMessage(this: ExtensionHost, message: SidebarWebviewMessage): Promise<void> {
   await this.guarded(async () => {
+    // Local inference requests (Providers → Local) have their own handler, which also answers failures.
+    if (isLocalRequest(message)) {
+      await this.handleLocalMessage(message);
+      return;
+    }
     switch (message.type) {
       case 'checkDependencies': await this.refreshDependencies(); break;
       case 'installProvider': await this.installProvider(message.provider); break;

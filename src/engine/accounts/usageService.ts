@@ -62,7 +62,7 @@ export class AccountUsageService {
           }
           if (target.provider === 'cursor-acp') return await readCursorUsage();
           if (target.provider === 'opencode-go') return await readOpenCodeUsage(await target.secret?.());
-          if (target.provider === 'self-hosted') return { status: 'unavailable', metrics: [], detail: 'Unify does not track usage for self-hosted servers.', fetchedAt: Date.now() };
+          if (target.provider === 'self-hosted' || target.provider === 'local') return { status: 'unavailable', metrics: [], detail: 'Unify does not track usage for self-hosted or local servers.', fetchedAt: Date.now() };
           const consoleOnly = CONSOLE_ONLY[target.provider];
           if (consoleOnly) return { status: 'unavailable', metrics: [], ...consoleOnly, fetchedAt: Date.now() };
           return { status: 'unavailable', metrics: [], detail: 'This provider does not report usage to Unify yet.', fetchedAt: Date.now() };

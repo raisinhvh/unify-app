@@ -311,12 +311,24 @@ export function stripModelAccount(model: Record<string, unknown>): Record<string
  */
 export function portableModels(models: unknown, _accounts?: AccountRef[]): unknown {
   if (!Array.isArray(models)) return models;
-  return models.map(model => model && typeof model === 'object' ? stripModelAccount(model as Record<string, unknown>) : model);
+  // Local servers (provider 'local') exist on one PC only, so their models are never uploaded.
+  return models.filter(model => !isLocalModel(model))
+    .map(model => model && typeof model === 'object' ? stripModelAccount(model as Record<string, unknown>) : model);
 }
 
-/** Config Sync's download side: strips the same account fields as `portableModels`. */
-export function localModels(models: unknown, _accounts?: AccountRef[]): unknown {
-  return portableModels(models);
+function isLocalModel(model: unknown): boolean {
+  return !!model && typeof model === 'object' && (model as { provider?: unknown }).provider === 'local';
+}
+
+/**
+ * Config Sync's download side: strips the same account fields as `portableModels`, drops any local-provider models
+ * from other PCs, and keeps this PC's own local-provider models from `current`.
+ */
+export function localModels(models: unknown, _accounts?: AccountRef[], current?: unknown): unknown {
+  const portable = portableModels(models);
+  if (!Array.isArray(portable)) return portable;
+  const own = Array.isArray(current) ? current.filter(isLocalModel) : [];
+  return own.length ? [...portable, ...own] : portable;
 }
 
 /**
@@ -350,10 +362,19 @@ export interface AccountSource<T extends { id: string; provider: string; label: 
   getDefault(provider: string): T | undefined;
 }
 
-/** The account a model uses: its provider's default account. A model names a provider, never an account. */
+/**
+ * The account a model uses: its provider's default account. A model names a provider, never an account.
+ * Exception: every local server is its own account, so a local model picks the account serving its backend model id.
+ */
 export function accountForModel<T extends { id: string; provider: string; label: string }>(
-  accounts: AccountSource<T>, model: { provider: string },
+  accounts: AccountSource<T>, model: { provider: string; backend?: string },
 ): T | undefined {
+  if (model.provider === 'local' && model.backend) {
+    const local = accounts.list().filter(account => account.provider === 'local') as (T & { metadata?: Record<string, unknown> })[];
+    const served = local.find(account => account.metadata?.servedModel === model.backend);
+    const byServer = local.find(account => account.metadata?.localServerId === model.backend);
+    if (served || byServer) return served || byServer;
+  }
   return accounts.getDefault(model.provider);
 }
 

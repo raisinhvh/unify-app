@@ -63,6 +63,8 @@ await import('./rust-tools.test.mjs');
 await import('./tool-display.test.mjs');
 await import('./internal-rows.test.mjs');
 await import('./self-hosted.test.mjs');
+await import('./local-engines.test.mjs');
+await import('./local-inference.test.mjs');
 await import('./agent-bus.test.mjs');
 await import('./agent-wake.test.mjs');
 await import('./power.test.mjs');

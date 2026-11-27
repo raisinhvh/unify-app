@@ -16,6 +16,7 @@ import { RollingNumber } from '../../motion/organic';
 import { clampPercent, usageSummary } from '../../store/usage';
 import type { AccountView, ProviderGroup } from './adapter';
 import { accountStateLabel, providerGroups, providerTitle } from './adapter';
+import { localProvider, localServerStateLabel } from './local/localStore';
 import { providerOpen, select, selection, setAddProviderOpen, setProviderOpen } from './selection';
 
 function UsageRow(): JSX.Element {
@@ -81,7 +82,11 @@ function AccountRow(props: { account: AccountView }): JSX.Element {
       <span class="pv-account-label">{account().label}</span>
       <Show
         when={account().binding}
-        fallback={<span class="pv-account-caption">{accountStateLabel(account())}</span>}
+        fallback={
+          <span class="pv-account-caption">
+            {(account().provider === localProvider ? localServerStateLabel(account().id) : undefined) ?? accountStateLabel(account())}
+          </span>
+        }
       >
         {binding => <MiniMeter used={binding().usedPercent} color={account().color} />}
       </Show>

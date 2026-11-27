@@ -22,6 +22,7 @@ import type {
 import { onHostMessage, viewState } from '../../store';
 import { accountGroupOrder, providerColor, providerNames } from '../../store/providers';
 import { usageSummary } from '../../store/usage';
+import { localProvider, localServerByAccount } from './local/localStore';
 import { select } from './selection';
 
 /** Company names as Figma shows them; the engine's names describe the CLI. */
@@ -43,7 +44,7 @@ const planBrands: Record<string, string> = {
 };
 
 /** Figma's panel order: Anthropic, OpenAI, Cursor, OpenCode Go, Mistral, Self-hosted. */
-const displayOrder = ['claude-cli', 'codex-cli', 'cursor-acp', 'opencode-go', 'mistral', 'google-gemini', 'self-hosted'];
+const displayOrder = ['claude-cli', 'codex-cli', 'cursor-acp', 'opencode-go', 'mistral', 'google-gemini', 'self-hosted', 'local'];
 
 /** What "Signed in with" says for OAuth accounts. */
 const oauthNames: Record<string, string> = {
@@ -244,6 +245,7 @@ export const accountName = (account: Pick<AccountView, 'provider' | 'label'>): A
 export function signedInWith(account: AccountView): string {
   if (account.authType === 'oauth') return oauthNames[account.provider] || account.email || 'Account';
   if (account.provider === 'self-hosted') return account.baseURL || 'Server';
+  if (account.provider === localProvider) return localServerByAccount(account.id)?.servedModel || 'Local server';
   return 'API key';
 }
 
@@ -545,7 +547,7 @@ export function planDetail(account: AccountView): string {
   return `$${price}/mo`;
 }
 
-/** "Connected", "Signed out", "Needs attention", "Checkingâ€¦". */
+/** "Connected", "Signed out", "Needs attention", "Checking…". */
 export function accountStateLabel(account: AccountView): string {
   switch (account.status) {
     case 'signedOut':
@@ -553,7 +555,7 @@ export function accountStateLabel(account: AccountView): string {
     case 'error':
       return 'Needs attention';
     case 'loading':
-      return 'Checkingâ€¦';
+      return 'Checking…';
     default:
       return 'Connected';
   }
@@ -573,7 +575,7 @@ export function usageUpdatedAgo(at: number | undefined): string {
  * Accounts that should report usage but have none. CLI accounts report through their CLI and self-hosted
  * servers usually do not meter at all, so the Usage footer leaves them out (Figma counts only Mistral).
  */
-const usageExempt = new Set(['claude-cli', 'codex-cli', 'self-hosted']);
+const usageExempt = new Set(['claude-cli', 'codex-cli', 'self-hosted', 'local']);
 
 export function accountsWithoutUsage(): AccountView[] {
   return allAccounts().filter(
@@ -584,7 +586,7 @@ export function accountsWithoutUsage(): AccountView[] {
 }
 
 /** How a new account authenticates. */
-export type ProviderMethod = 'oauth' | 'api-key' | 'self-hosted';
+export type ProviderMethod = 'oauth' | 'api-key' | 'self-hosted' | 'local';
 
 export interface AddProviderOption {
   id: string;
@@ -607,6 +609,7 @@ export const addProviderOptions: AddProviderOption[] = [
   { id: 'gemini', provider: 'google-gemini', title: 'Google Gemini', hint: 'API key', method: 'api-key' },
   { id: 'cursor', provider: 'cursor-acp', title: 'Cursor', hint: 'Sign in with Cursor', method: 'oauth' },
   { id: 'self-hosted', provider: 'self-hosted', title: 'Self-hosted', hint: 'Any OpenAI-compatible server', method: 'self-hosted' },
+  { id: 'local', provider: 'local', title: 'Local model', hint: 'Runs in Unify', method: 'local' },
 ];
 
 export function connectOAuth(option: AddProviderOption): void {

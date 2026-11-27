@@ -205,7 +205,7 @@ export class ConfigSync implements vscode.Disposable {
       for (const key of SYNCED_SETTINGS) {
         const current = config.inspect(key)?.globalValue;
         let value = bundle.settings[key];
-        if (key === 'models') value = localModels(value, accounts);
+        if (key === 'models') value = localModels(value, accounts, current);
         if (key === 'mcpServers') value = restoreMcpSecrets(value, current);
         if (stableJson(value) !== stableJson(current)) await config.update(key, value, vscode.ConfigurationTarget.Global);
       }

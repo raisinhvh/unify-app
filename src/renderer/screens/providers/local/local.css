@@ -1,0 +1,495 @@
+/*
+ * Local model screens (Add provider › Local model, a Local account's server, the Local provider's engines).
+ * Built on the Providers classes (pv-section, pv-setting-row, pv-field, pv-text-input…); these only add what
+ * those lack. Monochrome theme tokens; mono blocks scroll inside instead of growing the page.
+ */
+
+/* ---------- shared bits ---------- */
+
+.pv-local-muted {
+  color: var(--text3);
+}
+
+.pv-local-muted-value.pv-setting-value {
+  flex: 1;
+  min-width: 0;
+  color: var(--text3);
+  font-size: calc(12px * var(--text-scale, 1));
+  line-height: 16px;
+  white-space: normal;
+}
+
+.pv-local-small.button {
+  flex: none;
+  height: 28px;
+  padding: 0 10px;
+  font-size: calc(12px * var(--text-scale, 1));
+}
+
+.pv-local-mono {
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--text-scale, 1));
+}
+
+.pv-local-ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-local-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* A path cut in the middle: the head shrinks with an ellipsis, the file name stays. */
+.pv-local-middle {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.pv-local-middle-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-local-middle-tail {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* ---------- generic field rows ---------- */
+
+.pv-local-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.pv-local-group-heading {
+  margin: 14px 0 2px;
+  color: var(--text2);
+  font-size: calc(12px * var(--text-scale, 1));
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.pv-local-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: 12px;
+  row-gap: 4px;
+  padding: 4px 0;
+}
+
+.pv-local-field-label {
+  flex: none;
+  width: 168px;
+  padding-top: 5px;
+  overflow: hidden;
+  color: var(--text3);
+  font-size: calc(13px * var(--text-scale, 1));
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.pv-local-required {
+  color: var(--text3);
+}
+
+.pv-local-field-value {
+  display: flex;
+  flex: 1 1 200px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pv-local-field-value > .toggle,
+.pv-local-field-value > button {
+  margin-top: 4px;
+}
+
+.pv-local-help {
+  max-width: 420px;
+  color: var(--text3);
+  font-size: calc(11px * var(--text-scale, 1));
+  line-height: 14px;
+}
+
+.pv-local-field.compact {
+  padding: 0;
+}
+
+.pv-local-field.compact .pv-local-field-label {
+  width: 96px;
+  font-size: calc(12px * var(--text-scale, 1));
+  line-height: 16px;
+  padding-top: 6px;
+}
+
+.pv-local-wide.pv-text-input {
+  width: 100%;
+  max-width: 360px;
+  min-width: 0;
+}
+
+.pv-local-number.pv-text-input {
+  width: 96px;
+}
+
+.pv-local-env.pv-text-input {
+  height: auto;
+  min-height: 64px;
+  padding: 6px 11px;
+  line-height: 18px;
+  resize: vertical;
+}
+
+.pv-local-path-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 460px;
+  min-width: 0;
+}
+
+.pv-local-path-control .pv-local-wide.pv-text-input {
+  flex: 1;
+  max-width: none;
+  text-overflow: ellipsis;
+}
+
+.pv-local-browse.button {
+  flex: none;
+  height: 28px;
+  padding: 0 10px;
+  font-size: calc(12px * var(--text-scale, 1));
+}
+
+/* ---------- Add provider › Local model ---------- */
+
+.pv-local-loading {
+  margin: 0;
+  color: var(--text3);
+}
+
+.pv-local-add .pv-field > .select,
+.pv-local-preset {
+  flex: 1;
+  min-width: 0;
+  max-width: 316px;
+}
+
+.pv-local-preset-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding-left: 108px;
+  color: var(--text2);
+  font-size: calc(12px * var(--text-scale, 1));
+  line-height: 16px;
+}
+
+.pv-local-error-text {
+  margin: 0;
+  padding-left: 108px;
+  color: var(--del);
+  font-size: calc(12px * var(--text-scale, 1));
+  line-height: 16px;
+}
+
+/* Doubled class: providers.css's `.pv-field { gap }` may load after this file and would reset row-gap. */
+.pv-field.pv-local-engine-line {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+
+.pv-local-engine-line-value {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: calc(12px * var(--text-scale, 1));
+  line-height: 16px;
+}
+
+.pv-local-engine-line-path {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding-left: 108px;
+  color: var(--text3);
+  font-size: calc(11px * var(--text-scale, 1));
+  line-height: 14px;
+}
+
+.pv-local-engine-name {
+  flex: none;
+  color: var(--text);
+}
+
+.pv-local-install-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text2);
+  white-space: nowrap;
+}
+
+.pv-local-install-state.missing {
+  color: var(--text3);
+}
+
+.pv-local-engine-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* ---------- Local provider › Engines ---------- */
+
+.pv-local-engines {
+  display: flex;
+  flex-direction: column;
+}
+
+.pv-local-engine-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pv-local-engine-row:last-child {
+  border-bottom: none;
+}
+
+.pv-local-engine-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 4px;
+  min-height: 28px;
+  font-size: calc(13px * var(--text-scale, 1));
+  line-height: 18px;
+}
+
+.pv-local-engine-head .pv-local-engine-name {
+  font-weight: 600;
+}
+
+.pv-local-engine-head .pv-local-install-state {
+  font-size: calc(12px * var(--text-scale, 1));
+}
+
+.pv-local-engine-description {
+  margin: 0;
+  max-width: 560px;
+  color: var(--text3);
+  font-size: calc(12px * var(--text-scale, 1));
+  line-height: 16px;
+}
+
+.pv-local-engine-path {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  margin: 2px 0 0;
+  color: var(--text2);
+  font-size: calc(12px * var(--text-scale, 1));
+  line-height: 16px;
+}
+
+.pv-local-engine-path-label {
+  flex: none;
+  color: var(--text3);
+}
+
+/* ---------- a Local account's server ---------- */
+
+.pv-local-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pv-local-status-row {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.pv-local-status-value.pv-setting-value {
+  flex: 1;
+  min-width: 0;
+}
+
+.pv-local-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text3);
+}
+
+.pv-local-status.running {
+  color: var(--text2);
+}
+
+.pv-local-status.error {
+  color: var(--del);
+}
+
+.pv-local-status-spinner {
+  width: 10px;
+  height: 10px;
+}
+
+.pv-local-status-elapsed {
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
+
+.pv-local-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.pv-local-problems {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 4px;
+  padding: 0;
+  list-style: none;
+  color: var(--warn);
+  font-size: calc(12px * var(--text-scale, 1));
+  line-height: 16px;
+}
+
+.pv-local-restart-row {
+  min-height: 28px;
+}
+
+/* Command, log and error text: mono on a quiet surface, scrolling inside. */
+.pv-local-mono-block {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  color: var(--text2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
+}
+
+.pv-local-error {
+  max-height: calc(6 * 18px + 18px);
+  margin: 4px 0 8px;
+  color: var(--del);
+}
+
+.pv-local-command {
+  max-height: calc(5 * 18px + 18px);
+  margin-top: 4px;
+}
+
+.pv-local-section-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pv-local-section-head .pv-row-action {
+  margin-top: 20px;
+}
+
+.pv-local-log-wrap {
+  position: relative;
+  margin-top: 4px;
+}
+
+.pv-local-log {
+  height: calc(14 * 18px + 18px);
+  line-height: 18px;
+  white-space: pre-wrap;
+}
+
+.pv-local-follow.pv-row-action {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  padding: 2px 8px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.pv-local-settings {
+  display: flex;
+  flex-direction: column;
+}
+
+.pv-local-advanced {
+  display: flex;
+  flex-direction: column;
+  margin-top: 10px;
+}
+
+.pv-local-advanced-toggle.button {
+  align-self: flex-start;
+  height: 28px;
+  margin-left: -8px;
+  padding: 0 8px;
+  color: var(--text2);
+  font-size: calc(12px * var(--text-scale, 1));
+}
+
+.pv-local-advanced-body {
+  padding-bottom: 4px;
+}
+
+.pv-local-save-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
+}
+
+.pv-local-preset-form {
+  flex: 1;
+}
+
+.pv-local-preset-form .pv-local-wide.pv-text-input {
+  flex: 1;
+  max-width: 240px;
+}

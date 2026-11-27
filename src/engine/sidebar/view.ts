@@ -4,6 +4,7 @@ import { SLASH_COMMANDS } from '../slash/registry';
 import { RAIL_FALLBACK_ICONS } from '../runtime/naming';
 import { defaultVoiceCommands, VoiceCommand, VoicePart } from '../voice/dictation';
 import type { AgentInfo, AgentMessage } from '../unify/agentBus';
+import type { LocalHostMessage, LocalRequest } from '../local/types';
 
 export interface SidebarImage { name: string; mimeType: string; data: string }
 
@@ -222,7 +223,7 @@ type SidebarWebviewPayload =
  * UI → engine messages. `chatId` names the chat a message concerns; omitted means the active chat.
  * Model, speed and effort choices are global engine settings, so their chatId is ignored.
  */
-export type SidebarWebviewMessage = SidebarWebviewPayload & { chatId?: string };
+export type SidebarWebviewMessage = (SidebarWebviewPayload | LocalRequest) & { chatId?: string };
 
 export interface SidebarSubagentProfile {
   name: string;
@@ -609,7 +610,7 @@ type SidebarHostPayload =
   | { type: 'error'; message: string };
 
 /** Engine → UI messages. Chat-specific ones carry sessionId, or chatId when they concern an agent. */
-export type SidebarHostMessage = SidebarHostPayload & { chatId?: string };
+export type SidebarHostMessage = (SidebarHostPayload | LocalHostMessage) & { chatId?: string };
 
 export interface SidebarViewState {
   page: SidebarPage;
@@ -765,7 +766,7 @@ export function getSidebarHtml(
   <form id="model-form" class="inline-form" hidden>
     <h2 id="model-form-title">Add model</h2>
     <label>Name<input id="model-name" maxlength="80" required placeholder="My model"></label>
-    <label>Provider<select id="model-provider" required><option value="">Select a provider</option><option value="codex-cli">ChatGPT (Codex)</option><option value="claude-cli">Claude Code</option><option value="cursor-acp">Cursor</option><option value="deepseek-official">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="opencode-go">OpenCode Go</option><option value="mistral">Mistral</option><option value="self-hosted">Self-hosted</option></select></label>
+    <label>Provider<select id="model-provider" required><option value="">Select a provider</option><option value="codex-cli">ChatGPT (Codex)</option><option value="claude-cli">Claude Code</option><option value="cursor-acp">Cursor</option><option value="deepseek-official">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="opencode-go">OpenCode Go</option><option value="mistral">Mistral</option><option value="self-hosted">Self-hosted</option><option value="local">Local</option></select></label>
     <label id="model-backend-field">Model ID<input id="model-backend" list="model-backend-options" maxlength="120" spellcheck="false" autocomplete="off" placeholder="Provider model ID"><datalist id="model-backend-options"></datalist></label>
     <div id="model-self-hosted-row" class="self-hosted-row" hidden><button type="button" class="secondary-button" id="model-load-models">Load models</button><span id="model-models-status" class="helper"></span></div>
     <label id="model-cursor-field" hidden>Cursor model<input id="model-cursor-backend" list="model-cursor-options" maxlength="120" spellcheck="false" autocomplete="off" placeholder="auto, or a model slug such as gpt-5"><datalist id="model-cursor-options"></datalist></label>

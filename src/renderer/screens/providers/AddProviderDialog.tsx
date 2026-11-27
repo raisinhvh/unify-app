@@ -2,15 +2,20 @@
  * Providers › Add provider (Figma "24b · Providers · Add provider").
  *
  * A centered 480px dialog over a 72% scrim. OAuth rows start the provider's own flow and close; API-key and
- * self-hosted rows expand an inline form under the row (Figma draws the self-hosted one open).
+ * self-hosted rows expand an inline form under the row (Figma draws the self-hosted one open). The Local model row
+ * expands LocalAddForm, which creates a Unify-managed server and closes onto its account page.
+ *
+ * Dev: `?open=addLocal` opens the dialog with the Local model row expanded (screenshots).
  */
-import { createEffect, createSignal, For, onCleanup, Show, type JSX } from 'solid-js';
+import { createEffect, createSignal, For, onCleanup, onMount, Show, type JSX } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { Button, Icon, IconButton, ProviderGlyph } from '../../components';
 import { Presence } from '../../motion';
 import type { AddProviderOption } from './adapter';
 import { addProviderOptions, connectOAuth, connectSelfHosted, connectWithKey } from './adapter';
-import { addProviderOpen, setAddProviderOpen } from './selection';
+import { LocalAddForm } from './local/LocalAddForm';
+import { loadLocalInference } from './local/localStore';
+import { addProviderOpen, select, setAddProviderOpen } from './selection';
 
 function AddForm(props: { option: AddProviderOption }): JSX.Element {
   const [name, setName] = createSignal(props.option.method === 'self-hosted' ? 'homelab' : props.option.title);
@@ -85,6 +90,16 @@ export function AddProviderDialog(): JSX.Element {
     setExpanded(undefined);
   });
 
+  onMount(() => {
+    if (!import.meta.env.DEV || new URLSearchParams(window.location.search).get('open') !== 'addLocal') return;
+    setAddProviderOpen(true);
+    queueMicrotask(() => setExpanded('local'));
+  });
+
+  createEffect(() => {
+    if (expanded() === 'local') loadLocalInference();
+  });
+
   createEffect(() => {
     if (!addProviderOpen()) return;
     const onKey = (event: KeyboardEvent) => {
@@ -139,7 +154,17 @@ export function AddProviderDialog(): JSX.Element {
                       <Icon name="chevronRight" size={16} class="pv-add-chevron" />
                     </button>
                     <Show when={expanded() === option.id}>
-                      <AddForm option={option} />
+                      <Show
+                        when={option.method === 'local'}
+                        fallback={<AddForm option={option} />}
+                      >
+                        <LocalAddForm
+                          onCreated={accountId => {
+                            setAddProviderOpen(false);
+                            select({ kind: 'account', id: accountId, provider: 'local' });
+                          }}
+                        />
+                      </Show>
                     </Show>
                   </>
                 )}

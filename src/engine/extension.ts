@@ -55,6 +55,9 @@ import * as settings from './host/settings';
 import * as voice from './host/voice';
 import * as smartAuto from './host/smartAuto';
 import * as sidebarMessages from './host/sidebarMessages';
+import * as local from './host/local';
+import { LocalInferenceManager } from './local/manager';
+import { postToRenderer } from '../shim/vscode/host';
 
 class ExtensionHost implements vscode.Disposable {
   readonly dependencies: WindowsDependencies;
@@ -72,6 +75,11 @@ class ExtensionHost implements vscode.Disposable {
   /** Unify power: runs the countdown and shuts the PC down when every task has finished. */
   readonly shutdown: ShutdownController;
   readonly runtimes = new Map<string, AcpRuntime>();
+  /** Unify-managed local inference servers (provider 'local'). Its config file loads lazily on first use. */
+  readonly localInference: LocalInferenceManager;
+  localInferenceLoaded?: Promise<void>;
+  /** Prompts in flight on local runtimes, by account id. Keeps the idle timer from stopping a server mid-turn. */
+  readonly localPrompts = new Map<string, number>();
   dictation?: Dictation;
   whisperInstall?: Promise<WhisperEngine>;
   /** Bumped by every voice start and stop, so a start that finishes downloading late knows it was cancelled. */
@@ -172,7 +180,7 @@ class ExtensionHost implements vscode.Disposable {
       accounts: () => [...this.oauthAccounts.list(), ...this.accounts.list()].map(({ id, provider, label }) => ({ id, provider, label })),
       log: line => this.output.appendLine(line),
       post: sync => this.sidebar.postMessage({ type: 'syncState', sync }),
-      applied: async () => { this.refreshModels(); this.refreshSubagents(); this.refreshCustomize(); await this.refreshInstructions(); },
+      applied: async () => { await this.restoreLocalModels(); this.refreshModels(); this.refreshSubagents(); this.refreshCustomize(); await this.refreshInstructions(); },
     });
     this.shutdown = createShutdownController({
       getActivity: () => this.shutdownActivity(),
@@ -183,6 +191,14 @@ class ExtensionHost implements vscode.Disposable {
       saveState: () => this.saveAllState(),
       notify: (title, body) => this.notifyDesktop(title, body),
       post: message => { this.sidebar.postMessage(message as SidebarHostMessage); this.sidebar.setShutdown(this.shutdown.getStatus()); },
+    });
+    this.localInference = new LocalInferenceManager({
+      home: unifyHome(),
+      post: message => postToRenderer(message),
+      isInUse: serverId => this.isLocalServerInUse(serverId),
+      log: line => this.output.appendLine(`Local inference: ${line}`),
+      // Quit gives the engine 3 s in total: stop gracefully for 2 s, then kill, so no server outlives Unify.
+      stopGraceMs: 2000,
     });
     this.disposables.push({ dispose: () => this.shutdown.dispose() });
     this.scheduled = new ScheduledPrompts(context, {
@@ -269,12 +285,13 @@ class ExtensionHost implements vscode.Disposable {
 
   get running(): boolean { return !!this.chat?.running; }
 
-  public dispose(): Thenable<void> {
+  public dispose(): Promise<void> {
     if (this.timelineTimer) clearTimeout(this.timelineTimer);
     const saved = this.context.workspaceState.update(TIMELINES_KEY, this.timelines);
     for (const chat of this.chats.values()) { if (chat.ping) chat.cli.cancel(); chat.review.dispose(); chat.mirror.dispose(); agentBus.unregister(chat.record.id); unbindChatAgentOwner(chat.ownerId); }
     for (const disposable of this.disposables) disposable.dispose();
-    return saved;
+    // Local servers are separate processes: stop them (in parallel, inside the manager) before the app exits.
+    return Promise.all([saved, this.localInference.dispose()]).then(() => undefined);
   }
 
   /** This workspace's file summaries, kept in extension storage. Undefined without a local workspace folder. */
@@ -300,12 +317,12 @@ class ExtensionHost implements vscode.Disposable {
  * The host's methods live in host/*.ts, one module per area, as functions with an explicit `this: ExtensionHost`.
  * They are attached to the prototype here, so `this.foo()` call sites are unchanged.
  */
-type HostParts = typeof lifecycle & typeof runtimes & typeof git & typeof agentBusMethods & typeof sessions & typeof updates & typeof models & typeof cursor & typeof approvals & typeof toolpacks & typeof chats & typeof instructions & typeof media & typeof jobs & typeof prompt & typeof subagents & typeof settings & typeof voice & typeof smartAuto & typeof sidebarMessages;
+type HostParts = typeof lifecycle & typeof runtimes & typeof git & typeof agentBusMethods & typeof sessions & typeof updates & typeof models & typeof cursor & typeof approvals & typeof toolpacks & typeof chats & typeof instructions & typeof media & typeof jobs & typeof prompt & typeof subagents & typeof settings & typeof voice & typeof smartAuto & typeof sidebarMessages & typeof local;
 // eslint-disable-next-line @typescript-eslint/no-empty-interface
 interface ExtensionHost extends HostParts {}
 /** The host's type for the modules in host/ (the class itself stays unexported: the tests append their own export). */
 export type { ExtensionHost as Host };
-Object.assign(ExtensionHost.prototype, lifecycle, runtimes, git, agentBusMethods, sessions, updates, models, cursor, approvals, toolpacks, chats, instructions, media, jobs, prompt, subagents, settings, voice, smartAuto, sidebarMessages);
+Object.assign(ExtensionHost.prototype, lifecycle, runtimes, git, agentBusMethods, sessions, updates, models, cursor, approvals, toolpacks, chats, instructions, media, jobs, prompt, subagents, settings, voice, smartAuto, sidebarMessages, local);
 
 let host: ExtensionHost | undefined;
 

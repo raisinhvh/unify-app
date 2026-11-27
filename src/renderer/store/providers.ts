@@ -9,6 +9,7 @@ export const providerNames: Record<string, string> = {
   'opencode-go': 'OpenCode Go',
   mistral: 'Mistral',
   'self-hosted': 'Self-hosted',
+  local: 'Local',
   gemini: 'Gemini',
   xai: 'xAI',
   groq: 'Groq',
@@ -23,6 +24,7 @@ export const providerColors: Record<string, string> = {
   'opencode-go': '#E8E8E8',
   mistral: '#FA520F',
   'self-hosted': '#9AA0A6',
+  local: '#B0A89F',
 };
 
 export const providerColor = (provider: string): string => providerColors[provider] || '#9C7BD8';
@@ -37,4 +39,5 @@ export const accountGroupOrder = [
   'opencode-go',
   'mistral',
   'self-hosted',
+  'local',
 ];

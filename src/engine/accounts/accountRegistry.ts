@@ -54,8 +54,9 @@ export class AccountRegistry {
     const secret = input.secret.trim();
     if (!secret) throw new Error("Account secret is required");
     // The same key for the same server is the same account: keep the existing record instead of a second one.
+    // Local servers are each their own account: they have no base URL, so the same generated key must never merge two.
     const baseURL = typeof input.metadata?.baseURL === "string" ? input.metadata.baseURL : "";
-    for (const existing of this.list(provider)) {
+    for (const existing of provider === "local" ? [] : this.list(provider)) {
       const existingBaseURL = typeof existing.metadata?.baseURL === "string" ? existing.metadata.baseURL : "";
       if (existingBaseURL === baseURL && (await this.getSecret(existing.id)) === secret) return existing;
     }
@@ -75,6 +76,26 @@ export class AccountRegistry {
     await this.context.globalState.update(ACCOUNTS_KEY, [...this.readAccounts(), account]);
     if (!this.readDefaults()[provider]) await this.setDefault(provider, id);
     return account;
+  }
+
+  /** Merges `metadata` into an account's public metadata and persists it. Keys set to undefined are removed. */
+  public async updateMetadata(id: string, metadata: Record<string, unknown>): Promise<AccountRecord> {
+    const account = this.get(id);
+    if (!account) throw new Error("Account not found.");
+    const merged: Record<string, unknown> = { ...account.metadata, ...metadata };
+    for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key];
+    const updated: AccountRecord = { ...account, metadata: merged, updatedAt: Date.now() };
+    await this.context.globalState.update(ACCOUNTS_KEY, this.readAccounts().map((item) => item.id === id ? updated : item));
+    return updated;
+  }
+
+  /** Renames an account. */
+  public async rename(id: string, label: string): Promise<AccountRecord> {
+    const account = this.get(id);
+    if (!account) throw new Error("Account not found.");
+    const updated: AccountRecord = { ...account, label: clean(label, "Account label"), updatedAt: Date.now() };
+    await this.context.globalState.update(ACCOUNTS_KEY, this.readAccounts().map((item) => item.id === id ? updated : item));
+    return updated;
   }
 
   /** Named aliases make the registry convenient to bind to extension commands. */

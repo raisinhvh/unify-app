@@ -1,0 +1,102 @@
+{
+  "extends": "base",
+  "persisted": {
+    "route": "providers",
+    "panelOpen": true,
+    "providerSelection": {
+      "kind": "account",
+      "id": "acc-local-inkling",
+      "provider": "local"
+    }
+  },
+  "messages": [
+    {
+      "type": "accountsState",
+      "cursor": {
+        "connected": false,
+        "label": "Not connected"
+      },
+      "accounts": [
+        {
+          "id": "acc-claude",
+          "provider": "claude-cli",
+          "label": "Claude Max",
+          "email": "you@example.com",
+          "isDefault": true,
+          "authType": "oauth",
+          "defaultModel": "claude-opus-5-5"
+        },
+        {
+          "id": "acc-codex",
+          "provider": "codex-cli",
+          "label": "ChatGPT Plus",
+          "isDefault": true,
+          "authType": "oauth",
+          "defaultModel": "gpt-5-codex"
+        },
+        {
+          "id": "acc-local-inkling",
+          "provider": "local",
+          "label": "Inkling 2 Mini",
+          "isDefault": true,
+          "authType": "api-key",
+          "defaultModel": "local-inkling"
+        },
+        {
+          "id": "acc-local-qwen",
+          "provider": "local",
+          "label": "Qwen3 30B A3B",
+          "isDefault": false,
+          "authType": "api-key",
+          "defaultModel": "local-qwen"
+        }
+      ],
+      "providerDefaults": {
+        "claude-cli": "claude-opus-5-5",
+        "codex-cli": "gpt-5-codex",
+        "local": "local-inkling"
+      }
+    },
+    {
+      "type": "modelState",
+      "models": [
+        {
+          "id": "claude-opus-5-5",
+          "name": "Claude Opus 5.5",
+          "provider": "claude-cli",
+          "backend": "claude-opus-5-5",
+          "usable": true,
+          "enabled": true,
+          "contextWindow": 200000
+        },
+        {
+          "id": "gpt-5-codex",
+          "name": "GPT-5 Codex",
+          "provider": "codex-cli",
+          "backend": "gpt-5-codex",
+          "usable": true,
+          "enabled": true,
+          "contextWindow": 400000
+        },
+        {
+          "id": "local-inkling",
+          "name": "Inkling 2 Mini",
+          "provider": "local",
+          "backend": "inkling-2-mini",
+          "usable": true,
+          "enabled": true,
+          "contextWindow": 65536
+        },
+        {
+          "id": "local-qwen",
+          "name": "Qwen3 30B A3B",
+          "provider": "local",
+          "backend": "qwen3-30b-a3b",
+          "usable": true,
+          "enabled": true,
+          "contextWindow": 32768
+        }
+      ]
+    }
+  ]
+}

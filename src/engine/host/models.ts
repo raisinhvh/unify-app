@@ -5,6 +5,7 @@ import { ModelEntry } from '../accounts';
 import { UsageTarget } from '../accounts/usageService';
 import { OAuthCliAccount, checkOAuthAccount } from '../accounts/oauthCli';
 import { SELF_HOSTED, SELF_HOSTED_ENV, parseModelIds } from '../runtime/selfHosted';
+import { LOCAL_PROVIDER } from '../local/types';
 import { accountForModel } from '../sync/configSync';
 import { SidebarWebviewMessage } from '../sidebar/provider';
 import { SidebarNameModel } from '../sidebar/view';
@@ -94,7 +95,9 @@ export async function refreshAccounts(this: ExtensionHost, checkCursor = true): 
       email: account.email, isDefault: this.oauthAccounts.getDefault(account.provider)?.id === account.id, authType: 'oauth' as const })),
     ...this.accounts.list().map(account => ({ id: account.id, provider: account.provider, label: account.label, email: account.email,
       isDefault: this.accounts.getDefault(account.provider)?.id === account.id, authType: 'api-key' as const,
-      ...(account.provider === SELF_HOSTED && typeof account.metadata?.baseURL === 'string' ? { baseURL: account.metadata.baseURL } : {}) })),
+      ...(account.provider === SELF_HOSTED && typeof account.metadata?.baseURL === 'string' ? { baseURL: account.metadata.baseURL } : {}),
+      ...(account.provider === LOCAL_PROVIDER && typeof account.metadata?.localServerId === 'string' ? { localServerId: account.metadata.localServerId } : {}),
+      ...(account.provider === LOCAL_PROVIDER && typeof account.metadata?.servedModel === 'string' ? { servedModel: account.metadata.servedModel } : {}) })),
   ], cursor: this.cursorAccount });
   await this.refreshAccount();
   this.refreshUsage();
@@ -185,6 +188,12 @@ export async function listProviderModels(this: ExtensionHost, accountId: string)
   const post = (models: string[], error?: string) => this.sidebar.postMessage({ type: 'providerModels', accountId, models, ...(error ? { error } : {}) });
   try {
     const account = this.accounts.get(accountId);
+    if (account?.provider === LOCAL_PROVIDER) {
+      // A local server serves one fixed model: no request, and no need to start the server just to list it.
+      const served = typeof account.metadata?.servedModel === 'string' ? account.metadata.servedModel : '';
+      post(served ? [served] : [], served ? undefined : 'This local server has no model configured.');
+      return;
+    }
     if (!account || account.provider !== SELF_HOSTED) throw new Error('Choose a self-hosted account.');
     const baseURL = this.selfHostedBaseURL(account);
     const secret = await this.accounts.getSecret(accountId);
@@ -209,6 +218,7 @@ export function envName(this: ExtensionHost, provider: string): string {
     'opencode-go': 'OPENCODE_API_KEY',
     mistral: 'MISTRAL_API_KEY',
     [SELF_HOSTED]: SELF_HOSTED_ENV,
+    [LOCAL_PROVIDER]: SELF_HOSTED_ENV,
   };
   const name = configured[provider];
   if (!name) throw new Error(`Provider '${provider}' needs an explicit Unify adapter and credential mapping before it can run.`);
@@ -352,7 +362,7 @@ export async function manageModels(this: ExtensionHost): Promise<void> {
 }
 
 export async function saveModel(this: ExtensionHost, message: Extract<SidebarWebviewMessage, { type: 'saveModel' }>): Promise<void> {
-  const allowed = new Set(['deepseek-official', 'openai', 'anthropic', 'openrouter', 'opencode-go', 'mistral', SELF_HOSTED, 'cursor-acp', 'codex-cli', 'claude-cli']);
+  const allowed = new Set(['deepseek-official', 'openai', 'anthropic', 'openrouter', 'opencode-go', 'mistral', SELF_HOSTED, LOCAL_PROVIDER, 'cursor-acp', 'codex-cli', 'claude-cli']);
   if (!allowed.has(message.provider)) throw new Error('Choose a supported model provider.');
   const name = message.name.trim();
   const backend = message.backend.trim();
@@ -416,6 +426,11 @@ export async function removeAccount(this: ExtensionHost, accountId: string): Pro
     this.syncActiveView();
   }
   if (this.oauthAccounts.get(accountId)) await this.oauthAccounts.remove(accountId);
-  else await this.accounts.remove(accountId);
+  else {
+    // A local account takes its managed server (stopped first) and the models pointing at it along.
+    const account = this.accounts.get(accountId);
+    if (account) await this.removeLocalAccountData(account);
+    await this.accounts.remove(accountId);
+  }
   await this.refreshAccounts(false);
 }

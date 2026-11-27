@@ -2,6 +2,11 @@
 export const SELF_HOSTED = 'self-hosted';
 export const SELF_HOSTED_ENV = 'SELF_HOSTED_API_KEY';
 
+/** True for providers that talk to an OpenAI-compatible server: the generic self-hosted one and Unify-managed local servers. */
+export function isOpenAICompatibleProvider(provider: string): boolean {
+  return provider === SELF_HOSTED || provider === 'local';
+}
+
 function isPrivateHost(host: string): boolean {
   const name = host.replace(/^\[|\]$/g, '').toLowerCase();
   if (name === 'localhost' || name === '::1' || name.endsWith('.local')) return true;

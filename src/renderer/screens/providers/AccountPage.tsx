@@ -6,7 +6,7 @@
  * the engine does not own yet (protocol-requests.md); the adapter applies it optimistically until the next
  * accountsState.
  */
-import { createEffect, createSignal, For, on, Show, type JSX } from 'solid-js';
+import { createEffect, createSignal, For, on, onMount, Show, type JSX } from 'solid-js';
 import { Button, Icon, IconButton, Menu, ProviderGlyph, type MenuEntry } from '../../components';
 import { createSpring } from '../../motion';
 import { viewState } from '../../store';
@@ -26,6 +26,8 @@ import {
   signOut,
   signedInWith,
 } from './adapter';
+import { LocalServerPanel, LocalStatus } from './local/LocalServerPanel';
+import { loadLocalInference, localProvider, localServerByAccount } from './local/localStore';
 import { select, selection } from './selection';
 
 function Crumb(props: { account: AccountView }): JSX.Element {
@@ -116,8 +118,15 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
   };
 
   const leaveAccount = () => select({ kind: 'provider', provider: account().provider });
+  const isLocal = () => account().provider === localProvider;
+  const localServerView = () => (isLocal() ? localServerByAccount(account().id) : undefined);
+
+  onMount(() => {
+    if (isLocal()) loadLocalInference();
+  });
 
   const menuItems = (): MenuEntry[] => {
+    if (isLocal()) return [{ id: 'remove', label: 'Delete server', danger: true }];
     const items: MenuEntry[] = [
       { kind: 'group', label: 'Account' },
       { id: 'refresh', label: 'Refresh usage', icon: 'refresh' },
@@ -150,7 +159,10 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
             <span class="pv-title-muted">{accountName(account()).label}</span>
           </h1>
           <p class="pv-account-status">
-            <Show when={account().status === 'connected'} fallback={<span class="pv-account-caption warn">{accountStateLabel(account())}</span>}>
+            <Show when={localServerView()}>
+              {server => <LocalStatus server={server()} />}
+            </Show>
+            <Show when={!localServerView() && account().status === 'connected'} fallback={<Show when={!localServerView()}><span class="pv-account-caption warn">{accountStateLabel(account())}</span></Show>}>
               <Icon name="check" size={12} class="pv-account-check" />
               <span class="pv-account-connected">Connected</span>
             </Show>
@@ -180,12 +192,14 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
         <section class="pv-section">
           <h2 class="pv-section-heading">Account</h2>
           <div class="pv-rows">
+            <Show when={!isLocal()}>
+              <div class="pv-setting-row">
+                <span class="pv-setting-label">Plan</span>
+                <span class="pv-setting-value">{brandedPlan(account())}</span>
+              </div>
+            </Show>
             <div class="pv-setting-row">
-              <span class="pv-setting-label">Plan</span>
-              <span class="pv-setting-value">{brandedPlan(account())}</span>
-            </div>
-            <div class="pv-setting-row">
-              <span class="pv-setting-label">Signed in with</span>
+              <span class="pv-setting-label">{isLocal() ? 'Serves' : 'Signed in with'}</span>
               <span class="pv-setting-value">{signedInWith(account())}</span>
               <button
                 type="button"
@@ -198,17 +212,17 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
                   }
                 }}
               >
-                {account().authType === 'oauth' ? 'Sign out' : 'Remove'}
+                {account().authType === 'oauth' ? 'Sign out' : isLocal() ? 'Delete server' : 'Remove'}
               </button>
             </div>
             <Show
-              when={account().usage?.metrics.length}
-              fallback={
+              when={!isLocal() && account().usage?.metrics.length}
+              fallback={!isLocal() && (
                 <div class="pv-setting-row">
                   <span class="pv-setting-label">Usage</span>
                   <p class="pv-section-note type-body">This account has not reported usage yet.</p>
                 </div>
-              }
+              )}
             >
               <div class="pv-setting-row pv-account-usage">
                 <span class="pv-setting-label">Usage</span>
@@ -247,10 +261,22 @@ function AccountBody(props: { account: AccountView }): JSX.Element {
 
         <div class="pv-section-divider" />
 
-        <p class="pv-shared-models type-body">
-          Models are shared by every {providerTitle(account().provider)} account.{' '}
-          <button type="button" class="pv-shared-models-link" onClick={leaveAccount}>Manage models</button>
-        </p>
+        <Show
+          when={isLocal()}
+          fallback={
+            <p class="pv-shared-models type-body">
+              Models are shared by every {providerTitle(account().provider)} account.{' '}
+              <button type="button" class="pv-shared-models-link" onClick={leaveAccount}>Manage models</button>
+            </p>
+          }
+        >
+          <Show
+            when={localServerByAccount(account().id)}
+            fallback={<p class="pv-section-note type-body">Loading the local server…</p>}
+          >
+            {server => <LocalServerPanel server={server()} />}
+          </Show>
+        </Show>
       </div>
     </>
   );

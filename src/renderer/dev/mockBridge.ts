@@ -280,6 +280,15 @@ export async function installMockBridge(): Promise<void> {
         }
         break;
       default:
+        // Local inference requests go to a fake engine (screens/providers/local/localMock.ts).
+        if (String(message.type).startsWith('local')) {
+          void import('../screens/providers/local/localMock').then(mock => mock.handleLocalMock(
+            message as unknown as Parameters<typeof mock.handleLocalMock>[0],
+            reply => emit(reply as unknown as SidebarHostMessage),
+            { fixtureMessages: (fixture.messages || []) as { type: string }[] },
+          ));
+          break;
+        }
         console.info('[mock] post', message);
     }
   };
