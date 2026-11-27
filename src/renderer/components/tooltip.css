@@ -6,7 +6,7 @@
   line-height: 16px;
   color: var(--text);
   pointer-events: none;
-  z-index: 60;
+  z-index: 95;
   /* Lighter and tighter than --shadow-pop: a label, not a floating panel. */
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18), 0 1px 3px rgba(0, 0, 0, 0.14);
 }

@@ -1,6 +1,7 @@
 .popover {
   position: fixed;
-  z-index: 50;
+  /* Above every overlay (dialog scrims 80, media viewer 70): menus open from inside dialogs too. */
+  z-index: 90;
   min-width: 160px;
   max-width: 360px;
   max-height: calc(100vh - 16px);
