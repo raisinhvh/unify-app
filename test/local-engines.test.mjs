@@ -177,8 +177,6 @@ test('polystrata writes its config and server args', async () => {
     servedModel: 'my-moe',
     window: 2,
     conversationCacheMib: 'auto',
-    attnRequant: 'q5_k',
-    loopBf16: true,
     tailSkip: 4,
     ramExpertsMib: -1,
     vramReserveMib: 512,
@@ -218,8 +216,6 @@ test('polystrata writes its config and server args', async () => {
   assert.equal(valueAfter(args, '--max-context'), '32768');
   assert.equal(valueAfter(args, '--expert-profile'), join(fx.runDir, 'expert-profile.txt'));
   assert.equal(valueAfter(args, '--conversation-cache-mib'), 'auto');
-  assert.equal(valueAfter(args, '--attn-requant'), 'q5_k');
-  assert.ok(args.includes('--loop-bf16'));
   assert.equal(valueAfter(args, '--tail-skip'), '4');
   assert.equal(valueAfter(args, '--ram-experts-mib'), '-1');
   assert.equal(valueAfter(args, '--vram-reserve-mib'), '512');
@@ -338,6 +334,32 @@ test('every preset targets a real engine and real fields', () => {
     }
   }
   assert.ok(ids.has('polystrata-default'));
-  // Built-in presets are for everyone: no model names or tuning from one machine.
-  assert.ok(!/inkling/i.test(JSON.stringify(BUILTIN_PRESETS)));
+  // Built-in presets are for everyone: they never name a model or carry paths and tuning from one machine.
+  const machineSpecific = [
+    'model',
+    'tokenizer',
+    'servedModel',
+    'alias',
+    'displayName',
+    'expertProfile',
+    'threads',
+    'vramReserveMib',
+    'ramExpertsMib',
+    'tailSkip',
+    'window',
+    'extraEngineArgs',
+    'extraArgs',
+  ];
+  for (const preset of BUILTIN_PRESETS) {
+    for (const key of machineSpecific) {
+      assert.ok(!(key in preset.values), `${preset.id}: built-in preset sets ${key}`);
+    }
+  }
+  // No engine field is tied to one model family; such flags go in the engine's extra arguments.
+  for (const engine of LOCAL_ENGINES) {
+    for (const field of engine.fields) {
+      const text = `${field.label} ${field.help || ''}`;
+      assert.ok(!/models? only/i.test(text), `${engine.kind}.${field.id} is model-specific`);
+    }
+  }
 });

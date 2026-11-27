@@ -34,12 +34,12 @@
           "defaultModel": "gpt-5-codex"
         },
         {
-          "id": "acc-local-inkling",
+          "id": "acc-local-example-moe",
           "provider": "local",
-          "label": "Inkling 2 Mini",
+          "label": "Example MoE",
           "isDefault": true,
           "authType": "api-key",
-          "defaultModel": "local-inkling"
+          "defaultModel": "local-example-moe"
         },
         {
           "id": "acc-local-qwen",
@@ -53,7 +53,7 @@
       "providerDefaults": {
         "claude-cli": "claude-opus-5-5",
         "codex-cli": "gpt-5-codex",
-        "local": "local-inkling"
+        "local": "local-example-moe"
       }
     },
     {
@@ -78,10 +78,10 @@
           "contextWindow": 400000
         },
         {
-          "id": "local-inkling",
-          "name": "Inkling 2 Mini",
+          "id": "local-example-moe",
+          "name": "Example MoE",
           "provider": "local",
-          "backend": "inkling-2-mini",
+          "backend": "example-moe",
           "usable": true,
           "enabled": true,
           "contextWindow": 65536

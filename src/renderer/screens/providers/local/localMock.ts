@@ -4,7 +4,7 @@
  * starting → running after 1.5 s, save marks a running server restartRequired, install reports progressNotice
  * ticks, browse returns a fake path, and running servers stream log lines every 500 ms.
  *
- * `?localState=error` puts the Inkling server in its error state.
+ * `?localState=error` puts the PolyStrata server in its error state.
  * All paths are fake (C:\models\..., C:\tools\...).
  */
 import type {
@@ -277,10 +277,10 @@ const engines: LocalEngineInfo[] = [
   },
 ];
 
-const inklingValues: LocalValues = {
-  model: 'C:\\models\\inkling-2-mini-IQ3_XXS.gguf',
-  tokenizer: 'C:\\models\\inkling-2-mini-tokenizer',
-  servedModel: 'inkling-2-mini',
+const exampleMoeValues: LocalValues = {
+  model: 'C:\\models\\example-moe-Q4_K_M.gguf',
+  tokenizer: 'C:\\models\\example-moe-tokenizer',
+  servedModel: 'example-moe',
   maxContext: 65536,
   window: 8,
 };
@@ -295,11 +295,11 @@ const presets: LocalPreset[] = [
     builtin: true,
   },
   {
-    id: 'user-inkling-iq3xxs',
-    label: 'Inkling 2 Mini IQ3_XXS',
+    id: 'user-example-moe',
+    label: 'Example MoE Q4_K_M',
     description: 'Saved from a server.',
     engine: 'polystrata',
-    values: inklingValues,
+    values: exampleMoeValues,
     builtin: false,
   },
   {
@@ -354,27 +354,27 @@ const presets: LocalPreset[] = [
 
 const baseTime = Date.now();
 
-function inklingCommand(port: number): string {
-  return `C:\\tools\\polystrata\\.venv\\Scripts\\python.exe -m polystrata.serve --model C:\\models\\inkling-2-mini-IQ3_XXS.gguf --tokenizer C:\\models\\inkling-2-mini-tokenizer --served-model-name inkling-2-mini --host 127.0.0.1 --port ${port} --max-context 65536 --window 8 --api-key ******** --owner-fd 0`;
+function exampleMoeCommand(port: number): string {
+  return `C:\\tools\\polystrata\\.venv\\Scripts\\python.exe -m polystrata.serve --model C:\\models\\example-moe-Q4_K_M.gguf --tokenizer C:\\models\\example-moe-tokenizer --served-model-name example-moe --host 127.0.0.1 --port ${port} --max-context 65536 --window 8 --api-key ******** --owner-fd 0`;
 }
 
 const servers: LocalServerView[] = [
   {
     config: {
-      id: 'srv-inkling',
-      label: 'Inkling 2 Mini',
+      id: 'srv-example-moe',
+      label: 'Example MoE',
       engine: 'polystrata',
-      values: { ...inklingValues },
+      values: { ...exampleMoeValues },
       port: 8090,
       autoStart: true,
       idleStopMinutes: 30,
-      presetId: 'user-inkling-iq3xxs',
+      presetId: 'user-example-moe',
       createdAt: baseTime - 86400000 * 3,
       updatedAt: baseTime - 3600000,
     },
     status: errorMode
       ? {
-          id: 'srv-inkling',
+          id: 'srv-example-moe',
           state: 'error',
           port: 8090,
           error: [
@@ -386,7 +386,7 @@ const servers: LocalServerView[] = [
           restartRequired: false,
         }
       : {
-          id: 'srv-inkling',
+          id: 'srv-example-moe',
           state: 'running',
           port: 8090,
           baseURL: 'http://127.0.0.1:8090/v1',
@@ -394,12 +394,12 @@ const servers: LocalServerView[] = [
           startedAt: baseTime - 1260000,
           readyAt: baseTime - 1238000,
           restartRequired: false,
-          command: inklingCommand(8090),
+          command: exampleMoeCommand(8090),
           lastActivityAt: baseTime - 40000,
         },
-    accountId: 'acc-local-inkling',
-    servedModel: 'inkling-2-mini',
-    commandPreview: inklingCommand(8090),
+    accountId: 'acc-local-example-moe',
+    servedModel: 'example-moe',
+    commandPreview: exampleMoeCommand(8090),
     problems: [],
   },
   {
@@ -424,18 +424,18 @@ const servers: LocalServerView[] = [
 ];
 
 const logs: Record<string, string[]> = {
-  'srv-inkling': errorMode
+  'srv-example-moe': errorMode
     ? [
-        '[polystrata] loading C:\\models\\inkling-2-mini-IQ3_XXS.gguf',
-        '[polystrata] tokenizer: C:\\models\\inkling-2-mini-tokenizer',
+        '[polystrata] loading C:\\models\\example-moe-Q4_K_M.gguf',
+        '[polystrata] tokenizer: C:\\models\\example-moe-tokenizer',
         '[polystrata] allocating KV cache for 65536 tokens',
         'Traceback (most recent call last):',
         '  File "polystrata\\serve.py", line 214, in <module>',
         'RuntimeError: CUDA out of memory. Tried to allocate 2.50 GiB',
       ]
     : [
-        '[polystrata] loading C:\\models\\inkling-2-mini-IQ3_XXS.gguf',
-        '[polystrata] tokenizer: C:\\models\\inkling-2-mini-tokenizer',
+        '[polystrata] loading C:\\models\\example-moe-Q4_K_M.gguf',
+        '[polystrata] tokenizer: C:\\models\\example-moe-tokenizer',
         '[polystrata] experts streamed from disk, window 8',
         '[polystrata] allocating KV cache for 65536 tokens (3.1 GiB)',
         '[polystrata] warmup done in 18.4 s',
@@ -560,7 +560,7 @@ function problemsOf(server: LocalServerView): string[] {
 }
 
 function previewOf(server: LocalServerView): string {
-  if (server.config.id === 'srv-inkling') return inklingCommand(server.config.port);
+  if (server.config.id === 'srv-example-moe') return exampleMoeCommand(server.config.port);
   const engine = engineOf(server.config.engine);
   const values = server.config.values;
   if (server.problems.length) return '';

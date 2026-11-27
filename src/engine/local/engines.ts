@@ -587,8 +587,6 @@ const POLYSTRATA_FIELDS: LocalFieldSpec[] = [
   { id: 'expertProfile', label: 'Expert profile', type: 'file', group: 'Performance', filters: [{ name: 'Text file', extensions: ['txt'] }], help: "blank = kept in Unify's run folder; PolyStrata writes it on exit" },
   { id: 'window', label: 'Window', type: 'number', group: 'Performance', min: 1, placeholder: 'Engine default' },
   { id: 'conversationCacheMib', label: 'Conversation cache (MiB)', type: 'text', group: 'Performance', placeholder: 'Engine default', help: 'A size in MiB, or auto.' },
-  { id: 'attnRequant', label: 'Attention requant', type: 'select', group: 'Performance', default: 'none', options: options('none', 'q6_k', 'q5_k', 'q5_0', 'iq4_nl', 'q4_0'), help: "Inkling 2 models only. none = keep the model file's types." },
-  { id: 'loopBf16', label: 'Loop in bf16', type: 'toggle', group: 'Performance', default: false, help: 'Inkling 2 models only.' },
   { id: 'tailSkip', label: 'Tail skip', type: 'number', group: 'Performance', min: 0, placeholder: 'Engine default' },
   { id: 'ramExpertsMib', label: 'Experts in RAM (MiB)', type: 'number', group: 'Performance', min: -1, placeholder: 'Engine default', help: '-1 = automatic.' },
   { id: 'vramReserveMib', label: 'VRAM reserve (MiB)', type: 'number', group: 'Performance', min: 0, placeholder: 'Engine default' },
@@ -596,7 +594,7 @@ const POLYSTRATA_FIELDS: LocalFieldSpec[] = [
   { id: 'gpu', label: 'GPU index', type: 'number', group: 'Performance', default: 0, min: 0 },
   { id: 'python', label: 'Python', type: 'file', group: 'Advanced', advanced: true, help: 'Blank = the .venv inside the PolyStrata folder.' },
   { id: 'cudaLibDir', label: 'CUDA library folder', type: 'folder', group: 'Advanced', advanced: true, help: 'Blank = the nvidia folder inside the .venv.' },
-  { id: 'extraEngineArgs', label: 'Engine arguments', type: 'args', group: 'Advanced', advanced: true, default: '', help: 'Added to the strata-poly arguments.' },
+  { id: 'extraEngineArgs', label: 'Engine arguments', type: 'args', group: 'Advanced', advanced: true, default: '', help: 'Added to the strata-poly arguments, e.g. flags that only some model families support.' },
   extraArgsField(),
   envField(),
 ];
@@ -636,9 +634,6 @@ function polyEngineArgs(read: ValueReader, runDir: string): string[] {
   // Blank settings are left out so PolyStrata picks its own default for the model and machine.
   const conversationCache = read.str('conversationCacheMib');
   if (conversationCache) args.push('--conversation-cache-mib', conversationCache);
-  const requant = read.choice('attnRequant');
-  if (requant !== 'none') args.push('--attn-requant', requant);
-  if (read.bool('loopBf16')) args.push('--loop-bf16');
   pushDefined(args, '--tail-skip', read.num('tailSkip'));
   pushDefined(args, '--ram-experts-mib', read.num('ramExpertsMib'));
   pushDefined(args, '--vram-reserve-mib', read.num('vramReserveMib'));
